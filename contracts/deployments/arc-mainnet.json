@@ -1,0 +1,28 @@
+{
+  "network": "Arc Mainnet",
+  "chainId": 5042,
+  "rpc": "https://rpc.mainnet.arc.io",
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "usdcDecimals": 6,
+  "contracts": {
+    "ThesmaMarketVault": "0x0fA826256a58F19Ad24Fc9384d81D313f2266F79"
+  },
+  "deployer": "0x76D7a718CcDc1c132c52D4C05eA0c2FA8e657486",
+  "deployment": {
+    "txHash": "0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558",
+    "blockNumber": 26454958,
+    "blockTimestamp": 1792251601,
+    "blockTimestampIso": "2026-10-17T15:40:01.000Z",
+    "gasUsed": 1532109,
+    "effectiveGasPrice": 21498868375,
+    "feeBaseUnits": "32938609727152875",
+    "feeUsdc": "0.03293860972715287",
+    "status": "0x1",
+    "deployerNonce": "0x0",
+    "runtimeBytecodeVerified": true,
+    "runtimeBytecodeNote": "byte-for-byte identical to local forge build except the 20-byte immutable USDC slot, which correctly holds 0x3600...0000",
+    "usdcGetter": "0x3600000000000000000000000000000000000000"
+  },
+  "verifiedAt": "2026-10-17T15:52:43.000Z",
+  "verifiedBy": "independent read-only RPC checks (no broadcasts)"
+}

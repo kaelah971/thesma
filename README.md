@@ -136,7 +136,7 @@ forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector p
 
 ## S2 Shipped — ThesmaMarketVault + Arc Campaign Funding
 
-**Deployment status: NOT EXERCISED on any chain.** Contract implementation and local verification are shipped; no testnet/mainnet deployment or funding has occurred. No addresses or tx hashes below because none exist yet.
+**Deployment status: DEPLOYED on Arc mainnet (S8.1B, owner-broadcast).** Vault `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` (tx `0xe3c153…711c558`, block 26454958, fee 0.03294 USDC) — independently verified onchain; canonical record in `contracts/deployments/arc-mainnet.json`. No campaign funding, purchase, or payout has occurred yet.
 
 - **Money separation:** customer revenue (`customer -> company wallet`) never touches the vault. The vault custodies only the pre-funded acquisition budget (`company wallet -> ThesmaMarketVault -> Partner payout`). The backend holds no keys and never signs.
 - **Contract** (`contracts/src/ThesmaMarketVault.sol`, non-upgradeable, OZ SafeERC20/EIP-712/ReentrancyGuard): `createCampaign` (immutable policyHash, cap/ceiling/deadline/executor/verifier checks), `fundCampaign` (owner-only, cap-enforced, pre-deadline, partial + exact-cap), `pauseCampaign`, `closeCampaign`, `returnUnspent` (exact `funded - spent`, once), plus a tested-but-unwired `payoutVerifiedOutcome` (executor-only EIP-712, ceiling/balance/replay/expiry checks; pre-deadline outcomes may settle after deadline via `occurredAt`). No generic withdraw path by construction.

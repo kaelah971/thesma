@@ -20,7 +20,7 @@
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S7.1 Accepted negotiation commitment safety — Shipped (this session)
+- S8.1B Mainnet deployment verification + canonical record — Shipped (this session)
 
 ## Completed (S7.1 this session)
 - supply_commitments: one ACTIVE unit (price x 1) + one capacity unit per ACCEPT; unique per negotiation; consumed once by first S5 reservation; released on withdraw/revoke
@@ -88,7 +88,7 @@
 - Backend Arc boundary: ArcConfig/env, ViemArcReader, unsigned buildFundingIntent, fail-closed chain check; arc:doctor (NOT_CONFIGURED honest, never signs)
 - Funding model: campaign_fundings + status enum (migration 0002); service prepare/submit/status/confirm + company-wallet register; 5 routes; 7 audit actions
 - Tests: 34 forge (31 vault unit+fuzz + 1 invariant + 2 cross-stack vector pins) + 21 new vitest (4 keys + 17 funding); 57 vitest total green; S0/S1 suites untouched and green
-- Deployment status: NOT EXERCISED on any chain (no addresses/txs exist)
+- Deployment status: DEPLOYED Arc mainnet S8.1B — vault 0x0fA826256a58F19Ad24Fc9384d81D313f2266F79, tx 0xe3c153…711c558, block 26454958, fee 0.03294 USDC (record: contracts/deployments/arc-mainnet.json)
 
 ## Completed (S1 prior session)
 - Campaign domain: MarketVisibility, PolicyVersionStatus, pure analyzePolicyFields, S1 transition guard (DRAFT->REVIEW->APPROVED; FUNDING/LIVE rejected)
@@ -258,5 +258,12 @@
 - Terms allocation caps still enforced at reservation; commitments cover the first unit only (documented limitation)
 - Dead allocations bounded by terms expiry; no background sweeper yet (future slice may reclaim)
 
+## Completed (S8.1B this session)
+- Independently verified owner deployment on Arc mainnet (chain, tx, receipt, from, vault, code, USDC getter, decimals, nonce) — all match
+- Runtime bytecode matches local build except the immutable USDC slot (correctly 0x3600…0000)
+- Exactly one deployment tx (deployer nonce 0 → 1); no setup txs required or observed
+- Canonical record: contracts/deployments/arc-mainnet.json + README; fee 0.03293860972715287 USDC
+- No broadcasts/signing by this session; no runtime behavior changed
+
 ## Next action
-- S8 — DEMO + TRACTION POLISH (do NOT start in this session)
+- S8.2 — TINY ARC MAINNET END-TO-END PROOF (do NOT start in this session)
