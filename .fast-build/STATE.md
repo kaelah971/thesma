@@ -13,12 +13,24 @@
 - [x] S4: Customer Arc purchase + attribution consumption + outcome verifier (LOCAL ONLY chain exercise)
 - [x] S5: Automatic payout + reservation + reconciliation (LOCAL ONLY chain exercise)
 - [x] S6: Dynamic demand agent + pricing kernel + pace + reprice/pause (deterministic, LOCAL ONLY)
+- [x] S7: Supply agent + negotiation (deterministic kernel, LOCAL ONLY)
 - [ ] S6: Dynamic Demand Agent (pricing kernel)
 - [ ] S7: Supply Agent + negotiation
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S6 Dynamic demand agent + pricing kernel + pace + reprice/pause — Shipped (this session)
+- S7 Supply agent + negotiation — Shipped (this session)
+
+## Completed (S7 this session)
+- Kernel: pure evaluateNegotiationOffer (solvency cap, pace-widened band, counter-at-cap, 5% min-lift, 3-round stop, urgency from margin); corrupt/over-ceiling/insolvent fail closed
+- Lifecycle: propose (auto-evaluates) -> COUNTERED/ACCEPTED/REJECTED, HOLD on market moves, EXPIRED via worker, WITHDRAWN by supplier; one active row per pair (partial unique index)
+- Accept freezes NEGOTIATED terms + referral atomically; S5 pays the negotiated price through the unchanged pipeline; no second settlement path
+- Safety: supplier/category/wallet gates mirror join; paused markets + expired offers cannot accept; MARKET_MOVED holds for fresh input
+- Worker: processNegotiationEvaluations (per-row isolation, idempotent re-eval); read API + propose/withdraw routes; deterministic narrator, no LLM
+- S6 interplay proven: reprice never touches negotiated terms; HOLD-then-reconfirm flows work
+- Tables: negotiations, negotiation_decisions (migration 0007, 22 tables total)
+- Tests: 7 kernel + 11 service (136 vitest total green); S0-S6 suites untouched and green; forge 34 unchanged
+- Chain exercise: LOCAL ONLY (no chain interaction in S7)
 
 ## Completed (S6 this session)
 - Kernel: pure evaluatePricing (integer pace ratio, tolerance 15%, step <=25%, min-change 5%, 1h cooldown, 24h demand window); pace UNDER/ON/OVER/EXHAUSTED; corrupt states fail closed to PAUSE
@@ -95,6 +107,7 @@
 - Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
 
 ## Schema created
+- S7: negotiations (partial unique on active pair states), negotiation_decisions (unique negotiation+inputsHash)
 - S6: market_decisions (unique campaign+inputsHash, old/new bounty, autoExecuted, reason codes)
 - S5: spend_reservations (unique outcome, RESERVED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS/RELEASED), payouts (unique reservation/outcome/tx, PREPARED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS)
 - S4: attribution_sessions (opaque handle PK, single-use, expiry), checkout_intents (unique order/tx, PREPARED/SUBMITTED/CONFIRMED/REJECTED/AMBIGUOUS), outcomes (unique intent/tx/customer-per-campaign/proof, PENDING/VERIFIED/REJECTED, holdUntil)
@@ -102,6 +115,15 @@
 - users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
 - S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
 - S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
+
+## Commands verified (S7)
+- npm install: pass (no new deps)
+- npm run db:generate: pass (drizzle/0007_harsh_shiva.sql, 22 tables total incl. partial unique index; NOT applied, no live DB)
+- npm run typecheck: pass; npm run lint: pass (0 errors)
+- npm test: pass (14 files, 136 tests + 2 anvil-skips; S0-S6 all green)
+- npm run build: pass (19/19 pages incl. 4 new negotiation routes)
+- forge fmt --check / build / test: pass, 34 unchanged
+- secrets scan: clean; no .env
 
 ## Commands verified (S6)
 - npm install: pass (no new deps)
@@ -206,5 +228,10 @@
 - PAUSE is terminal in S6 (resume is a future slice); cooldown never blocks safety pauses
 - Memory-store fixed row clock vs injectable service clock: cooldown tests use long-cooldown policy to prove the rule with disagreeing clocks (production clocks agree)
 
+## S7 negotiation notes
+- Terms freeze at the supplier's ASK when inside the band (cheaper for the campaign than the bounty); counters sit at the solvency/urgency cap
+- Negotiation creates allocation-free budget locks: NOTHING moves until S5 reservation; concurrent accepts serialize safely at reservation time
+- autoNegotiate flags remain stored-only; the worker evaluates explicitly proposed rows
+
 ## Next action
-- S7 — SUPPLY AGENT + NEGOTIATION (do NOT start in this session)
+- S8 — DEMO + TRACTION POLISH (do NOT start in this session)

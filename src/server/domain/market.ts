@@ -12,7 +12,8 @@ export type { MarketState };
  */
 
 export const TERMS_SOURCE_PUBLIC = "PUBLIC" as const;
-export type TermsSource = typeof TERMS_SOURCE_PUBLIC;
+export const TERMS_SOURCE_NEGOTIATED = "NEGOTIATED" as const;
+export type TermsSource = typeof TERMS_SOURCE_PUBLIC | typeof TERMS_SOURCE_NEGOTIATED;
 
 export const TERMS_STATUSES = ["ACTIVE", "EXPIRED", "REVOKED"] as const;
 export type TermsStatus = (typeof TERMS_STATUSES)[number];

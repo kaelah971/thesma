@@ -9,6 +9,8 @@ import {
   checkoutIntents,
   marketDecisions,
   marketStates,
+  negotiationDecisions,
+  negotiations,
   outcomes,
   partners,
   partnerTerms,
@@ -399,6 +401,94 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         throw Object.assign(new Error("Stale market version"), { status: 409, code: "STALE_MARKET" });
       }
       return row;
+    },
+    async insertNegotiation(n) {
+      return unique(async () => {
+        const [row] = await db.insert(negotiations).values({
+          id: n.id,
+          campaignId: n.campaignId,
+          partnerId: n.partnerId,
+          askMicroUsdc: n.askMicroUsdc,
+          referenceBountyMicroUsdc: n.referenceBountyMicroUsdc,
+          policyVersion: n.policyVersion,
+          marketVersion: n.marketVersion,
+          allocationCount: n.allocationCount,
+          expiresAt: n.expiresAt,
+        }).returning();
+        return row;
+      }, "An active negotiation already exists for this pair");
+    },
+    async getNegotiation(id) {
+      const [row] = await db.select().from(negotiations).where(eq(negotiations.id, id)).limit(1);
+      return row ?? null;
+    },
+    async getActiveNegotiation(campaignId, partnerId) {
+      const [row] = await db
+        .select()
+        .from(negotiations)
+        .where(
+          and(
+            eq(negotiations.campaignId, campaignId),
+            eq(negotiations.partnerId, partnerId),
+            sql`${negotiations.status} IN ('OPEN', 'COUNTERED', 'HOLD')`,
+          ),
+        )
+        .limit(1);
+      return row ?? null;
+    },
+    async updateNegotiation(id, patch) {
+      return unique(async () => {
+        const [row] = await db
+          .update(negotiations)
+          .set({ ...patch, updatedAt: new Date() })
+          .where(eq(negotiations.id, id))
+          .returning();
+        if (!row) throw new Error("Negotiation not found");
+        return row;
+      }, "An active negotiation already exists for this pair");
+    },
+    async listActionableNegotiations(limit) {
+      return db
+        .select()
+        .from(negotiations)
+        .where(sql`${negotiations.status} IN ('OPEN', 'COUNTERED')`)
+        .limit(limit);
+    },
+    async insertNegotiationDecision(d) {
+      return unique(async () => {
+        const [row] = await db.insert(negotiationDecisions).values({
+          id: d.id,
+          negotiationId: d.negotiationId,
+          round: d.round,
+          decision: d.decision as "ACCEPT" | "COUNTER" | "REJECT" | "HOLD",
+          reasonCodes: d.reasonCodes,
+          inputsJson: d.inputsJson,
+          inputsHash: d.inputsHash,
+          askMicroUsdc: d.askMicroUsdc,
+          counterMicroUsdc: d.counterMicroUsdc,
+          autoExecuted: d.autoExecuted ? 1 : 0,
+        }).returning();
+        return {
+          ...row,
+          autoExecuted: row.autoExecuted === 1,
+          inputsJson: (row.inputsJson ?? {}) as Record<string, unknown>,
+        };
+      }, "Negotiation decision already recorded");
+    },
+    async getLatestNegotiationDecision(negotiationId) {
+      const [row] = await db
+        .select()
+        .from(negotiationDecisions)
+        .where(eq(negotiationDecisions.negotiationId, negotiationId))
+        .orderBy(desc(negotiationDecisions.createdAt))
+        .limit(1);
+      return row
+        ? {
+            ...row,
+            autoExecuted: row.autoExecuted === 1,
+            inputsJson: (row.inputsJson ?? {}) as Record<string, unknown>,
+          }
+        : null;
     },
     async insertPricingDecision(d) {
       return unique(async () => {

@@ -72,6 +72,17 @@ npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
 
+## S7 Shipped — Supply Agent + Negotiation (LOCAL ONLY)
+
+- **Model:** one negotiation row per campaign+partner round-track (`OPEN → COUNTERED/ACCEPTED/REJECTED/EXPIRED/WITHDRAWN/HOLD`); exactly one non-terminal row per pair (partial unique index); append-only `negotiation_decisions` history.
+- **Kernel (pure, bigint):** solvency cap = `free ÷ remaining` (protects the rest of the campaign, not just this ask); band = `min(ceiling, cap)`, tightened to the reference bounty unless S6 pace is UNDER-paced; `ACCEPT` at the ask inside the band, `COUNTER` at the cap when meaningfully above reference, else `REJECT`; malformed/over-ceiling/over-round/insolvent fail closed. Urgency (`HEALTHY/TIGHT/CRITICAL/EXHAUSTED`) derives from the solvency margin.
+- **Counters:** bounded by floor/ceiling, ≥5% lift to avoid noise, max 3 rounds, 24h default expiry, same-state re-evaluation returns the stored row (no duplicate counters).
+- **Accept freezes:** atomic `NEGOTIATED` PartnerTerms at the ask + referral route, so S4/S5 consume the snapshot through the existing pipeline. No payment at negotiation time — only verified outcomes pay via S5. One terms row per pair; second commitments deterministically rejected.
+- **Safety:** supplier profile + wallet + category gates mirror join rules; PAUSED/CLOSED markets and expired offers cannot accept; market moves under an offer HOLD for fresh input; supplier withdraw supported.
+- **Agent/worker:** deterministic `evaluateNegotiation` + `processNegotiationEvaluations` (`POST /internal/negotiations/evaluate`, existing secret convention); per-row isolation; read API (`GET /api/negotiations/:id`, propose/withdraw routes) with urgency/reasons/expiry/accepted price. No LLM is wired — fixed explanation template only.
+- **New tables:** `negotiations`, `negotiation_decisions` (unique negotiation+inputsHash).
+- **Chain exercise: LOCAL ONLY.** No testnet/mainnet, no funds moved.
+
 ## S6 Shipped — Dynamic Demand Agent + Pricing Kernel + Pace States (LOCAL ONLY)
 
 - **Kernel (pure, no floats):** pace ratio via integer cross-multiplication; `UNDER_PACED` (<85% of expected progress), `ON_PACE`, `OVER_PACED` (>115%), `EXHAUSTED` (target met / deadline passed / cannot afford one floor unit). Corrupt money/bounds fail closed to PAUSE.
@@ -163,6 +174,7 @@ No money moves in S1.
 - revenue/CAC analytics derived from purchases
 - Partner payout beyond the S5 local loop (no testnet/mainnet settlement exercised)
 - LLM-driven pricing/explanations (kernel + templated reasons are deterministic; agent cannot override bounds)
+- LLM-driven negotiation (kernel decides price/class/bounds; wording-only LLM stays TARGET)
 - full refund detection (hold timer only)
 - Gateway/CCTP
 - live market

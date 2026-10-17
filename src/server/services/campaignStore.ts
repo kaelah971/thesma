@@ -97,6 +97,37 @@ export interface StoredInvite {
   createdAt: Date;
 }
 
+export interface StoredNegotiation {
+  id: string;
+  campaignId: string;
+  partnerId: string;
+  round: number;
+  status: string;
+  askMicroUsdc: bigint;
+  referenceBountyMicroUsdc: bigint;
+  counterMicroUsdc: bigint | null;
+  policyVersion: number;
+  marketVersion: number;
+  allocationCount: number;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StoredNegotiationDecision {
+  id: string;
+  negotiationId: string;
+  round: number;
+  decision: string;
+  reasonCodes: string[];
+  inputsJson: Record<string, unknown>;
+  inputsHash: string;
+  askMicroUsdc: bigint;
+  counterMicroUsdc: bigint | null;
+  autoExecuted: boolean;
+  createdAt: Date;
+}
+
 export interface StoredPricingDecision {
   id: string;
   campaignId: string;
@@ -361,6 +392,26 @@ export interface MarketStore extends FundingStore {
     expectedVersion: number,
     patch: Partial<Pick<StoredMarket, "publicBountyMicroUsdc" | "status">> & { version: number },
   ): Promise<StoredMarket>;
+  insertNegotiation(n: {
+    id: string; campaignId: string; partnerId: string; askMicroUsdc: bigint;
+    referenceBountyMicroUsdc: bigint; policyVersion: number; marketVersion: number;
+    allocationCount: number; expiresAt: Date;
+  }): Promise<StoredNegotiation>;
+  getNegotiation(id: string): Promise<StoredNegotiation | null>;
+  /** The single non-terminal row per pair, if any. */
+  getActiveNegotiation(campaignId: string, partnerId: string): Promise<StoredNegotiation | null>;
+  updateNegotiation(
+    id: string,
+    patch: Partial<Pick<StoredNegotiation, "round" | "status" | "askMicroUsdc" | "referenceBountyMicroUsdc" | "counterMicroUsdc" | "marketVersion" | "expiresAt">>,
+  ): Promise<StoredNegotiation>;
+  /** OPEN + COUNTERED rows for the worker sweep. */
+  listActionableNegotiations(limit: number): Promise<StoredNegotiation[]>;
+  insertNegotiationDecision(d: {
+    id: string; negotiationId: string; round: number; decision: string; reasonCodes: string[];
+    inputsJson: Record<string, unknown>; inputsHash: string;
+    askMicroUsdc: bigint; counterMicroUsdc: bigint | null; autoExecuted: boolean;
+  }): Promise<StoredNegotiationDecision>;
+  getLatestNegotiationDecision(negotiationId: string): Promise<StoredNegotiationDecision | null>;
   insertPricingDecision(d: NewPricingDecision): Promise<StoredPricingDecision>;
   getLatestPricingDecision(campaignId: string): Promise<StoredPricingDecision | null>;
   getLastExecutedRepriceAt(campaignId: string): Promise<Date | null>;
@@ -460,6 +511,9 @@ export function createMemoryCampaignStore(seed?: {
   const invites = new Map<string, StoredInvite>();
   const decisions: StoredPricingDecision[] = [];
   const decisionKeys = new Set<string>();
+  const negotiations = new Map<string, StoredNegotiation>();
+  const negotiationDecisions: StoredNegotiationDecision[] = [];
+  const negotiationDecisionKeys = new Set<string>();
   const attrSessions = new Map<string, StoredAttributionSession>();
   const intents = new Map<string, StoredCheckoutIntent>();
   const intentsByOrder = new Map<string, string>();
@@ -577,6 +631,9 @@ export function createMemoryCampaignStore(seed?: {
       const snapInvites = new Map(invites);
       const snapDecisions = [...decisions];
       const snapDecisionKeys = new Set(decisionKeys);
+      const snapNegotiations = new Map(negotiations);
+      const snapNegotiationDecisions = [...negotiationDecisions];
+      const snapNegotiationDecisionKeys = new Set(negotiationDecisionKeys);
       const snapAttr = new Map(attrSessions);
       const snapIntents = new Map(intents);
       const snapIntentsByOrder = new Map(intentsByOrder);
@@ -628,6 +685,12 @@ export function createMemoryCampaignStore(seed?: {
         decisions.push(...snapDecisions);
         decisionKeys.clear();
         for (const k of snapDecisionKeys) decisionKeys.add(k);
+        negotiations.clear();
+        for (const [k, v] of snapNegotiations) negotiations.set(k, v);
+        negotiationDecisions.length = 0;
+        negotiationDecisions.push(...snapNegotiationDecisions);
+        negotiationDecisionKeys.clear();
+        for (const k of snapNegotiationDecisionKeys) negotiationDecisionKeys.add(k);
         attrSessions.clear();
         for (const [k, v] of snapAttr) attrSessions.set(k, v);
         intents.clear();
@@ -794,6 +857,78 @@ export function createMemoryCampaignStore(seed?: {
       const next = { ...row, ...patch, updatedAt: now };
       marketStates.set(campaignId, next);
       return next;
+    },
+    async insertNegotiation(n) {
+      for (const row of negotiations.values()) {
+        if (
+          row.campaignId === n.campaignId &&
+          row.partnerId === n.partnerId &&
+          (row.status === "OPEN" || row.status === "COUNTERED" || row.status === "HOLD")
+        ) {
+          throw uniqueViolation("An active negotiation already exists for this pair");
+        }
+      }
+      const row: StoredNegotiation = {
+        ...n,
+        round: 1,
+        status: "OPEN",
+        counterMicroUsdc: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      negotiations.set(n.id, row);
+      return row;
+    },
+    async getNegotiation(id) {
+      return negotiations.get(id) ?? null;
+    },
+    async getActiveNegotiation(campaignId, partnerId) {
+      for (const row of negotiations.values()) {
+        if (
+          row.campaignId === campaignId &&
+          row.partnerId === partnerId &&
+          (row.status === "OPEN" || row.status === "COUNTERED" || row.status === "HOLD")
+        ) {
+          return row;
+        }
+      }
+      return null;
+    },
+    async updateNegotiation(id, patch) {
+      const row = negotiations.get(id);
+      if (!row) throw new Error("Negotiation not found");
+      if (patch.status === "OPEN" || patch.status === "COUNTERED" || patch.status === "HOLD") {
+        for (const other of negotiations.values()) {
+          if (
+            other.id !== id &&
+            other.campaignId === row.campaignId &&
+            other.partnerId === row.partnerId &&
+            (other.status === "OPEN" || other.status === "COUNTERED" || other.status === "HOLD")
+          ) {
+            throw uniqueViolation("An active negotiation already exists for this pair");
+          }
+        }
+      }
+      const next = { ...row, ...patch, updatedAt: now };
+      negotiations.set(id, next);
+      return next;
+    },
+    async listActionableNegotiations(limit) {
+      return [...negotiations.values()]
+        .filter((r) => r.status === "OPEN" || r.status === "COUNTERED")
+        .slice(0, limit);
+    },
+    async insertNegotiationDecision(d) {
+      const key = `${d.negotiationId}:${d.inputsHash}`;
+      if (negotiationDecisionKeys.has(key)) throw uniqueViolation("Negotiation decision already recorded");
+      const row: StoredNegotiationDecision = { ...d, createdAt: now };
+      negotiationDecisions.push(row);
+      negotiationDecisionKeys.add(key);
+      return row;
+    },
+    async getLatestNegotiationDecision(negotiationId) {
+      const rows = negotiationDecisions.filter((dd) => dd.negotiationId === negotiationId);
+      return rows.length === 0 ? null : rows[rows.length - 1];
     },
     async insertPricingDecision(d) {
       const key = `${d.campaignId}:${d.inputsHash}`;

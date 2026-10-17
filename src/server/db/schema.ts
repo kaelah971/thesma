@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   index,
@@ -101,6 +102,13 @@ export const pricingDecisionEnum = pgEnum("pricing_decision", [
   "KEEP",
   "REPRICE",
   "PAUSE",
+]);
+
+export const negotiationDecisionEnum = pgEnum("negotiation_decision", [
+  "ACCEPT",
+  "COUNTER",
+  "REJECT",
+  "HOLD",
 ]);
 
 export const users = pgTable(
@@ -629,7 +637,69 @@ export const marketDecisions = pgTable(
   ],
 );
 
+/**
+ * S7 supplier negotiations: one row per campaign+partner round-track.
+ * Exactly one non-terminal row per pair (partial unique index); terminal
+ * rows (ACCEPTED/REJECTED/EXPIRED/WITHDRAWN) free the pair for a fresh start.
+ * Status transitions happen only through the deterministic kernel.
+ */
+export const negotiations = pgTable(
+  "negotiations",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    round: integer("round").notNull().default(1),
+    status: text("status").notNull().default("OPEN"),
+    askMicroUsdc: bigint("ask_micro_usdc", { mode: "bigint" }).notNull(),
+    referenceBountyMicroUsdc: bigint("reference_bounty_micro_usdc", { mode: "bigint" }).notNull(),
+    counterMicroUsdc: bigint("counter_micro_usdc", { mode: "bigint" }),
+    policyVersion: integer("policy_version").notNull(),
+    marketVersion: integer("market_version").notNull(),
+    allocationCount: integer("allocation_count").notNull().default(1),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("negotiations_pair_active_unique")
+      .on(t.campaignId, t.partnerId)
+      .where(sql`status IN ('OPEN', 'COUNTERED', 'HOLD')`),
+    index("negotiations_campaign_idx").on(t.campaignId),
+    index("negotiations_status_idx").on(t.status),
+  ],
+);
+
+export const negotiationDecisions = pgTable(
+  "negotiation_decisions",
+  {
+    id: text("id").primaryKey(),
+    negotiationId: text("negotiation_id")
+      .notNull()
+      .references(() => negotiations.id, { onDelete: "cascade" }),
+    round: integer("round").notNull(),
+    decision: negotiationDecisionEnum("decision").notNull(),
+    reasonCodes: text("reason_codes").array().notNull().default([]),
+    inputsJson: jsonb("inputs_json").notNull(),
+    inputsHash: text("inputs_hash").notNull(),
+    askMicroUsdc: bigint("ask_micro_usdc", { mode: "bigint" }).notNull(),
+    counterMicroUsdc: bigint("counter_micro_usdc", { mode: "bigint" }),
+    autoExecuted: integer("auto_executed").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("negotiation_decisions_inputs_unique").on(t.negotiationId, t.inputsHash),
+    index("negotiation_decisions_negotiation_idx").on(t.negotiationId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbNegotiation = typeof negotiations.$inferSelect;
+export type DbNegotiationDecision = typeof negotiationDecisions.$inferSelect;
 export type DbMarketDecision = typeof marketDecisions.$inferSelect;
 export type DbReservation = typeof spendReservations.$inferSelect;
 export type DbPayout = typeof payouts.$inferSelect;
