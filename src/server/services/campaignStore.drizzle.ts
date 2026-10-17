@@ -11,6 +11,7 @@ import {
   marketStates,
   negotiationDecisions,
   negotiations,
+  supplyCommitments,
   outcomes,
   partners,
   partnerTerms,
@@ -453,6 +454,60 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         .from(negotiations)
         .where(sql`${negotiations.status} IN ('OPEN', 'COUNTERED')`)
         .limit(limit);
+    },
+    async insertSupplyCommitment(c) {
+      return unique(async () => {
+        const [row] = await db.insert(supplyCommitments).values({
+          id: c.id,
+          campaignId: c.campaignId,
+          negotiationId: c.negotiationId,
+          partnerId: c.partnerId,
+          partnerTermsId: c.partnerTermsId,
+          amountMicroUsdc: c.amountMicroUsdc,
+          expiresAt: c.expiresAt,
+        }).returning();
+        return row;
+      }, "Commitment already exists for negotiation");
+    },
+    async getCommitmentByNegotiation(negotiationId) {
+      const [row] = await db.select().from(supplyCommitments).where(eq(supplyCommitments.negotiationId, negotiationId)).limit(1);
+      return row ?? null;
+    },
+    async getCommitmentByOutcome(outcomeId) {
+      const [row] = await db.select().from(supplyCommitments).where(eq(supplyCommitments.consumedByOutcomeId, outcomeId)).limit(1);
+      return row ?? null;
+    },
+    async getCommitmentByTerms(partnerTermsId) {
+      const [row] = await db
+        .select()
+        .from(supplyCommitments)
+        .where(and(eq(supplyCommitments.partnerTermsId, partnerTermsId), eq(supplyCommitments.state, "ACTIVE")))
+        .limit(1);
+      return row ?? null;
+    },
+    async listActiveCommitments(campaignId) {
+      return db
+        .select()
+        .from(supplyCommitments)
+        .where(and(eq(supplyCommitments.campaignId, campaignId), eq(supplyCommitments.state, "ACTIVE")));
+    },
+    async updateSupplyCommitment(id, patch) {
+      const [row] = await db
+        .update(supplyCommitments)
+        .set({ ...patch, state: patch.state as "ACTIVE" | "CONSUMED" | "RELEASED" | "EXPIRED" | undefined, updatedAt: new Date() })
+        .where(eq(supplyCommitments.id, id))
+        .returning();
+      if (!row) throw new Error("Commitment not found");
+      return row;
+    },
+    async updateTermsStatus(termsId, status) {
+      const [row] = await db
+        .update(partnerTerms)
+        .set({ status, updatedAt: new Date() })
+        .where(eq(partnerTerms.id, termsId))
+        .returning();
+      if (!row) throw new Error("Terms not found");
+      return row;
     },
     async insertNegotiationDecision(d) {
       return unique(async () => {

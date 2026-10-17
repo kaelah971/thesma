@@ -25,7 +25,7 @@ interface ReservationContext {
   outcome: StoredOutcome;
   campaign: { id: string; state: string; workspaceId: string; currentPolicyVersionId: string | null };
   version: { id: string; version: number; bountyCeilingMicroUsdc: bigint | null };
-  terms: { id: string; priceMicroUsdc: bigint; allocationCount: number; policyVersion: number };
+  terms: { id: string; priceMicroUsdc: bigint; allocationCount: number; policyVersion: number; status: string };
   funding: { campaignKey: string; policyHash: string; observedAmountMicroUsdc: bigint | null; expectedAmountMicroUsdc: bigint; status: string };
   recipient: Address;
   amount: bigint;
@@ -59,9 +59,14 @@ async function loadReservationContext(
 
 export async function committedForCampaign(store: MarketStore, campaignId: string): Promise<bigint> {
   const rows = await store.listReservationsByCampaign(campaignId);
-  return rows
+  const reservations = rows
     .filter((r) => (ACTIVE_RESERVATION as readonly string[]).includes(r.state))
     .reduce((sum, r) => sum + r.amountMicroUsdc, 0n);
+  // Accepted-but-not-yet-downstream supply commitments count too; the first
+  // S5 reservation for their terms consumes them, so they are never double-
+  // counted (consumed rows leave the ACTIVE set before the reservation lands).
+  const commitments = await store.listActiveCommitments(campaignId);
+  return reservations + commitments.reduce((sum, c) => sum + c.amountMicroUsdc, 0n);
 }
 
 async function allocationUsed(store: MarketStore, campaignId: string, partnerId: string, termsId: string, excludeReservationId?: string): Promise<number> {
@@ -109,6 +114,9 @@ export async function reserveOutcomePayout(deps: PayoutDeps, params: { outcomeId
     if (!["LIVE", "CLOSING", "CLOSED"].includes(ctx.campaign.state)) {
       return { reserved: false as const, reason: "CAMPAIGN_NOT_PAYABLE" as const };
     }
+    if (ctx.terms.status !== "ACTIVE") {
+      fail(400, "TERMS_INACTIVE", "Partner terms are no longer active");
+    }
     if ((ctx as unknown as { noWallet?: boolean }).noWallet) {
       return { reserved: false as const, reason: "NO_WALLET" as const };
     }
@@ -123,7 +131,12 @@ export async function reserveOutcomePayout(deps: PayoutDeps, params: { outcomeId
       return { reserved: false as const, reason: "ALLOCATION_EXHAUSTED" as const };
     }
     const funded = ctx.funding.observedAmountMicroUsdc ?? ctx.funding.expectedAmountMicroUsdc;
-    const free = funded - (await committedForCampaign(ms, ctx.campaign.id));
+    // The outcome's own ACTIVE commitment (if any) already earmarks this
+    // exact unit: exclude it so the reservation converts rather than
+    // double-counts it. First-come-first-served across outcomes is intended.
+    const ownCommitment = await ms.getCommitmentByTerms(ctx.terms.id);
+    const committedAll = await committedForCampaign(ms, ctx.campaign.id);
+    const free = funded - (ownCommitment ? committedAll - ownCommitment.amountMicroUsdc : committedAll);
     if (ctx.amount > free) {
       return { reserved: false as const, reason: "INSUFFICIENT_BUDGET" as const };
     }
@@ -166,6 +179,18 @@ export async function reserveOutcomePayout(deps: PayoutDeps, params: { outcomeId
         proofHash: outcome.proofHash,
       });
     }
+    // Consume the matching pre-outcome commitment exactly once, if present.
+    // Legacy (pre-commitment) outcomes simply have no ACTIVE row: compatible.
+    const commitment = await ms.getCommitmentByTerms(ctx.terms.id);
+    let consumedCommitmentId: string | null = null;
+    if (commitment) {
+      await ms.updateSupplyCommitment(commitment.id, {
+        state: "CONSUMED",
+        consumedByOutcomeId: outcome.id,
+        consumedByReservationId: reservation.id,
+      });
+      consumedCommitmentId = commitment.id;
+    }
     const base = {
       campaignId: ctx.campaign.id,
       outcomeId: outcome.id,
@@ -173,6 +198,7 @@ export async function reserveOutcomePayout(deps: PayoutDeps, params: { outcomeId
       payoutId: payout.id,
       partnerId: outcome.partnerId,
       amountMicroUsdc: ctx.amount.toString(),
+      consumedCommitmentId,
     };
     await audit({ actorType: "SYSTEM", actorId: null, workspaceId: ctx.campaign.workspaceId, partnerId: outcome.partnerId, action: "payout.reserved", targetType: "spend_reservation", targetId: reservation.id, metadata: base });
     await audit({ actorType: "SYSTEM", actorId: null, workspaceId: ctx.campaign.workspaceId, partnerId: outcome.partnerId, action: "payout.prepared", targetType: "payout", targetId: payout.id, metadata: base });
@@ -190,6 +216,16 @@ async function releaseReservation(
   details?: unknown,
 ) {
   const nextReservation = await ms.updateReservation(reservation.id, { state: "RELEASED" });
+  // Restore this reservation's consumed commitment (if any) so the still-
+  // VERIFIED outcome keeps exactly one backing promise for its retry.
+  const consumed = await ms.getCommitmentByOutcome(payout.outcomeId);
+  if (consumed && consumed.state === "CONSUMED" && consumed.consumedByReservationId === reservation.id) {
+    await ms.updateSupplyCommitment(consumed.id, {
+      state: "ACTIVE",
+      consumedByOutcomeId: null,
+      consumedByReservationId: null,
+    });
+  }
   const nextPayout = await ms.updatePayout(payout.id, { state: "FAILED", failureCode });
   const base = { campaignId: payout.campaignId, outcomeId: payout.outcomeId, reservationId: payout.reservationId, payoutId: payout.id, failureCode, details };
   await audit({ actorType: "SYSTEM", actorId: null, workspaceId, partnerId: payout.partnerId, action: "payout.failed", targetType: "payout", targetId: payout.id, metadata: base });

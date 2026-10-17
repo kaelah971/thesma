@@ -111,6 +111,13 @@ export const negotiationDecisionEnum = pgEnum("negotiation_decision", [
   "HOLD",
 ]);
 
+export const commitmentStateEnum = pgEnum("commitment_state", [
+  "ACTIVE",
+  "CONSUMED",
+  "RELEASED",
+  "EXPIRED",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -697,7 +704,46 @@ export const negotiationDecisions = pgTable(
   ],
 );
 
+/**
+ * S7.1 supply commitments: the economic promise behind an ACCEPTED
+ * negotiation. One unit (price x 1) + one capacity unit per accept, locked
+ * at accept time and consumed exactly once by the first downstream S5
+ * reservation — never double-counted, never silently dropped.
+ */
+export const supplyCommitments = pgTable(
+  "supply_commitments",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    negotiationId: text("negotiation_id")
+      .notNull()
+      .references(() => negotiations.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    partnerTermsId: text("partner_terms_id")
+      .notNull()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    amountMicroUsdc: bigint("amount_micro_usdc", { mode: "bigint" }).notNull(),
+    state: commitmentStateEnum("state").notNull().default("ACTIVE"),
+    consumedByOutcomeId: text("consumed_by_outcome_id"),
+    consumedByReservationId: text("consumed_by_reservation_id"),
+    releasedReason: text("released_reason"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("supply_commitments_negotiation_unique").on(t.negotiationId),
+    index("supply_commitments_campaign_idx").on(t.campaignId),
+    index("supply_commitments_terms_idx").on(t.partnerTermsId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbSupplyCommitment = typeof supplyCommitments.$inferSelect;
 export type DbNegotiation = typeof negotiations.$inferSelect;
 export type DbNegotiationDecision = typeof negotiationDecisions.$inferSelect;
 export type DbMarketDecision = typeof marketDecisions.$inferSelect;

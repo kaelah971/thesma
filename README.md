@@ -72,6 +72,15 @@ npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
 
+## S7.1 Shipped — Accepted Negotiation Commitment Safety (LOCAL ONLY)
+
+- **Problem fixed:** S7 ACCEPTED terms without locking economics; two 1M accepts on 1M funded both succeeded. Now ACCEPT atomically commits one supply unit (price x 1) + one capacity unit, so the second accept deterministically REJECTs.
+- **Model:** `supply_commitments` (unique per negotiation; ACTIVE/CONSUMED/RELEASED/EXPIRED). Free budget = `funded − settled − active reservations − active commitments`. Capacity = active commitment units vs remaining required outcomes.
+- **ACCEPT transaction:** revalidates market/version/policy/funding/wallet/terms-absence fresh, checks budget + capacity + ceiling/floor, then mints terms + referral + commitment + ACCEPTED status + ACCEPT decision in one atomic unit. Kernel output is advisory; the commit is authoritative (audit can never show an uncommitted ACCEPT).
+- **Handoff (no double-count):** first S5 reservation for the terms consumes the commitment (links outcome + reservation); the outcome's own commitment is excluded from its free-budget check so conversion never self-blocks. S5 release restores a consumed-by-it commitment to ACTIVE.
+- **Release:** supplier withdraw on ACCEPTED revokes terms + releases (once; second withdraw 409s); lazy paths respect expiry; pause/pending-verification never release.
+- **Read model:** negotiation view exposes commitment state/amount/links.
+
 ## S7 Shipped — Supply Agent + Negotiation (LOCAL ONLY)
 
 - **Model:** one negotiation row per campaign+partner round-track (`OPEN → COUNTERED/ACCEPTED/REJECTED/EXPIRED/WITHDRAWN/HOLD`); exactly one non-terminal row per pair (partial unique index); append-only `negotiation_decisions` history.

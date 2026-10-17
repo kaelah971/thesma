@@ -528,7 +528,9 @@ describe("negotiation lifecycle (propose -> evaluate -> terms)", () => {
     const a1 = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "1000000" });
     const a2 = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-2", askMicroUsdc: "1000000" });
     expect(a1.evaluation?.decision).toBe("ACCEPT");
-    expect(a2.evaluation?.decision).toBe("ACCEPT");
+    // S7.1: the second accept cannot commit what the first already locked.
+    expect(a2.evaluation?.decision).toBe("REJECT");
+    expect(a2.negotiation.status).toBe("REJECTED");
     const mkOutcome = async (partnerUser: string, customer: Address) => {
       const t = await ctx.store.getTerms(campaignId, partnerUser === "partner-1" ? "p-1" : "p-2");
       const ref = await ctx.store.getReferralByTerms(t!.id);
@@ -550,14 +552,17 @@ describe("negotiation lifecycle (propose -> evaluate -> terms)", () => {
       if (!vv.verified) throw new Error("fixture failed to verify");
       return (await ctx.store.getOutcomeByIntent(created.intent.id))!.id;
     };
+    // The rejected supplier holds no terms, so no outcome can even start.
+    expect(await ctx.store.getTerms(campaignId, "p-2")).toBeNull();
+    // The accepted supplier flows to a real reservation against the lock.
     const o1 = await mkOutcome("partner-1", CUSTOMER);
-    const o2 = await mkOutcome("partner-2", "0x7777777777777777777777777777777777777777" as Address);
     const deps = { store: ctx.store, audit: ctx.checkoutDeps.audit, config: CONFIG, reader: ctx.reader, signer: null, executor: null, now: () => new Date(JULY) } as never;
     const r1 = await reserveOutcomePayout(deps, { outcomeId: o1 });
     expect(r1.reserved).toBe(true);
-    const r2 = await reserveOutcomePayout(deps, { outcomeId: o2 });
-    expect(r2.reserved).toBe(false);
-    expect((r2 as { reason?: string }).reason).toBe("INSUFFICIENT_BUDGET");
+    // Commitment consumed exactly once; reservation alone accounts the spend.
+    const com = await ctx.store.getCommitmentByNegotiation(a1.negotiation.id);
+    expect(com?.state).toBe("CONSUMED");
+    expect(com?.consumedByOutcomeId).toBe(o1);
   });
 
   it("S6 repricing never mutates already-negotiated frozen terms", async () => {
@@ -570,6 +575,204 @@ describe("negotiation lifecycle (propose -> evaluate -> terms)", () => {
     expect((await ctx.store.getMarket(campaignId))?.publicBountyMicroUsdc).not.toBe(2_000_000n);
     expect((await ctx.store.getTerms(campaignId, "p-1"))?.priceMicroUsdc).toBe(2_500_000n);
     expect((await ctx.store.getTerms(campaignId, "p-1"))?.marketVersion).toBe(1);
+  });
+
+  it("S7.1: competing accepts serialize on budget and capacity, not at payout", async () => {
+    // 10M funded, target 1: first 1M accept locks the only capacity unit.
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 3, "1000000", {
+      overrides: {
+        bountyFloorMicroUsdc: "1000000",
+        minQualifyingPurchaseMicroUsdc: "1000000",
+        targetOutcomeCount: 1,
+        budgetMicroUsdc: "10000000",
+        deadline: DEADLINE,
+        refundHoldSeconds: 0,
+      },
+      funded: 10_000_000n,
+    });
+    const a1 = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "1000000" });
+    expect(a1.evaluation?.decision).toBe("ACCEPT");
+    // Commitment is immediate and exact.
+    const com1 = await ctx.store.getCommitmentByNegotiation(a1.negotiation.id);
+    expect(com1?.state).toBe("ACTIVE");
+    expect(com1?.amountMicroUsdc).toBe(1_000_000n);
+    const { committedForCampaign: committed } = await import("@/server/services/payouts");
+    expect(await committed(ctx.store, campaignId)).toBe(1_000_000n);
+    // One unit remains required and one is committed: capacity is exhausted.
+    const a2 = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-2", askMicroUsdc: "1000000" });
+    expect(a2.evaluation?.decision).toBe("REJECT");
+    expect(a2.negotiation.status).toBe("REJECTED");
+    // Re-evaluating the accepted row never double-commits.
+    const again = await evaluateNegotiation(ctx.negotiationDeps, { negotiationId: a1.negotiation.id });
+    expect((await ctx.store.listActiveCommitments(campaignId)).length).toBe(1);
+    expect(again.negotiation.status).toBe("ACCEPTED");
+    // Store-level race guard: one commitment per negotiation, always.
+    const dup = await fails(
+      ctx.store.insertSupplyCommitment({
+        id: "c-dup", campaignId, negotiationId: a1.negotiation.id, partnerId: "p-1",
+        partnerTermsId: "t-x", amountMicroUsdc: 1_000_000n, expiresAt: new Date(DEADLINE),
+      }),
+    );
+    expect(dup.code).toBe("UNIQUE_VIOLATION");
+  });
+
+  it("S7.1: pause and reprice never disturb accepted commitments", async () => {
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 4);
+    await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "2500000" });
+    const com = (await ctx.store.listActiveCommitments(campaignId))[0];
+    expect(com.amountMicroUsdc).toBe(2_500_000n);
+    await evaluateMarket(ctx.pricingDeps, { campaignId }); // reprices up
+    expect((await ctx.store.getMarket(campaignId))?.publicBountyMicroUsdc).not.toBe(2_000_000n);
+    const afterReprice = await ctx.store.getCommitmentByNegotiation(com.negotiationId);
+    expect(afterReprice?.state).toBe("ACTIVE");
+    expect(afterReprice?.amountMicroUsdc).toBe(2_500_000n);
+    await ctx.store.updateMarket(campaignId, 2, { status: "PAUSED", version: 3 });
+    const afterPause = await ctx.store.getCommitmentByNegotiation(com.negotiationId);
+    expect(afterPause?.state).toBe("ACTIVE");
+  });
+
+  it("S7.1: outcome consumes the commitment once; rejection never unlocks", async () => {
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 5);
+    const acc = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "2500000" });
+    expect(acc.evaluation?.decision).toBe("ACCEPT");
+    const terms = (await ctx.store.getTerms(campaignId, "p-1"))!;
+    const referral = (await ctx.store.getReferralByTerms(terms.id))!;
+    const sess = await mintAttributionSession(ctx.checkoutDeps, {
+      referralId: referral.id, campaignId, partnerId: "p-1",
+      partnerTermsId: terms.id, expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const created = await createCheckoutIntent(ctx.checkoutDeps, {
+      attributionHandle: sess.handle, payerAddress: CUSTOMER, amountMicroUsdc: "10000000",
+    });
+    const ctxTx = nextTx();
+    await submitCheckoutTx(ctx.checkoutDeps, { intentId: created.intent.id, txHash: ctxTx });
+    ctx.reader.receipts.set(ctxTx.toLowerCase(), { status: "success", to: USDC, blockNumber: 42n, fundedEvents: [] });
+    ctx.reader.evidence.set(ctxTx.toLowerCase(), {
+      sender: CUSTOMER, blockTimestampMs: BLOCK_MS, blockNumber: 42n,
+      transfers: [{ token: USDC, from: CUSTOMER, to: OWNER_W, amount: 10_000_000n }],
+    });
+    const v = await verifyCheckoutIntent(ctx.checkoutDeps, { intentId: created.intent.id });
+    expect(v.verified).toBe(true);
+    const outcome = await ctx.store.getOutcomeByIntent(created.intent.id);
+    const deps = { store: ctx.store, audit: ctx.checkoutDeps.audit, config: CONFIG, reader: ctx.reader, signer: null, executor: null, now: () => new Date(JULY) } as never;
+    const r = await reserveOutcomePayout(deps, { outcomeId: outcome!.id });
+    expect(r.reserved).toBe(true);
+    // Consumed exactly once, linked to the outcome + reservation...
+    const consumed = await ctx.store.getCommitmentByNegotiation(acc.negotiation.id);
+    expect(consumed?.state).toBe("CONSUMED");
+    expect(consumed?.consumedByOutcomeId).toBe(outcome!.id);
+    expect(consumed?.consumedByReservationId).toBe((r.reservation as { id: string }).id);
+    const { committedForCampaign: committed } = await import("@/server/services/payouts");
+    // ...and the campaign accounts the reservation alone (no double count).
+    expect(await committed(ctx.store, campaignId)).toBe(2_500_000n);
+  });
+
+  it("S7.1: rejected future outcomes change nothing economic", async () => {
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 9);
+    const acc = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "2500000" });
+    const terms = (await ctx.store.getTerms(campaignId, "p-1"))!;
+    const referral = (await ctx.store.getReferralByTerms(terms.id))!;
+    const sess = await mintAttributionSession(ctx.checkoutDeps, {
+      referralId: referral.id, campaignId, partnerId: "p-1",
+      partnerTermsId: terms.id, expiresAt: new Date(Date.now() + 86_400_000),
+    });
+    const created = await createCheckoutIntent(ctx.checkoutDeps, {
+      attributionHandle: sess.handle, payerAddress: CUSTOMER, amountMicroUsdc: "10000000",
+    });
+    const ctxTx = nextTx();
+    await submitCheckoutTx(ctx.checkoutDeps, { intentId: created.intent.id, txHash: ctxTx });
+    // Evidence pays the wrong amount: verification deterministically rejects.
+    ctx.reader.receipts.set(ctxTx.toLowerCase(), { status: "success", to: USDC, blockNumber: 42n, fundedEvents: [] });
+    ctx.reader.evidence.set(ctxTx.toLowerCase(), {
+      sender: CUSTOMER, blockTimestampMs: BLOCK_MS, blockNumber: 42n,
+      transfers: [{ token: USDC, from: CUSTOMER, to: OWNER_W, amount: 1_000_000n }],
+    });
+    const v = await verifyCheckoutIntent(ctx.checkoutDeps, { intentId: created.intent.id });
+    expect(v.verified).toBe(false);
+    const com = await ctx.store.getCommitmentByNegotiation(acc.negotiation.id);
+    expect(com?.state).toBe("ACTIVE"); // still promised; partner may retry
+    const { committedForCampaign: committed } = await import("@/server/services/payouts");
+    expect(await committed(ctx.store, campaignId)).toBe(2_500_000n); // unchanged
+  });
+
+  it("S7.1: legitimate withdraw releases exactly once; revoked terms cannot pay", async () => {
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 6);
+    const a = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "2500000" });
+    expect(a.evaluation?.decision).toBe("ACCEPT");
+    const w = await withdrawNegotiation(ctx.negotiationDeps, { negotiationId: a.negotiation.id, userId: "partner-1" });
+    expect(w.negotiation.status).toBe("WITHDRAWN");
+    const com = await ctx.store.getCommitmentByNegotiation(a.negotiation.id);
+    expect(com?.state).toBe("RELEASED");
+    expect(com?.releasedReason).toBe("SUPPLIER_WITHDRAWN");
+    expect((await ctx.store.getTerms(campaignId, "p-1"))?.status).toBe("REVOKED");
+    const { committedForCampaign: committed } = await import("@/server/services/payouts");
+    expect(await committed(ctx.store, campaignId)).toBe(0n); // fully restored
+    const again = await fails(withdrawNegotiation(ctx.negotiationDeps, { negotiationId: a.negotiation.id, userId: "partner-1" }));
+    expect(again.status).toBe(409); // second release impossible
+    expect((await ctx.store.getCommitmentByNegotiation(a.negotiation.id))?.state).toBe("RELEASED");
+  });
+
+  it("S7.1: commitment accounting is immediate, singular, and race-safe", async () => {
+    const { committedForCampaign: committed } = await import("@/server/services/payouts");
+    // 10M funded, target 1: one 1M accept locks budget + the only capacity unit.
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 10, "1000000", {
+      overrides: {
+        bountyFloorMicroUsdc: "1000000",
+        minQualifyingPurchaseMicroUsdc: "1000000",
+        targetOutcomeCount: 1,
+        budgetMicroUsdc: "10000000",
+        deadline: DEADLINE,
+        refundHoldSeconds: 0,
+      },
+      funded: 10_000_000n,
+    });
+    expect(await committed(ctx.store, campaignId)).toBe(0n);
+    const a1 = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-1", askMicroUsdc: "1000000" });
+    expect(a1.evaluation?.decision).toBe("ACCEPT");
+    expect(await committed(ctx.store, campaignId)).toBe(1_000_000n); // budget locked now
+    expect((await ctx.store.listActiveCommitments(campaignId)).length).toBe(1); // capacity locked now
+    // Duplicate evaluation of the accepted row commits nothing new.
+    await evaluateNegotiation(ctx.negotiationDeps, { negotiationId: a1.negotiation.id });
+    await evaluateNegotiation(ctx.negotiationDeps, { negotiationId: a1.negotiation.id });
+    expect((await ctx.store.listActiveCommitments(campaignId)).length).toBe(1);
+    expect(await committed(ctx.store, campaignId)).toBe(1_000_000n);
+    // Second supplier loses on capacity even though budget would allow it.
+    const a2 = await proposeNegotiation(ctx.negotiationDeps, { campaignId, userId: "partner-2", askMicroUsdc: "1000000" });
+    expect(a2.evaluation?.decision).toBe("REJECT");
+    // Store-level race guard holds regardless of service flow.
+    const race = await fails(
+      ctx.store.insertSupplyCommitment({
+        id: "c-race", campaignId, negotiationId: a1.negotiation.id, partnerId: "p-1",
+        partnerTermsId: "t-x", amountMicroUsdc: 1_000_000n, expiresAt: new Date(DEADLINE),
+      }),
+    );
+    expect(race.code).toBe("UNIQUE_VIOLATION");
+  });
+
+  it("S7.1: corrupt states fail closed without partial commits", async () => {
+    const ctx = setup(JULY);
+    const { campaignId } = await openLiveMarket(ctx, 8);
+    // Zero free budget with a non-zero floor can never accept.
+    const { evaluateNegotiationOffer } = await import("@/server/domain/negotiation");
+    const broke = evaluateNegotiationOffer({
+      askMicroUsdc: 2_000_000n, referenceBountyMicroUsdc: 2_000_000n,
+      bountyFloorMicroUsdc: 2_000_000n, bountyCeilingMicroUsdc: 4_000_000n,
+      freeMicroUsdc: -5n, remainingRequired: 5, paceState: "UNDER_PACED", round: 1,
+      nowMs: JULY,
+    });
+    expect(broke.decision).toBe("REJECT");
+    // Proposing against a non-LIVE campaign fails before touching state.
+    const draft = await createDraft(ctx.campaignDeps, { workspaceId: "ws-A", userId: "owner-1", intentText: CANONICAL });
+    const bad = await fails(proposeNegotiation(ctx.negotiationDeps, { campaignId: draft.campaign.id, userId: "partner-1", askMicroUsdc: "2000000" }));
+    expect(bad.status).toBe(404); // no market exists yet: nothing to negotiate against
+    expect(await ctx.store.getActiveNegotiation(draft.campaign.id, "p-1")).toBeNull();
+    void campaignId;
   });
 
   it("worker isolates failures and never duplicates decisions for one state", async () => {

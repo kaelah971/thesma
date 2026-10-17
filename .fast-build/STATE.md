@@ -14,12 +14,22 @@
 - [x] S5: Automatic payout + reservation + reconciliation (LOCAL ONLY chain exercise)
 - [x] S6: Dynamic demand agent + pricing kernel + pace + reprice/pause (deterministic, LOCAL ONLY)
 - [x] S7: Supply agent + negotiation (deterministic kernel, LOCAL ONLY)
+- [x] S7.1: Accepted negotiation commitment safety (LOCAL ONLY)
 - [ ] S6: Dynamic Demand Agent (pricing kernel)
 - [ ] S7: Supply Agent + negotiation
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S7 Supply agent + negotiation — Shipped (this session)
+- S7.1 Accepted negotiation commitment safety — Shipped (this session)
+
+## Completed (S7.1 this session)
+- supply_commitments: one ACTIVE unit (price x 1) + one capacity unit per ACCEPT; unique per negotiation; consumed once by first S5 reservation; released on withdraw/revoke
+- Free budget now = funded - settled - active reservations - active commitments (S5 + S6 pace + kernel all read the same helper)
+- ACCEPT revalidates + commits atomically; decision row written after commit (audit always matches outcome)
+- S5: consumes matching commitment in-reserve (own-commitment excluded from self-check), restores on release, rejects REVOKED terms
+- Read model exposes commitment; withdraw on ACCEPTED revokes terms + releases once
+- Tests: 7 new commitment tests (143 vitest total green); S0-S7 suites untouched and green; forge 34 unchanged
+- Migration 0008 (23 tables total). Chain exercise: LOCAL ONLY (no chain interaction)
 
 ## Completed (S7 this session)
 - Kernel: pure evaluateNegotiationOffer (solvency cap, pace-widened band, counter-at-cap, 5% min-lift, 3-round stop, urgency from margin); corrupt/over-ceiling/insolvent fail closed
@@ -107,6 +117,7 @@
 - Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
 
 ## Schema created
+- S7.1: supply_commitments (unique negotiation, ACTIVE/CONSUMED/RELEASED/EXPIRED, consumed-by links, release reasons)
 - S7: negotiations (partial unique on active pair states), negotiation_decisions (unique negotiation+inputsHash)
 - S6: market_decisions (unique campaign+inputsHash, old/new bounty, autoExecuted, reason codes)
 - S5: spend_reservations (unique outcome, RESERVED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS/RELEASED), payouts (unique reservation/outcome/tx, PREPARED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS)
@@ -115,6 +126,15 @@
 - users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
 - S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
 - S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
+
+## Commands verified (S7.1)
+- npm install: pass (no new deps)
+- npm run db:generate: pass (drizzle/0008_past_loki.sql, 23 tables total; NOT applied, no live DB)
+- npm run typecheck: pass; npm run lint: pass (0 errors)
+- npm test: pass (143 tests + 2 anvil-skips; S0-S7 all green)
+- npm run build: pass (19/19 pages)
+- forge fmt --check / build / test: pass, 34 unchanged
+- secrets scan: clean; no .env
 
 ## Commands verified (S7)
 - npm install: pass (no new deps)
@@ -232,6 +252,11 @@
 - Terms freeze at the supplier's ASK when inside the band (cheaper for the campaign than the bounty); counters sit at the solvency/urgency cap
 - Negotiation creates allocation-free budget locks: NOTHING moves until S5 reservation; concurrent accepts serialize safely at reservation time
 - autoNegotiate flags remain stored-only; the worker evaluates explicitly proposed rows
+
+## S7.1 notes
+- Changed S7 semantic (intended): second competing ACCEPT now REJECTs at negotiation time instead of failing later at reservation
+- Terms allocation caps still enforced at reservation; commitments cover the first unit only (documented limitation)
+- Dead allocations bounded by terms expiry; no background sweeper yet (future slice may reclaim)
 
 ## Next action
 - S8 — DEMO + TRACTION POLISH (do NOT start in this session)

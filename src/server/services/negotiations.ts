@@ -354,11 +354,18 @@ async function evaluateRow(
   if (latest && latest.inputsHash === hash) {
     return { row, decision: serializeDecision(latest) };
   }
+  // ACCEPT commits economics first and records its decision after, so the
+  // audit trail can never show an ACCEPT that did not actually commit.
+  if (result.decision === "ACCEPT") {
+    return acceptOffer(ms, audit, row, ctx, {
+      reasons: [...result.reasons],
+      inputs: result.inputs as Record<string, unknown>,
+      inputsHash: hash,
+      urgency: result.urgency,
+    }, userId);
+  }
   const decision = await recordDecision(ms, audit, row, ctx, { ...result, inputsHash: hash });
 
-  if (result.decision === "ACCEPT") {
-    return acceptOffer(ms, audit, row, ctx, decision, userId);
-  }
   if (result.decision === "COUNTER") {
     const countered = await ms.updateNegotiation(row.id, { status: "COUNTERED", counterMicroUsdc: result.counterMicroUsdc as bigint });
     await audit({
@@ -425,17 +432,75 @@ async function recordDecision(
  * so S4/S5 consume the snapshot through the existing pipeline. No payment
  * happens here — only verified outcomes can ever pay, via S5.
  */
+/**
+ * ACCEPT commits economics: revalidate everything fresh inside the same
+ * transaction, then mint terms + referral + supply commitment atomically.
+ * The kernel result is advisory only — this commit is authoritative. On any
+ * guard failure the negotiation closes REJECTED with an explicit reason, so
+ * the audit trail always matches the outcome (never ACCEPT-decided-but-lost).
+ */
 async function acceptOffer(
   ms: MarketStore,
   audit: AuditSink,
   row: StoredNegotiation,
   ctx: Awaited<ReturnType<typeof loadSupplierContext>>,
-  decision: SerializedNegotiationDecision,
-  _userId: string,
+  kernel: { reasons: string[]; inputs: Record<string, unknown>; inputsHash: string; urgency: string },
+  userId: string,
 ): Promise<Evaluated> {
-  void _userId;
+  const rejectWith = async (reasons: string[]) => {
+    const rejected = await ms.updateNegotiation(row.id, { status: "REJECTED" });
+    const decision = await recordDecision(ms, audit, rejected, ctx, {
+      decision: "REJECT",
+      counterMicroUsdc: null,
+      urgency: kernel.urgency ?? "HEALTHY",
+      reasons,
+      inputs: kernel.inputs,
+      maxAffordableMicroUsdc: 0n,
+    });
+    await audit({
+      actorType: "AGENT", actorId: null, workspaceId: ctx.campaign.workspaceId, partnerId: row.partnerId,
+      action: "negotiation.rejected", targetType: "negotiation", targetId: row.id,
+      metadata: { campaignId: row.campaignId, negotiationId: row.id, round: row.round, reasons },
+    });
+    return { row: rejected, decision };
+  };
+
+  // Fresh revalidation: funding, capacity, market, supplier may all have
+  // moved since the kernel ran (concurrent accepts serialize here).
+  const market = await ms.getMarket(row.campaignId);
+  if (!market || market.status !== "OPEN" || market.version !== row.marketVersion) {
+    return rejectWith([market && market.status !== "OPEN" ? "MARKET_NOT_OPEN" : "MARKET_MOVED"]);
+  }
+  const campaign = await ms.getCampaign(row.campaignId);
+  if (!campaign || campaign.state !== "LIVE") return rejectWith(["CAMPAIGN_NOT_LIVE"]);
   const version = await ms.getVersion(row.campaignId, row.policyVersion);
-  if (!version?.deadline) fail(500, "INTERNAL", "Policy version is missing");
+  if (!version?.deadline || version.status !== "APPROVED") return rejectWith(["POLICY_SUPERSEDED"]);
+  if (campaign.currentPolicyVersionId !== version.id) return rejectWith(["POLICY_SUPERSEDED"]);
+  const funding = await ms.getFunding(row.campaignId, row.policyVersion);
+  if (!funding || funding.status !== "CONFIRMED") return rejectWith(["POLICY_NOT_FUNDED"]);
+  const profile = await ms.getPartnerById(row.partnerId);
+  if (!profile?.payoutWallet) return rejectWith(["WALLET_REQUIRED"]);
+  const existingTerms = await ms.getTerms(row.campaignId, row.partnerId);
+  if (existingTerms) return rejectWith(["TERMS_EXIST"]);
+  const funded = funding.observedAmountMicroUsdc ?? funding.expectedAmountMicroUsdc;
+  const reservations = await ms.listReservationsByCampaign(row.campaignId);
+  const committedReservations = reservations
+    .filter((r) => ["RESERVED", "SUBMITTED", "AMBIGUOUS", "SETTLED"].includes(r.state))
+    .reduce((sum, r) => sum + r.amountMicroUsdc, 0n);
+  const commitments = await ms.listActiveCommitments(row.campaignId);
+  const committedSupply = commitments.reduce((sum, c) => sum + c.amountMicroUsdc, 0n);
+  const free = funded - committedReservations - committedSupply;
+  if (row.askMicroUsdc > free) return rejectWith(["INSUFFICIENT_BUDGET"]);
+  const verified = await ms.countVerifiedOutcomes(row.campaignId);
+  const remaining = Math.max(0, (version.targetOutcomeCount as number) - verified);
+  if (commitments.length + 1 > remaining) return rejectWith(["NO_CAPACITY"]);
+  if (version.bountyCeilingMicroUsdc !== null && row.askMicroUsdc > (version.bountyCeilingMicroUsdc as bigint)) {
+    return rejectWith(["ASK_ABOVE_CEILING"]);
+  }
+  if (version.bountyFloorMicroUsdc !== null && row.askMicroUsdc < (version.bountyFloorMicroUsdc as bigint)) {
+    return rejectWith(["ASK_BELOW_FLOOR"]);
+  }
+
   try {
     const terms = await ms.insertTerms({
       id: newId(),
@@ -464,7 +529,25 @@ async function acceptOffer(
       }
     }
     if (!referral) fail(500, "INTERNAL", "Could not mint a referral code");
+    const commitment = await ms.insertSupplyCommitment({
+      id: newId(),
+      campaignId: row.campaignId,
+      negotiationId: row.id,
+      partnerId: row.partnerId,
+      partnerTermsId: terms.id,
+      amountMicroUsdc: row.askMicroUsdc,
+      expiresAt: version.deadline as Date,
+    });
     const accepted = await ms.updateNegotiation(row.id, { status: "ACCEPTED" });
+    const decision = await recordDecision(ms, audit, accepted, ctx, {
+      decision: "ACCEPT",
+      counterMicroUsdc: null,
+      urgency: kernel.urgency ?? "HEALTHY",
+      reasons: ["WITHIN_SAFE_BAND"],
+      inputs: kernel.inputs,
+      maxAffordableMicroUsdc: 0n,
+    });
+    void userId;
     await audit({
       actorType: "AGENT", actorId: null, workspaceId: ctx.campaign.workspaceId, partnerId: row.partnerId,
       action: "negotiation.accepted", targetType: "negotiation", targetId: row.id,
@@ -472,6 +555,7 @@ async function acceptOffer(
         campaignId: row.campaignId, negotiationId: row.id, round: row.round,
         priceMicroUsdc: row.askMicroUsdc.toString(), termsId: terms.id,
         referralId: (referral as { id: string }).id, policyVersion: row.policyVersion,
+        commitmentId: commitment.id,
       },
     });
     await audit({
@@ -485,15 +569,10 @@ async function acceptOffer(
     // Lost a race (or terms appeared via join meanwhile): deterministic close.
     const current = await ms.getNegotiation(row.id);
     if (current && current.status === "ACCEPTED") {
-      return { row: current, decision };
+      const latest = await ms.getLatestNegotiationDecision(row.id);
+      return { row: current, decision: latest ? serializeDecision(latest) : null };
     }
-    const rejected = await ms.updateNegotiation(row.id, { status: "REJECTED" });
-    await audit({
-      actorType: "AGENT", actorId: null, workspaceId: ctx.campaign.workspaceId, partnerId: row.partnerId,
-      action: "negotiation.rejected", targetType: "negotiation", targetId: row.id,
-      metadata: { campaignId: row.campaignId, negotiationId: row.id, round: row.round, reasons: ["TERMS_EXIST"] },
-    });
-    return { row: rejected, decision };
+    return rejectWith(["TERMS_EXIST"]);
   }
 }
 
@@ -588,15 +667,27 @@ export async function withdrawNegotiation(deps: NegotiationDeps, params: { negot
     if (!row) fail(404, "NOT_FOUND", "Negotiation not found");
     const profile = await ms.getPartnerByUserId(params.userId);
     if (!profile || profile.id !== row.partnerId) fail(403, "FORBIDDEN", "Only the offering supplier can withdraw");
-    if (row.status !== "OPEN" && row.status !== "COUNTERED" && row.status !== "HOLD") {
+    if (row.status !== "OPEN" && row.status !== "COUNTERED" && row.status !== "HOLD" && row.status !== "ACCEPTED") {
       fail(409, "NOT_WITHDRAWABLE", "Only open offers can be withdrawn");
     }
     const campaign = await ms.getCampaign(row.campaignId);
+    // Withdrawing an ACCEPTED negotiation revokes its terms and releases its
+    // commitment exactly once; downstream S5 rows keep their own lifecycle.
+    let releasedCommitmentId: string | null = null;
+    if (row.status === "ACCEPTED") {
+      const terms = await ms.getTerms(row.campaignId, row.partnerId);
+      if (terms) await ms.updateTermsStatus(terms.id, "REVOKED");
+      const commitment = await ms.getCommitmentByNegotiation(row.id);
+      if (commitment && commitment.state === "ACTIVE") {
+        await ms.updateSupplyCommitment(commitment.id, { state: "RELEASED", releasedReason: "SUPPLIER_WITHDRAWN" });
+        releasedCommitmentId = commitment.id;
+      }
+    }
     const withdrawn = await ms.updateNegotiation(row.id, { status: "WITHDRAWN" });
     await audit({
       actorType: "USER", actorId: params.userId, workspaceId: campaign?.workspaceId ?? null, partnerId: row.partnerId,
       action: "negotiation.withdrawn", targetType: "negotiation", targetId: row.id,
-      metadata: { campaignId: row.campaignId, negotiationId: row.id, round: row.round },
+      metadata: { campaignId: row.campaignId, negotiationId: row.id, round: row.round, releasedCommitmentId },
     });
     return { negotiation: serializeNegotiation(withdrawn) };
   });
@@ -614,10 +705,21 @@ export async function getNegotiationView(deps: NegotiationDeps, params: { negoti
   const latest = await deps.store.getLatestNegotiationDecision(row.id);
   const terms = await deps.store.getTerms(row.campaignId, row.partnerId);
   const frozen = row.status === "ACCEPTED" && terms ? { termsId: terms.id, priceMicroUsdc: terms.priceMicroUsdc.toString() } : null;
+  const commitment = await deps.store.getCommitmentByNegotiation(row.id);
   return {
     negotiation: serializeNegotiation(row),
     latestDecision: latest ? serializeDecision(latest) : null,
     frozen,
+    commitment: commitment
+      ? {
+          id: commitment.id,
+          state: commitment.state,
+          amountMicroUsdc: commitment.amountMicroUsdc.toString(),
+          createdAt: commitment.createdAt.toISOString(),
+          consumedByOutcomeId: commitment.consumedByOutcomeId,
+          releasedReason: commitment.releasedReason,
+        }
+      : null,
   };
 }
 

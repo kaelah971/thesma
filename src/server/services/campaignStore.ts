@@ -114,6 +114,22 @@ export interface StoredNegotiation {
   updatedAt: Date;
 }
 
+export interface StoredSupplyCommitment {
+  id: string;
+  campaignId: string;
+  negotiationId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  amountMicroUsdc: bigint;
+  state: string;
+  consumedByOutcomeId: string | null;
+  consumedByReservationId: string | null;
+  releasedReason: string | null;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface StoredNegotiationDecision {
   id: string;
   negotiationId: string;
@@ -406,6 +422,19 @@ export interface MarketStore extends FundingStore {
   ): Promise<StoredNegotiation>;
   /** OPEN + COUNTERED rows for the worker sweep. */
   listActionableNegotiations(limit: number): Promise<StoredNegotiation[]>;
+  insertSupplyCommitment(c: {
+    id: string; campaignId: string; negotiationId: string; partnerId: string;
+    partnerTermsId: string; amountMicroUsdc: bigint; expiresAt: Date;
+  }): Promise<StoredSupplyCommitment>;
+  getCommitmentByNegotiation(negotiationId: string): Promise<StoredSupplyCommitment | null>;
+  getCommitmentByOutcome(outcomeId: string): Promise<StoredSupplyCommitment | null>;
+  getCommitmentByTerms(partnerTermsId: string): Promise<StoredSupplyCommitment | null>;
+  listActiveCommitments(campaignId: string): Promise<StoredSupplyCommitment[]>;
+  updateSupplyCommitment(
+    id: string,
+    patch: Partial<Pick<StoredSupplyCommitment, "state" | "consumedByOutcomeId" | "consumedByReservationId" | "releasedReason">>,
+  ): Promise<StoredSupplyCommitment>;
+  updateTermsStatus(termsId: string, status: string): Promise<StoredTerms>;
   insertNegotiationDecision(d: {
     id: string; negotiationId: string; round: number; decision: string; reasonCodes: string[];
     inputsJson: Record<string, unknown>; inputsHash: string;
@@ -513,6 +542,7 @@ export function createMemoryCampaignStore(seed?: {
   const decisionKeys = new Set<string>();
   const negotiations = new Map<string, StoredNegotiation>();
   const negotiationDecisions: StoredNegotiationDecision[] = [];
+  const supplyCommitments = new Map<string, StoredSupplyCommitment>();
   const negotiationDecisionKeys = new Set<string>();
   const attrSessions = new Map<string, StoredAttributionSession>();
   const intents = new Map<string, StoredCheckoutIntent>();
@@ -633,6 +663,7 @@ export function createMemoryCampaignStore(seed?: {
       const snapDecisionKeys = new Set(decisionKeys);
       const snapNegotiations = new Map(negotiations);
       const snapNegotiationDecisions = [...negotiationDecisions];
+      const snapSupplyCommitments = new Map(supplyCommitments);
       const snapNegotiationDecisionKeys = new Set(negotiationDecisionKeys);
       const snapAttr = new Map(attrSessions);
       const snapIntents = new Map(intents);
@@ -689,6 +720,8 @@ export function createMemoryCampaignStore(seed?: {
         for (const [k, v] of snapNegotiations) negotiations.set(k, v);
         negotiationDecisions.length = 0;
         negotiationDecisions.push(...snapNegotiationDecisions);
+        supplyCommitments.clear();
+        for (const [k, v] of snapSupplyCommitments) supplyCommitments.set(k, v);
         negotiationDecisionKeys.clear();
         for (const k of snapNegotiationDecisionKeys) negotiationDecisionKeys.add(k);
         attrSessions.clear();
@@ -917,6 +950,57 @@ export function createMemoryCampaignStore(seed?: {
       return [...negotiations.values()]
         .filter((r) => r.status === "OPEN" || r.status === "COUNTERED")
         .slice(0, limit);
+    },
+    async insertSupplyCommitment(c) {
+      for (const row of supplyCommitments.values()) {
+        if (row.negotiationId === c.negotiationId) throw uniqueViolation("Commitment already exists for negotiation");
+      }
+      const row: StoredSupplyCommitment = {
+        ...c,
+        state: "ACTIVE",
+        consumedByOutcomeId: null,
+        consumedByReservationId: null,
+        releasedReason: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      supplyCommitments.set(c.id, row);
+      return row;
+    },
+    async getCommitmentByNegotiation(negotiationId) {
+      for (const row of supplyCommitments.values()) {
+        if (row.negotiationId === negotiationId) return row;
+      }
+      return null;
+    },
+    async getCommitmentByOutcome(outcomeId) {
+      for (const row of supplyCommitments.values()) {
+        if (row.consumedByOutcomeId === outcomeId) return row;
+      }
+      return null;
+    },
+    async getCommitmentByTerms(partnerTermsId) {
+      for (const row of supplyCommitments.values()) {
+        if (row.partnerTermsId === partnerTermsId && row.state === "ACTIVE") return row;
+      }
+      return null;
+    },
+    async listActiveCommitments(campaignId) {
+      return [...supplyCommitments.values()].filter((r) => r.campaignId === campaignId && r.state === "ACTIVE");
+    },
+    async updateSupplyCommitment(id, patch) {
+      const row = supplyCommitments.get(id);
+      if (!row) throw new Error("Commitment not found");
+      const next = { ...row, ...patch, updatedAt: now };
+      supplyCommitments.set(id, next);
+      return next;
+    },
+    async updateTermsStatus(termsId, status) {
+      const terms = termsRows.get(termsId);
+      if (!terms) throw new Error("Terms not found");
+      const next = { ...terms, status, updatedAt: now };
+      termsRows.set(termsId, next);
+      return next;
     },
     async insertNegotiationDecision(d) {
       const key = `${d.negotiationId}:${d.inputsHash}`;
