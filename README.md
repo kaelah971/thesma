@@ -72,6 +72,17 @@ npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
 
+## S6 Shipped — Dynamic Demand Agent + Pricing Kernel + Pace States (LOCAL ONLY)
+
+- **Kernel (pure, no floats):** pace ratio via integer cross-multiplication; `UNDER_PACED` (<85% of expected progress), `ON_PACE`, `OVER_PACED` (>115%), `EXHAUSTED` (target met / deadline passed / cannot afford one floor unit). Corrupt money/bounds fail closed to PAUSE.
+- **Decisions:** UNDER → bounded raise (gap-proportional, ≤25%/step, capped at ceiling); OVER → bounded ease-down (floored, never below floor or 1 micro); ON → KEEP. Applies to future participation only — frozen PartnerTerms/outcomes are never rewritten.
+- **Anti-thrash:** <5% change → KEEP; 1h cooldown after an executed REPRICE (PAUSE always bypasses); same-state re-evaluation returns the stored row via inputs-hash uniqueness.
+- **Pause:** budget/target/deadline exhaustion or invalid state → market PAUSED (new joins/feed stop; reserved/verified/held/reconciling outcomes untouched, payout lifecycle intact). Terminal in S6 (no resume yet).
+- **Agent:** deterministic `evaluateMarket` + `processPricingEvaluations` worker (`POST /internal/pricing/evaluate`, existing secret convention). No LLM is wired; the explanation is a fixed template over codes/numbers (LLM narration stays TARGET).
+- **Read model:** `GET /api/campaigns/:id/market/pricing` — price, live pace, last decision + reasons, evaluated/cooldown timestamps, window metrics.
+- **New table:** `market_decisions` (unique campaign+inputsHash, old/new bounty, autoExecuted flag).
+- **Chain exercise: LOCAL ONLY.** No testnet/mainnet, no funds moved.
+
 ## S5 Shipped — Automatic Partner Payout + Reservation + Reconciliation (LOCAL ONLY)
 
 - **Authority:** no per-payout approval. The company granted payout authority when it funded the campaign inside hard policy. The worker (`POST /internal/payouts/process`, `PAYOUT_WORKER_SECRET`) scans hold-cleared VERIFIED outcomes and drives reserve → execute → reconcile per outcome, idempotently.
@@ -151,6 +162,7 @@ No money moves in S1.
 - customer Arc checkout, purchase verification, outcome creation
 - revenue/CAC analytics derived from purchases
 - Partner payout beyond the S5 local loop (no testnet/mainnet settlement exercised)
+- LLM-driven pricing/explanations (kernel + templated reasons are deterministic; agent cannot override bounds)
 - full refund detection (hold timer only)
 - Gateway/CCTP
 - live market

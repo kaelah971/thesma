@@ -97,6 +97,35 @@ export interface StoredInvite {
   createdAt: Date;
 }
 
+export interface StoredPricingDecision {
+  id: string;
+  campaignId: string;
+  marketVersion: number;
+  decision: string;
+  paceState: string;
+  reasonCodes: string[];
+  inputsJson: Record<string, unknown>;
+  inputsHash: string;
+  oldBountyMicroUsdc: bigint | null;
+  newBountyMicroUsdc: bigint | null;
+  autoExecuted: boolean;
+  createdAt: Date;
+}
+
+export interface NewPricingDecision {
+  id: string;
+  campaignId: string;
+  marketVersion: number;
+  decision: string;
+  paceState: string;
+  reasonCodes: string[];
+  inputsJson: Record<string, unknown>;
+  inputsHash: string;
+  oldBountyMicroUsdc: bigint | null;
+  newBountyMicroUsdc: bigint | null;
+  autoExecuted: boolean;
+}
+
 export interface NewReferralEvent {
   id: string;
   referralId: string;
@@ -326,6 +355,18 @@ export interface MarketStore extends FundingStore {
   insertInvite(i: { id: string; campaignId: string; tokenHash: string; expiresAt: Date; maxUses: number | null; createdByUserId: string }): Promise<StoredInvite>;
   getInviteByHash(tokenHash: string): Promise<StoredInvite | null>;
   useInvite(tokenHash: string): Promise<StoredInvite>;
+  /** Optimistic market mutation; throws STALE (409) on version mismatch. */
+  updateMarket(
+    campaignId: string,
+    expectedVersion: number,
+    patch: Partial<Pick<StoredMarket, "publicBountyMicroUsdc" | "status">> & { version: number },
+  ): Promise<StoredMarket>;
+  insertPricingDecision(d: NewPricingDecision): Promise<StoredPricingDecision>;
+  getLatestPricingDecision(campaignId: string): Promise<StoredPricingDecision | null>;
+  getLastExecutedRepriceAt(campaignId: string): Promise<Date | null>;
+  countTermsSince(campaignId: string, since: Date): Promise<number>;
+  countVerifiedOutcomesSince(campaignId: string, since: Date): Promise<number>;
+  countVerifiedOutcomes(campaignId: string): Promise<number>;
   insertAttributionSession(s: { id: string; referralId: string; campaignId: string; partnerId: string; partnerTermsId: string; expiresAt: Date }): Promise<StoredAttributionSession>;
   getAttributionSession(id: string): Promise<StoredAttributionSession | null>;
   /** Single-use consume: null when missing or already used (race-safe). */
@@ -417,6 +458,8 @@ export function createMemoryCampaignStore(seed?: {
   const referralsByCode = new Map<string, string>();
   const referralEvents: Array<NewReferralEvent & { occurredAt: Date }> = [];
   const invites = new Map<string, StoredInvite>();
+  const decisions: StoredPricingDecision[] = [];
+  const decisionKeys = new Set<string>();
   const attrSessions = new Map<string, StoredAttributionSession>();
   const intents = new Map<string, StoredCheckoutIntent>();
   const intentsByOrder = new Map<string, string>();
@@ -532,6 +575,8 @@ export function createMemoryCampaignStore(seed?: {
       const snapReferralsByCode = new Map(referralsByCode);
       const snapEvents = [...referralEvents];
       const snapInvites = new Map(invites);
+      const snapDecisions = [...decisions];
+      const snapDecisionKeys = new Set(decisionKeys);
       const snapAttr = new Map(attrSessions);
       const snapIntents = new Map(intents);
       const snapIntentsByOrder = new Map(intentsByOrder);
@@ -579,6 +624,10 @@ export function createMemoryCampaignStore(seed?: {
         referralEvents.push(...snapEvents);
         invites.clear();
         for (const [k, v] of snapInvites) invites.set(k, v);
+        decisions.length = 0;
+        decisions.push(...snapDecisions);
+        decisionKeys.clear();
+        for (const k of snapDecisionKeys) decisionKeys.add(k);
         attrSessions.clear();
         for (const [k, v] of snapAttr) attrSessions.set(k, v);
         intents.clear();
@@ -731,6 +780,49 @@ export function createMemoryCampaignStore(seed?: {
       const next = { ...row, uses: row.uses + 1 };
       invites.set(tokenHash, next);
       return next;
+    },
+    async updateMarket(campaignId, expectedVersion, patch) {
+      const row = marketStates.get(campaignId);
+      if (!row) throw new Error("Market not found");
+      if (row.version !== expectedVersion) {
+        throw Object.assign(new Error("Stale market version"), {
+          status: 409,
+          code: "STALE_MARKET",
+          details: { expected: expectedVersion, current: row.version },
+        });
+      }
+      const next = { ...row, ...patch, updatedAt: now };
+      marketStates.set(campaignId, next);
+      return next;
+    },
+    async insertPricingDecision(d) {
+      const key = `${d.campaignId}:${d.inputsHash}`;
+      if (decisionKeys.has(key)) throw uniqueViolation("Pricing decision already recorded for this state");
+      const row: StoredPricingDecision = { ...d, createdAt: now };
+      decisions.push(row);
+      decisionKeys.add(key);
+      return row;
+    },
+    async getLatestPricingDecision(campaignId) {
+      const rows = decisions.filter((dd) => dd.campaignId === campaignId);
+      return rows.length === 0 ? null : rows[rows.length - 1];
+    },
+    async getLastExecutedRepriceAt(campaignId) {
+      const rows = decisions.filter(
+        (dd) => dd.campaignId === campaignId && dd.decision === "REPRICE" && dd.autoExecuted,
+      );
+      return rows.length === 0 ? null : rows[rows.length - 1].createdAt;
+    },
+    async countTermsSince(campaignId, since) {
+      return [...termsRows.values()].filter((t) => t.campaignId === campaignId && t.createdAt >= since).length;
+    },
+    async countVerifiedOutcomesSince(campaignId, since) {
+      return [...outcomes.values()].filter(
+        (o) => o.campaignId === campaignId && o.status === "VERIFIED" && o.verifiedAt !== null && o.verifiedAt >= since,
+      ).length;
+    },
+    async countVerifiedOutcomes(campaignId) {
+      return [...outcomes.values()].filter((o) => o.campaignId === campaignId && o.status === "VERIFIED").length;
     },
     async insertAttributionSession(s) {
       if (attrSessions.has(s.id)) throw uniqueViolation("Attribution session exists");

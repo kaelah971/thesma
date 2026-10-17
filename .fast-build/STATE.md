@@ -12,12 +12,22 @@
 - [x] S3: Live market + Partner rules + join + referral routes
 - [x] S4: Customer Arc purchase + attribution consumption + outcome verifier (LOCAL ONLY chain exercise)
 - [x] S5: Automatic payout + reservation + reconciliation (LOCAL ONLY chain exercise)
+- [x] S6: Dynamic demand agent + pricing kernel + pace + reprice/pause (deterministic, LOCAL ONLY)
 - [ ] S6: Dynamic Demand Agent (pricing kernel)
 - [ ] S7: Supply Agent + negotiation
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S5 Automatic payout + reservation + reconciliation — Shipped (this session)
+- S6 Dynamic demand agent + pricing kernel + pace + reprice/pause — Shipped (this session)
+
+## Completed (S6 this session)
+- Kernel: pure evaluatePricing (integer pace ratio, tolerance 15%, step <=25%, min-change 5%, 1h cooldown, 24h demand window); pace UNDER/ON/OVER/EXHAUSTED; corrupt states fail closed to PAUSE
+- Agent: evaluateMarket (persist+execute atomically, unique inputs-hash idempotency, STALE loser returns winner) + processPricingEvaluations (per-market isolation) + deterministic explanation template (no LLM wired)
+- Market mutation via optimistic updateMarket (version++ on reprice/pause); joins/feed already gate on OPEN so pause blocks participation with zero S3 changes
+- Read model: GET market/pricing (price, live pace, last decision/reasons, cooldown, window metrics)
+- Table: market_decisions (migration 0006, 20 tables total)
+- Tests: 6 kernel + 6 agent (118 vitest total green); S0-S5 suites untouched and green; forge 34 unchanged
+- Chain exercise: LOCAL ONLY (no chain interaction at all in S6)
 
 ## Completed (S5 this session)
 - Reservation: transactional VERIFIED+hold+policy/terms/wallet/ceiling/allocation/budget gate; one pair per outcome for life; idempotent repeats; in-place retry after release
@@ -85,12 +95,22 @@
 - Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
 
 ## Schema created
+- S6: market_decisions (unique campaign+inputsHash, old/new bounty, autoExecuted, reason codes)
 - S5: spend_reservations (unique outcome, RESERVED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS/RELEASED), payouts (unique reservation/outcome/tx, PREPARED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS)
 - S4: attribution_sessions (opaque handle PK, single-use, expiry), checkout_intents (unique order/tx, PREPARED/SUBMITTED/CONFIRMED/REJECTED/AMBIGUOUS), outcomes (unique intent/tx/customer-per-campaign/proof, PENDING/VERIFIED/REJECTED, holdUntil)
 - S3: market_states (campaign PK, bounty, OPEN status, destination, v1, policyVersion), partner_terms (unique campaign+partner, PUBLIC snapshot, expiry=deadline), referrals (unique opaque code), referral_events (CLICK + visitor hash), private_invites (token hash, expiry, max uses)
 - users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
 - S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
 - S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
+
+## Commands verified (S6)
+- npm install: pass (no new deps)
+- npm run db:generate: pass (drizzle/0006_premium_nightmare.sql, 20 tables total; NOT applied, no live DB)
+- npm run typecheck: pass; npm run lint: pass (0 errors)
+- npm test: pass (13 files, 118 tests + 2 anvil-skips; S0-S5 all green)
+- npm run build: pass (18/18 routes incl. internal pricing + market pricing read)
+- forge fmt --check / build / test: pass, 34 unchanged
+- secrets scan: clean; no .env
 
 ## Commands verified (S5)
 - npm install: pass (no new deps)
@@ -181,5 +201,10 @@
 - Uncertain broadcast state resolves via reconciliation, never resend; FAILED releases only with no-payment evidence
 - Anvil E2E opt-in (ARC_ANVIL_TESTS=1), skipped by default, never mainnet
 
+## S6 pricing notes
+- Future participation only: frozen terms/outcomes/reservations/payouts never rewritten by repricing or pause
+- PAUSE is terminal in S6 (resume is a future slice); cooldown never blocks safety pauses
+- Memory-store fixed row clock vs injectable service clock: cooldown tests use long-cooldown policy to prove the rule with disagreeing clocks (production clocks agree)
+
 ## Next action
-- S6 — DYNAMIC DEMAND AGENT + PRICING KERNEL + PACE STATES + REPRICING/PAUSE DECISIONS (do NOT start in this session)
+- S7 — SUPPLY AGENT + NEGOTIATION (do NOT start in this session)

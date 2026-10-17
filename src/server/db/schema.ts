@@ -97,6 +97,12 @@ export const payoutStateEnum = pgEnum("payout_state", [
   "AMBIGUOUS",
 ]);
 
+export const pricingDecisionEnum = pgEnum("pricing_decision", [
+  "KEEP",
+  "REPRICE",
+  "PAUSE",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -594,7 +600,37 @@ export const payouts = pgTable(
   ],
 );
 
+/**
+ * S6 pricing decisions: one row per evaluation that acts or is recorded.
+ * inputsHash (marketVersion + canonical inputs) makes repeat evaluations
+ * idempotent: the same state can never produce two rows.
+ */
+export const marketDecisions = pgTable(
+  "market_decisions",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    marketVersion: integer("market_version").notNull(),
+    decision: pricingDecisionEnum("decision").notNull(),
+    paceState: text("pace_state").notNull(),
+    reasonCodes: text("reason_codes").array().notNull().default([]),
+    inputsJson: jsonb("inputs_json").notNull(),
+    inputsHash: text("inputs_hash").notNull(),
+    oldBountyMicroUsdc: bigint("old_bounty_micro_usdc", { mode: "bigint" }),
+    newBountyMicroUsdc: bigint("new_bounty_micro_usdc", { mode: "bigint" }),
+    autoExecuted: integer("auto_executed").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("market_decisions_campaign_hash_unique").on(t.campaignId, t.inputsHash),
+    index("market_decisions_campaign_idx").on(t.campaignId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbMarketDecision = typeof marketDecisions.$inferSelect;
 export type DbReservation = typeof spendReservations.$inferSelect;
 export type DbPayout = typeof payouts.$inferSelect;
 export type DbAttributionSession = typeof attributionSessions.$inferSelect;

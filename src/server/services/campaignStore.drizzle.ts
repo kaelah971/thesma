@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import {
   attributionSessions,
@@ -7,6 +7,7 @@ import {
   campaignPolicyVersions,
   campaigns,
   checkoutIntents,
+  marketDecisions,
   marketStates,
   outcomes,
   partners,
@@ -387,6 +388,86 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         .returning();
       if (!row) throw new Error("Invite not found");
       return row;
+    },
+    async updateMarket(campaignId, expectedVersion, patch) {
+      const [row] = await db
+        .update(marketStates)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(marketStates.campaignId, campaignId), eq(marketStates.version, expectedVersion)))
+        .returning();
+      if (!row) {
+        throw Object.assign(new Error("Stale market version"), { status: 409, code: "STALE_MARKET" });
+      }
+      return row;
+    },
+    async insertPricingDecision(d) {
+      return unique(async () => {
+        const [row] = await db.insert(marketDecisions).values({
+          id: d.id,
+          campaignId: d.campaignId,
+          marketVersion: d.marketVersion,
+          decision: d.decision as "KEEP" | "REPRICE" | "PAUSE",
+          paceState: d.paceState,
+          reasonCodes: d.reasonCodes,
+          inputsJson: d.inputsJson,
+          inputsHash: d.inputsHash,
+          oldBountyMicroUsdc: d.oldBountyMicroUsdc,
+          newBountyMicroUsdc: d.newBountyMicroUsdc,
+          autoExecuted: d.autoExecuted ? 1 : 0,
+        }).returning();
+        return {
+          ...row,
+          autoExecuted: row.autoExecuted === 1,
+          inputsJson: (row.inputsJson ?? {}) as Record<string, unknown>,
+        };
+      }, "Pricing decision already recorded for this state");
+    },
+    async getLatestPricingDecision(campaignId) {
+      const [row] = await db
+        .select()
+        .from(marketDecisions)
+        .where(eq(marketDecisions.campaignId, campaignId))
+        .orderBy(desc(marketDecisions.createdAt))
+        .limit(1);
+      return row
+        ? {
+            ...row,
+            autoExecuted: row.autoExecuted === 1,
+            inputsJson: (row.inputsJson ?? {}) as Record<string, unknown>,
+          }
+        : null;
+    },
+    async getLastExecutedRepriceAt(campaignId) {
+      const [row] = await db
+        .select()
+        .from(marketDecisions)
+        .where(and(eq(marketDecisions.campaignId, campaignId), eq(marketDecisions.decision, "REPRICE")))
+        .orderBy(desc(marketDecisions.createdAt))
+        .limit(1);
+      return row && row.autoExecuted === 1 ? row.createdAt : null;
+    },
+    async countTermsSince(campaignId, since) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(partnerTerms)
+        .where(and(eq(partnerTerms.campaignId, campaignId), gte(partnerTerms.createdAt, since)));
+      return row?.n ?? 0;
+    },
+    async countVerifiedOutcomesSince(campaignId, since) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(outcomes)
+        .where(
+          and(eq(outcomes.campaignId, campaignId), eq(outcomes.status, "VERIFIED"), gte(outcomes.verifiedAt, since)),
+        );
+      return row?.n ?? 0;
+    },
+    async countVerifiedOutcomes(campaignId) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(outcomes)
+        .where(and(eq(outcomes.campaignId, campaignId), eq(outcomes.status, "VERIFIED")));
+      return row?.n ?? 0;
     },
     async insertAttributionSession(s) {
       return unique(async () => {

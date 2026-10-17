@@ -57,7 +57,7 @@ async function loadReservationContext(
   };
 }
 
-async function committedForCampaign(store: MarketStore, campaignId: string): Promise<bigint> {
+export async function committedForCampaign(store: MarketStore, campaignId: string): Promise<bigint> {
   const rows = await store.listReservationsByCampaign(campaignId);
   return rows
     .filter((r) => (ACTIVE_RESERVATION as readonly string[]).includes(r.state))
