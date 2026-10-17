@@ -4,6 +4,24 @@
 
 > Status vocabulary: **Shipped** = implemented and exercised in this build. **Target** = specified but not yet proven. **Roadmap** = deferred. **Hypothesis** = needs validation.
 
+## Arc Mainnet Proof
+
+Thesma completed the full real lifecycle on **Arc Mainnet (chain ID 5042)** — exactly **1.00 USDC** of campaign funding, one real purchase, one verified outcome, one settled payout, reconciled against canonical onchain evidence, plus a live second-run no-double-pay proof. Full record: `docs/mainnet-proof.md`. No secrets below; all hashes/addresses are public onchain data.
+
+Lifecycle: campaign funded → real purchase → outcome VERIFIED → legitimate 3600s safety hold → payout reserved → submitted once → reconciled SETTLED → second processing attempt skipped as ALREADY_SETTLED.
+
+- Network: Arc Mainnet, chain ID **5042** (`https://rpc.mainnet.arc.io`)
+- USDC (Arc canonical): `0x3600000000000000000000000000000000000000`
+- ThesmaMarketVault (canonical): `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`
+- Campaign ID: `5571f328-ceeb-4712-8671-a72be1966ffb`
+- Campaign key: `0x28bfb4381fc8feb2af0e93d9b42eb2276d24631c762c4cd195f9f918b655f0b9`
+- Policy hash: `0x83d2b960ce515e6989179baf2893cbab8d864851c597c7ae8405dec8944e007`
+- Funding tx (1.00 USDC): `0x5302634da4500b29338a14739917aff66d22e902f1d8dcf910f91a4f1cec05a3`
+- Purchase tx (1.00 USDC, payer → company): `0xddf1fd01f815b69c5e30487d2916c6e91186f58af293fd38b5bfef15473aa5ad`
+- Outcome: **VERIFIED** (`2026-10-17T19:48:17.123Z`), proof hash `0xca8a726ab92366eade1acd4186e5aa01e9b120e94a5da18eb6587e5703a8c9e2`
+- Payout: **SETTLED** — exactly **1,000,000 micro-USDC** to `0xeBB551653815900D6886d2eeEea2325d86275173`, tx `0xec3ab9e2bd8ad1ce1412fc0c2c4a65897dc598ddc221c3ef18cd148f350cb6b0`
+- No-double-pay: second worker run settled 0, submitted 0, reason `ALREADY_SETTLED`; single tx, reservation and payout unchanged.
+
 ## Backend-first architecture (S0)
 
 Route handlers are adapters, not business logic. Domain logic lives in `src/server/domain` + `src/server/services`; external systems plug in later through `src/server/adapters`. Money uses exact integer micro-USDC (`bigint` + decimal strings) — never floating point. Agent models will never receive raw private keys and never write directly to chain (enforced boundary for S1+).
