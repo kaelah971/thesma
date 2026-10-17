@@ -80,6 +80,23 @@ export const outcomeStatusEnum = pgEnum("outcome_status", [
   "REJECTED",
 ]);
 
+export const reservationStateEnum = pgEnum("reservation_state", [
+  "RESERVED",
+  "SUBMITTED",
+  "SETTLED",
+  "FAILED",
+  "AMBIGUOUS",
+  "RELEASED",
+]);
+
+export const payoutStateEnum = pgEnum("payout_state", [
+  "PREPARED",
+  "SUBMITTED",
+  "SETTLED",
+  "FAILED",
+  "AMBIGUOUS",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -502,7 +519,84 @@ export const outcomes = pgTable(
   ],
 );
 
+/**
+ * S5 spend reservations: campaign-scoped budget locks. Exactly one active
+ * reservation per outcome; committed amounts bound concurrent payouts so
+ * simultaneous VERIFIED outcomes can never overcommit funded budget.
+ */
+export const spendReservations = pgTable(
+  "spend_reservations",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    outcomeId: text("outcome_id")
+      .notNull()
+      .references(() => outcomes.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    partnerTermsId: text("partner_terms_id")
+      .notNull()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    amountMicroUsdc: bigint("amount_micro_usdc", { mode: "bigint" }).notNull(),
+    policyVersionId: text("policy_version_id")
+      .notNull()
+      .references(() => campaignPolicyVersions.id, { onDelete: "cascade" }),
+    state: reservationStateEnum("state").notNull().default("RESERVED"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("spend_reservations_outcome_unique").on(t.outcomeId),
+    index("spend_reservations_campaign_idx").on(t.campaignId),
+  ],
+);
+
+export const payouts = pgTable(
+  "payouts",
+  {
+    id: text("id").primaryKey(),
+    reservationId: text("reservation_id")
+      .notNull()
+      .references(() => spendReservations.id, { onDelete: "cascade" }),
+    outcomeId: text("outcome_id")
+      .notNull()
+      .references(() => outcomes.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    recipient: text("recipient").notNull(),
+    amountMicroUsdc: bigint("amount_micro_usdc", { mode: "bigint" }).notNull(),
+    proofHash: text("proof_hash").notNull(),
+    verifierSignature: text("verifier_signature"),
+    txHash: text("tx_hash"),
+    state: payoutStateEnum("state").notNull().default("PREPARED"),
+    blockNumber: integer("block_number"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("payouts_reservation_unique").on(t.reservationId),
+    uniqueIndex("payouts_outcome_unique").on(t.outcomeId),
+    uniqueIndex("payouts_tx_unique").on(t.txHash),
+    index("payouts_campaign_idx").on(t.campaignId),
+    index("payouts_outcome_idx").on(t.outcomeId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbReservation = typeof spendReservations.$inferSelect;
+export type DbPayout = typeof payouts.$inferSelect;
 export type DbAttributionSession = typeof attributionSessions.$inferSelect;
 export type DbCheckoutIntent = typeof checkoutIntents.$inferSelect;
 export type DbOutcome = typeof outcomes.$inferSelect;

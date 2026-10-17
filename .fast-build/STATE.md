@@ -11,14 +11,24 @@
 - [x] S2: ThesmaMarketVault + Arc campaign funding (contract + local verification; chain exercise LOCAL ONLY)
 - [x] S3: Live market + Partner rules + join + referral routes
 - [x] S4: Customer Arc purchase + attribution consumption + outcome verifier (LOCAL ONLY chain exercise)
-- [ ] S4: Customer purchase + verifier
-- [ ] S5: Automatic payout + reconciliation
+- [x] S5: Automatic payout + reservation + reconciliation (LOCAL ONLY chain exercise)
 - [ ] S6: Dynamic Demand Agent (pricing kernel)
 - [ ] S7: Supply Agent + negotiation
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S4 Customer Arc purchase + attribution consumption + outcome verifier — Shipped (this session)
+- S5 Automatic payout + reservation + reconciliation — Shipped (this session)
+
+## Completed (S5 this session)
+- Reservation: transactional VERIFIED+hold+policy/terms/wallet/ceiling/allocation/budget gate; one pair per outcome for life; idempotent repeats; in-place retry after release
+- Execution: full revalidation, isolated EIP-712 signer, single broadcast, SUBMITTED persistence; recipient rotation/allocation/vault mismatches release safely pre-broadcast
+- Reconciliation: SETTLED only on matching OutcomePaid; FAILED+release on revert/wrong-vault/no-event with evidence; AMBIGUOUS never resends; crash-before-hash detected via consumption check
+- Worker: processEligiblePayouts (reserve->execute->reconcile, per-item isolation, duplicate-safe) behind PAYOUT_WORKER_SECRET; reconcile-one endpoint; truthful receipt API
+- Signer/executor adapters: provider-neutral interfaces, viem local-key impls, env address-match fail-closed; Circle remains a clean future swap
+- EIP-712: exact contract shape (viim signTypedData), digest determinism tests, onchain acceptance proven in Anvil E2E
+- Tables: spend_reservations, payouts (migration 0005, 19 tables total)
+- Tests: 15 payout unit + 1 anvil full-loop (106 unit green incl. 91 prior; forge 34 unchanged)
+- Chain exercise: LOCAL ONLY (fake-reader units + anvil fund->join->purchase->verify->hold->reserve->sign->execute->SETTLED->no-double-pay)
 
 ## Completed (S4 this session)
 - Attribution portability: attribution_sessions (opaque single-use handle in ?thesma_attribution=); /r/:code keeps signed cookie + appends handle
@@ -75,11 +85,23 @@
 - Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
 
 ## Schema created
+- S5: spend_reservations (unique outcome, RESERVED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS/RELEASED), payouts (unique reservation/outcome/tx, PREPARED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS)
 - S4: attribution_sessions (opaque handle PK, single-use, expiry), checkout_intents (unique order/tx, PREPARED/SUBMITTED/CONFIRMED/REJECTED/AMBIGUOUS), outcomes (unique intent/tx/customer-per-campaign/proof, PENDING/VERIFIED/REJECTED, holdUntil)
 - S3: market_states (campaign PK, bounty, OPEN status, destination, v1, policyVersion), partner_terms (unique campaign+partner, PUBLIC snapshot, expiry=deadline), referrals (unique opaque code), referral_events (CLICK + visitor hash), private_invites (token hash, expiry, max uses)
 - users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
 - S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
 - S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
+
+## Commands verified (S5)
+- npm install: pass (no new deps)
+- npm run db:generate: pass (drizzle/0005_odd_dark_phoenix.sql, 19 tables total; NOT applied, no live DB)
+- npm run typecheck: pass; npm run lint: pass (0 errors)
+- npm test: pass (12 files, 106 tests + 2 anvil-skips; S0-S4 all green)
+- ARC_ANVIL_TESTS=1: payout E2E 1/1 pass (fund->join->purchase->verify->hold->reserve->sign->execute->SETTLED, exact bounty, no double-pay)
+- npm run build: pass (17/17 routes incl. internal payouts + receipt)
+- forge fmt --check / build / test: pass, 34 unchanged
+- npm run arc:doctor: NOT_CONFIGURED (honest, nothing contacted)
+- secrets scan: clean; no .env; signing keys only in .env.example (commented)
 
 ## Commands verified (S4)
 - npm install: pass (no new deps)
@@ -153,5 +175,11 @@
 - Single-use attribution handles; conflicting submission hashes 409; unknown receipts stay AMBIGUOUS and recover
 - Anvil E2E is opt-in (ARC_ANVIL_TESTS=1), skipped by default, never mainnet
 
+## S5 payout notes
+- VERIFIED != PAID, SUBMITTED != SETTLED; payout authority is campaign-scoped (funded policy), never treasury access
+- Server signer isolated from model/client; keys server-only, address-matched, never logged/returned
+- Uncertain broadcast state resolves via reconciliation, never resend; FAILED releases only with no-payment evidence
+- Anvil E2E opt-in (ARC_ANVIL_TESTS=1), skipped by default, never mainnet
+
 ## Next action
-- S5 — AUTOMATIC PARTNER PAYOUT + RESERVATION + RECONCILIATION (do NOT start in this session)
+- S6 — DYNAMIC DEMAND AGENT + PRICING KERNEL + PACE STATES + REPRICING/PAUSE DECISIONS (do NOT start in this session)

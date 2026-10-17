@@ -72,6 +72,16 @@ npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
 
+## S5 Shipped — Automatic Partner Payout + Reservation + Reconciliation (LOCAL ONLY)
+
+- **Authority:** no per-payout approval. The company granted payout authority when it funded the campaign inside hard policy. The worker (`POST /internal/payouts/process`, `PAYOUT_WORKER_SECRET`) scans hold-cleared VERIFIED outcomes and drives reserve → execute → reconcile per outcome, idempotently.
+- **Reservation:** `reserveOutcomePayout` runs transactionally — VERIFIED + hold cleared + LIVE/CLOSING/CLOSED + funded-policy binding + frozen terms price (never market price) + current registered wallet + ceiling + allocation + free-budget (`funded − committed`, so concurrent outcomes never overcommit). One reservation + one PREPARED payout per outcome for life (unique constraints); repeats are idempotent; retries reset the same rows.
+- **Execution:** `settleReservedPayout` revalidates everything (incl. recipient rotation → safe release, allocation, onchain vault/executor/verifier/funded-spent bindings), signs the exact EIP-712 proof with the isolated verifier key, broadcasts once via the executor, persists SUBMITTED. SUBMITTED is never called settled.
+- **Reconciliation:** `reconcilePayout` reads chain independently — SETTLED only on a matching `OutcomePaid` (vault, key, outcome, recipient, amount, proof). Reverts/wrong-vault/no-event → FAILED + evidence-backed release. Unknown receipts → AMBIGUOUS, never resend. Crash-before-hash-persist is detected via onchain consumption checks.
+- **Receipt:** `GET /api/receipts/payouts/:id` with live recomputed checks (funded, terms match, wallet match, hold) and truthful `settledMeansReconciled` flag.
+- **Isolation:** `OutcomeProofSigner`/`PayoutExecutor` interfaces keep keys out of models/clients/routes; env keys must derive to configured addresses or fail closed; Circle adapter remains a clean future swap (TARGET).
+- **Chain exercise: LOCAL ONLY** — fake-reader units plus the full Anvil loop (fund → join → purchase → verify → hold → reserve → sign → execute → SETTLED → no double-pay). No testnet/mainnet.
+
 ## S4 Shipped — Customer Arc Purchase + Attribution Consumption + Outcome Verifier
 
 - **Money path:** customer USDC goes DIRECTLY to the company wallet (`POST /api/checkout/intents` returns an unsigned `transfer(companyWallet, exactAmount)`; backend never signs). No Partner money moves — VERIFIED means evidence passed, NOT paid.
@@ -140,7 +150,7 @@ No money moves in S1.
 - negotiation/private terms (join source is always PUBLIC)
 - customer Arc checkout, purchase verification, outcome creation
 - revenue/CAC analytics derived from purchases
-- Partner payout (no reservation/spend movement of any kind in S4)
+- Partner payout beyond the S5 local loop (no testnet/mainnet settlement exercised)
 - full refund detection (hold timer only)
 - Gateway/CCTP
 - live market

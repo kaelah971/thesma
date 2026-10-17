@@ -132,6 +132,41 @@ export const VAULT_ABI = [
       { name: "totalFunded", type: "uint256", indexed: false },
     ],
   },
+  {
+    type: "function",
+    name: "payoutVerifiedOutcome",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "campaignKey", type: "bytes32" },
+      { name: "outcomeId", type: "bytes32" },
+      { name: "recipient", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "proofHash", type: "bytes32" },
+      { name: "occurredAt", type: "uint64" },
+      { name: "validUntil", type: "uint64" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "outcomeUsed",
+    stateMutability: "view",
+    inputs: [{ name: "outcomeId", type: "bytes32" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "event",
+    name: "OutcomePaid",
+    inputs: [
+      { name: "campaignKey", type: "bytes32", indexed: true },
+      { name: "policyHash", type: "bytes32", indexed: false },
+      { name: "outcomeId", type: "bytes32", indexed: true },
+      { name: "recipient", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "proofHash", type: "bytes32", indexed: false },
+    ],
+  },
 ] as const;
 
 const ERC20_ABI = [
@@ -340,6 +375,29 @@ export interface VerifierChainReader extends ArcChainReader {
   getTransferEvidence(txHash: Hex): Promise<TransferEvidence | null>;
 }
 
+export interface PaidEventEvidence {
+  campaignKey: Hex;
+  policyHash: Hex;
+  outcomeId: Hex;
+  recipient: Address;
+  amount: bigint;
+  proofHash: Hex;
+}
+
+export interface PayoutEvidence {
+  status: "success" | "reverted";
+  to: Address | null;
+  blockNumber: bigint;
+  paid: PaidEventEvidence[];
+}
+
+/** Extended reader for the S5 payout reconciler. Prior readers untouched. */
+export interface PayoutChainReader extends VerifierChainReader {
+  /** Null when the receipt is unknown (ambiguous). Reverted receipts included. */
+  getPayoutEvidence(txHash: Hex): Promise<PayoutEvidence | null>;
+  isOutcomeConsumed(vault: Address, outcomeId: Hex): Promise<boolean>;
+}
+
 export class ViemArcReader implements ArcChainReader {
   private client;
   constructor(rpcUrl: string) {
@@ -445,6 +503,56 @@ export class ViemArcReader implements ArcChainReader {
       }
     }
     return { sender: tx.from, blockTimestampMs, blockNumber: tx.blockNumber, transfers };
+  }
+
+  async getPayoutEvidence(txHash: Hex): Promise<PayoutEvidence | null> {
+    let receipt;
+    try {
+      receipt = await this.client.getTransactionReceipt({ hash: txHash });
+    } catch {
+      return null;
+    }
+    const paid: PaidEventEvidence[] = [];
+    for (const log of receipt.logs) {
+      try {
+        const decoded = decodeEventLog({ abi: VAULT_ABI, data: log.data, topics: log.topics });
+        if (decoded.eventName === "OutcomePaid") {
+          const a = decoded.args as unknown as {
+            campaignKey: Hex;
+            policyHash: Hex;
+            outcomeId: Hex;
+            recipient: Address;
+            amount: bigint;
+            proofHash: Hex;
+          };
+          paid.push({
+            campaignKey: a.campaignKey,
+            policyHash: a.policyHash,
+            outcomeId: a.outcomeId,
+            recipient: a.recipient,
+            amount: a.amount,
+            proofHash: a.proofHash,
+          });
+        }
+      } catch {
+        // Unrelated log: ignore.
+      }
+    }
+    return {
+      status: receipt.status === "success" ? "success" : "reverted",
+      to: (receipt.to ?? null) as Address | null,
+      blockNumber: receipt.blockNumber,
+      paid,
+    };
+  }
+
+  async isOutcomeConsumed(vault: Address, outcomeId: Hex): Promise<boolean> {
+    return this.client.readContract({
+      address: vault,
+      abi: VAULT_ABI,
+      functionName: "outcomeUsed",
+      args: [outcomeId],
+    });
   }
 
   async usdcBalanceOf(usdc: Address, account: Address): Promise<bigint> {

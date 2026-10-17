@@ -175,6 +175,41 @@ export interface StoredOutcome {
   updatedAt: Date;
 }
 
+export interface StoredReservation {
+  id: string;
+  campaignId: string;
+  outcomeId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  amountMicroUsdc: bigint;
+  policyVersionId: string;
+  state: string;
+  expiresAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StoredPayout {
+  id: string;
+  reservationId: string;
+  outcomeId: string;
+  campaignId: string;
+  partnerId: string;
+  recipient: string;
+  amountMicroUsdc: bigint;
+  proofHash: string;
+  verifierSignature: string | null;
+  txHash: string | null;
+  state: string;
+  blockNumber: number | null;
+  submittedAt: Date | null;
+  settledAt: Date | null;
+  reconciledAt: Date | null;
+  failureCode: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** Thrown (or translated from PG 23505) when a uniqueness race loses. Services retry or 409. */
 export function uniqueViolation(message: string) {
   return Object.assign(new Error(message), { code: "UNIQUE_VIOLATION", status: 409 });
@@ -309,6 +344,30 @@ export interface MarketStore extends FundingStore {
   getOutcomeByIntent(checkoutIntentId: string): Promise<StoredOutcome | null>;
   getOutcomeByTx(purchaseTx: string): Promise<StoredOutcome | null>;
   getOutcomeByCustomer(campaignId: string, customerKeyHash: string): Promise<StoredOutcome | null>;
+  listOutcomesByStatus(status: string, limit: number): Promise<StoredOutcome[]>;
+  updatePartnerWallet(partnerId: string, wallet: string | null): Promise<StorePartner>;
+  insertReservation(r: {
+    id: string; campaignId: string; outcomeId: string; partnerId: string; partnerTermsId: string;
+    amountMicroUsdc: bigint; policyVersionId: string;
+  }): Promise<StoredReservation>;
+  getReservation(id: string): Promise<StoredReservation | null>;
+  getReservationByOutcome(outcomeId: string): Promise<StoredReservation | null>;
+  listReservationsByCampaign(campaignId: string): Promise<StoredReservation[]>;
+  updateReservation(
+    id: string,
+    patch: Partial<Pick<StoredReservation, "state" | "expiresAt">>,
+  ): Promise<StoredReservation>;
+  insertPayout(p: {
+    id: string; reservationId: string; outcomeId: string; campaignId: string; partnerId: string;
+    recipient: string; amountMicroUsdc: bigint; proofHash: string;
+  }): Promise<StoredPayout>;
+  getPayout(id: string): Promise<StoredPayout | null>;
+  getPayoutByOutcome(outcomeId: string): Promise<StoredPayout | null>;
+  getPayoutByReservation(reservationId: string): Promise<StoredPayout | null>;
+  updatePayout(
+    id: string,
+    patch: Partial<Pick<StoredPayout, "state" | "recipient" | "amountMicroUsdc" | "proofHash" | "verifierSignature" | "txHash" | "blockNumber" | "submittedAt" | "settledAt" | "reconciledAt" | "failureCode">>,
+  ): Promise<StoredPayout>;
   updateOutcome(
     id: string,
     patch: Partial<Pick<StoredOutcome, "status" | "purchaseTx" | "purchaseAmountMicroUsdc" | "customerKeyHash" | "proofHash" | "blockNumber" | "occurredAt" | "verifiedAt" | "holdUntil" | "rejectionCode">>,
@@ -364,6 +423,11 @@ export function createMemoryCampaignStore(seed?: {
   const outcomes = new Map<string, StoredOutcome>();
   const outcomesByIntent = new Map<string, string>();
   const outcomesByTx = new Map<string, string>();
+  const reservations = new Map<string, StoredReservation>();
+  const reservationsByOutcome = new Map<string, string>();
+  const payouts = new Map<string, StoredPayout>();
+  const payoutsByOutcome = new Map<string, string>();
+  const payoutsByReservation = new Map<string, string>();
   for (const m of seed?.memberships ?? []) memberships.set(`${m.workspaceId}:${m.userId}`, m);
   for (const w of seed?.workspaces ?? []) {
     workspaceRows.set(w.id, {
@@ -474,6 +538,11 @@ export function createMemoryCampaignStore(seed?: {
       const snapOutcomes = new Map(outcomes);
       const snapOutcomesByIntent = new Map(outcomesByIntent);
       const snapOutcomesByTx = new Map(outcomesByTx);
+      const snapReservations = new Map(reservations);
+      const snapReservationsByOutcome = new Map(reservationsByOutcome);
+      const snapPayouts = new Map(payouts);
+      const snapPayoutsByOutcome = new Map(payoutsByOutcome);
+      const snapPayoutsByReservation = new Map(payoutsByReservation);
       const buffered: Array<Parameters<AuditSink>[0]> = [];
       const bufferedAudit: AuditSink = (async (input) => {
         buffered.push(input);
@@ -522,6 +591,16 @@ export function createMemoryCampaignStore(seed?: {
         for (const [k, v] of snapOutcomesByIntent) outcomesByIntent.set(k, v);
         outcomesByTx.clear();
         for (const [k, v] of snapOutcomesByTx) outcomesByTx.set(k, v);
+        reservations.clear();
+        for (const [k, v] of snapReservations) reservations.set(k, v);
+        reservationsByOutcome.clear();
+        for (const [k, v] of snapReservationsByOutcome) reservationsByOutcome.set(k, v);
+        payouts.clear();
+        for (const [k, v] of snapPayouts) payouts.set(k, v);
+        payoutsByOutcome.clear();
+        for (const [k, v] of snapPayoutsByOutcome) payoutsByOutcome.set(k, v);
+        payoutsByReservation.clear();
+        for (const [k, v] of snapPayoutsByReservation) payoutsByReservation.set(k, v);
         throw e;
       }
     },
@@ -578,6 +657,13 @@ export function createMemoryCampaignStore(seed?: {
       const row = partnerRows.get(partnerId);
       if (!row) throw new Error("Partner not found");
       const next = { ...row, rulesJson };
+      partnerRows.set(partnerId, next);
+      return next;
+    },
+    async updatePartnerWallet(partnerId, wallet) {
+      const row = partnerRows.get(partnerId);
+      if (!row) throw new Error("Partner not found");
+      const next = { ...row, payoutWallet: wallet };
       partnerRows.set(partnerId, next);
       return next;
     },
@@ -726,6 +812,78 @@ export function createMemoryCampaignStore(seed?: {
     },
     async getOutcomeByCustomer(campaignId, customerKeyHash) {
       return [...outcomes.values()].find((o) => o.campaignId === campaignId && o.customerKeyHash === customerKeyHash) ?? null;
+    },
+    async listOutcomesByStatus(status, limit) {
+      return [...outcomes.values()].filter((o) => o.status === status).slice(0, limit);
+    },
+    async insertReservation(r) {
+      if (reservationsByOutcome.has(r.outcomeId)) throw uniqueViolation("Reservation already exists for outcome");
+      const row: StoredReservation = { ...r, state: "RESERVED", expiresAt: null, createdAt: now, updatedAt: now };
+      reservations.set(r.id, row);
+      reservationsByOutcome.set(r.outcomeId, r.id);
+      return row;
+    },
+    async getReservation(id) {
+      return reservations.get(id) ?? null;
+    },
+    async getReservationByOutcome(outcomeId) {
+      const id = reservationsByOutcome.get(outcomeId);
+      if (!id) return null;
+      return reservations.get(id) ?? null;
+    },
+    async listReservationsByCampaign(campaignId) {
+      return [...reservations.values()].filter((r) => r.campaignId === campaignId);
+    },
+    async updateReservation(id, patch) {
+      const row = reservations.get(id);
+      if (!row) throw new Error("Reservation not found");
+      const next = { ...row, ...patch, updatedAt: now };
+      reservations.set(id, next);
+      return next;
+    },
+    async insertPayout(p) {
+      if (payoutsByOutcome.has(p.outcomeId)) throw uniqueViolation("Payout already exists for outcome");
+      if (payoutsByReservation.has(p.reservationId)) throw uniqueViolation("Payout already exists for reservation");
+      const row: StoredPayout = {
+        ...p,
+        verifierSignature: null,
+        txHash: null,
+        state: "PREPARED",
+        blockNumber: null,
+        submittedAt: null,
+        settledAt: null,
+        reconciledAt: null,
+        failureCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      payouts.set(p.id, row);
+      payoutsByOutcome.set(p.outcomeId, p.id);
+      payoutsByReservation.set(p.reservationId, p.id);
+      return row;
+    },
+    async getPayout(id) {
+      return payouts.get(id) ?? null;
+    },
+    async getPayoutByOutcome(outcomeId) {
+      const id = payoutsByOutcome.get(outcomeId);
+      if (!id) return null;
+      return payouts.get(id) ?? null;
+    },
+    async getPayoutByReservation(reservationId) {
+      const id = payoutsByReservation.get(reservationId);
+      if (!id) return null;
+      return payouts.get(id) ?? null;
+    },
+    async updatePayout(id, patch) {
+      const row = payouts.get(id);
+      if (!row) throw new Error("Payout not found");
+      if (patch.txHash && [...payouts.values()].some((o) => o.id !== id && o.txHash === patch.txHash)) {
+        throw uniqueViolation("Transaction hash already used");
+      }
+      const next = { ...row, ...patch, updatedAt: now };
+      payouts.set(id, next);
+      return next;
     },
     async updateOutcome(id, patch) {
       const row = outcomes.get(id);

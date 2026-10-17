@@ -11,9 +11,11 @@ import {
   outcomes,
   partners,
   partnerTerms,
+  payouts,
   privateInvites,
   referralEvents,
   referrals,
+  spendReservations,
   workspaceMembers,
   workspaces,
 } from "../db/schema";
@@ -250,6 +252,21 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
           }
         : null;
     },
+    async updatePartnerWallet(partnerId: string, wallet: string | null): Promise<StorePartner> {
+      const [row] = await db
+        .update(partners)
+        .set({ payoutWallet: wallet, updatedAt: new Date() })
+        .where(eq(partners.id, partnerId))
+        .returning();
+      if (!row) throw new Error("Partner not found");
+      return {
+        id: row.id,
+        userId: row.userId,
+        payoutWallet: row.payoutWallet,
+        categories: [...row.categories],
+        rulesJson: (row.rulesJson ?? {}) as Record<string, unknown>,
+      };
+    },
     async updatePartnerRules(partnerId, rulesJson): Promise<StorePartner> {
       const [row] = await db
         .update(partners)
@@ -477,6 +494,85 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         if (!row) throw new Error("Outcome not found");
         return row;
       }, "Outcome uniqueness conflict");
+    },
+    async listOutcomesByStatus(status, limit) {
+      return db
+        .select()
+        .from(outcomes)
+        .where(eq(outcomes.status, status as "PENDING" | "VERIFIED" | "REJECTED"))
+        .limit(limit);
+    },
+    async insertReservation(r) {
+      return unique(async () => {
+        const [row] = await db.insert(spendReservations).values({
+          id: r.id,
+          campaignId: r.campaignId,
+          outcomeId: r.outcomeId,
+          partnerId: r.partnerId,
+          partnerTermsId: r.partnerTermsId,
+          amountMicroUsdc: r.amountMicroUsdc,
+          policyVersionId: r.policyVersionId,
+        }).returning();
+        return row;
+      }, "Reservation already exists for outcome");
+    },
+    async getReservation(id) {
+      const [row] = await db.select().from(spendReservations).where(eq(spendReservations.id, id)).limit(1);
+      return row ?? null;
+    },
+    async getReservationByOutcome(outcomeId) {
+      const [row] = await db.select().from(spendReservations).where(eq(spendReservations.outcomeId, outcomeId)).limit(1);
+      return row ?? null;
+    },
+    async listReservationsByCampaign(campaignId) {
+      return db.select().from(spendReservations).where(eq(spendReservations.campaignId, campaignId));
+    },
+    async updateReservation(id, patch) {
+      const [row] = await db
+        .update(spendReservations)
+        .set({ ...patch, state: patch.state as "RESERVED" | "SUBMITTED" | "SETTLED" | "FAILED" | "AMBIGUOUS" | "RELEASED" | undefined, updatedAt: new Date() })
+        .where(eq(spendReservations.id, id))
+        .returning();
+      if (!row) throw new Error("Reservation not found");
+      return row;
+    },
+    async insertPayout(p) {
+      return unique(async () => {
+        const [row] = await db.insert(payouts).values({
+          id: p.id,
+          reservationId: p.reservationId,
+          outcomeId: p.outcomeId,
+          campaignId: p.campaignId,
+          partnerId: p.partnerId,
+          recipient: p.recipient,
+          amountMicroUsdc: p.amountMicroUsdc,
+          proofHash: p.proofHash,
+        }).returning();
+        return row;
+      }, "Payout already exists");
+    },
+    async getPayout(id) {
+      const [row] = await db.select().from(payouts).where(eq(payouts.id, id)).limit(1);
+      return row ?? null;
+    },
+    async getPayoutByOutcome(outcomeId) {
+      const [row] = await db.select().from(payouts).where(eq(payouts.outcomeId, outcomeId)).limit(1);
+      return row ?? null;
+    },
+    async getPayoutByReservation(reservationId) {
+      const [row] = await db.select().from(payouts).where(eq(payouts.reservationId, reservationId)).limit(1);
+      return row ?? null;
+    },
+    async updatePayout(id, patch) {
+      return unique(async () => {
+        const [row] = await db
+          .update(payouts)
+          .set({ ...patch, state: patch.state as "PREPARED" | "SUBMITTED" | "SETTLED" | "FAILED" | "AMBIGUOUS" | undefined, updatedAt: new Date() })
+          .where(eq(payouts.id, id))
+          .returning();
+        if (!row) throw new Error("Payout not found");
+        return row;
+      }, "Payout uniqueness conflict");
     },
   };
 }
