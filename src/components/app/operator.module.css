@@ -1,0 +1,416 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 12px;
+  height: calc(100dvh - 70px);
+  min-height: 560px;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.chatHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chatHead h1 {
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.chatHead p {
+  margin-top: 2px;
+  font-size: 13.5px;
+  color: var(--ink-3);
+}
+
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 24px;
+}
+
+.user {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.user p {
+  max-width: 70%;
+  padding: 10px 16px;
+  border-radius: 18px 4px 18px 18px;
+  background: var(--paper);
+  font-size: 15px;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--lav);
+  color: var(--lav-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.thesma {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 760px;
+}
+
+.thesma > svg {
+  flex: none;
+}
+
+.bubble {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 4px 18px 18px 18px;
+  background: #f3f5fd;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.pending {
+  color: var(--ink-3);
+}
+
+.facts {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.factsTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.facts dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.facts dt {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.facts dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  transition: transform 0.15s ease-out;
+}
+
+.list a:hover {
+  transform: translateX(2px);
+}
+
+.listText {
+  display: grid;
+  min-width: 0;
+}
+
+.listText b {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.listText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.linkBtn {
+  justify-self: start;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.linkBtn:hover {
+  background: var(--ink);
+  color: #fff;
+}
+
+.inlineChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inlineChips button,
+.chips button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition: border-color 0.15s ease-out, color 0.15s ease-out;
+}
+
+.inlineChips button:hover,
+.chips button:hover {
+  border-color: var(--line-2);
+  color: var(--ink);
+}
+
+.composer {
+  margin: 0 16px 16px;
+  padding: 12px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  transition: border-color 0.15s ease-out;
+}
+
+.composer:focus-within {
+  border-color: var(--ink-3);
+}
+
+.composer textarea {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.composerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.send {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+}
+
+.send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.side {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.card {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.card h2 {
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+
+.focusName {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.focusName:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ctxFacts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
+.ctxFacts div {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.ctxFacts dt {
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.ctxFacts dd {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.hold {
+  display: grid;
+  gap: 6px;
+  background: var(--cream);
+  border-color: #f1dfcc;
+}
+
+.hold strong {
+  margin-bottom: 10px;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.hold p {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.ctxLabel {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.history {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--paper);
+  font-size: 13.5px;
+  text-align: left;
+  color: var(--ink-2);
+  transition: color 0.15s ease-out;
+}
+
+.history button:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .chat {
+    height: calc(100dvh - 180px);
+    min-height: 520px;
+  }
+  .side {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    overflow: visible;
+  }
+}
+
+@media (max-width: 560px) {
+  .chatHead {
+    padding: 16px;
+  }
+  .messages {
+    padding: 16px;
+    gap: 14px;
+  }
+  .thesma > svg,
+  .user .avatar {
+    display: none;
+  }
+  .user p {
+    max-width: 88%;
+  }
+  .composer {
+    margin: 0 8px 8px;
+  }
+  .chips button:nth-child(n + 3) {
+    display: none;
+  }
+}

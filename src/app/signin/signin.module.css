@@ -1,0 +1,155 @@
+.page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  max-width: 1120px;
+  min-height: min(720px, calc(100dvh - 24px));
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.formSide {
+  display: flex;
+  flex-direction: column;
+  padding: 36px 48px;
+}
+
+.formBody {
+  width: 100%;
+  max-width: 380px;
+  margin: auto 0;
+  padding: 40px 0;
+}
+
+.formBody h1 {
+  font-size: 34px;
+  letter-spacing: -0.03em;
+}
+
+.formBody > p {
+  margin: 10px 0 28px;
+  color: var(--ink-2);
+}
+
+.form {
+  display: grid;
+  gap: 20px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+.tabs button {
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.tabs button[aria-selected="true"] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.fields {
+  display: grid;
+  gap: 16px;
+}
+
+.fields :global(.btn) {
+  margin-top: 4px;
+}
+
+.legal {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.artSide {
+  position: relative;
+  overflow: hidden;
+  margin: 10px;
+  border-radius: 26px;
+  background:
+    radial-gradient(60% 50% at 20% 85%, rgba(247, 196, 150, 0.55), transparent 70%),
+    radial-gradient(55% 45% at 90% 10%, rgba(205, 192, 245, 0.5), transparent 70%),
+    #f2efe9;
+  display: grid;
+  place-items: center;
+}
+
+.artWord {
+  position: absolute;
+  left: 50%;
+  bottom: -0.16em;
+  transform: translateX(-50%);
+  font-size: clamp(96px, 11vw, 136px);
+  font-weight: 600;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.artCard {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  width: 300px;
+  padding: 22px;
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.artCard strong {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 10px;
+}
+
+.artCard p {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.artLabel {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+@media (max-width: 860px) {
+  .panel {
+    grid-template-columns: 1fr;
+    min-height: calc(100dvh - 16px);
+  }
+  .artSide {
+    display: none;
+  }
+  .formSide {
+    padding: 28px 24px;
+  }
+  .page {
+    padding: 8px;
+  }
+}
