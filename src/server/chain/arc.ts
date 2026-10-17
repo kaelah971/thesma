@@ -147,12 +147,41 @@ const ERC20_ABI = [
   },
   {
     type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "function",
     name: "balanceOf",
     stateMutability: "view",
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ type: "uint256" }],
   },
+  {
+    type: "event",
+    name: "Transfer",
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
+
+/** Exact unsigned USDC transfer calldata for customer checkout. Never signs. */
+export function buildUsdcTransfer(args: { usdc: Address; to: Address; amountMicroUsdc: bigint }): Hex {
+  if (args.amountMicroUsdc <= 0n) throw new Error("Transfer amount must be positive");
+  return encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: "transfer",
+    args: [args.to, args.amountMicroUsdc],
+  });
+}
 
 /* ---------------- Unsigned funding intent ---------------- */
 
@@ -289,6 +318,28 @@ export interface ArcChainReader {
   hasCode(address: Address): Promise<boolean>;
 }
 
+export interface ObservedTransfer {
+  token: Address;
+  from: Address;
+  to: Address;
+  amount: bigint;
+}
+
+export interface TransferEvidence {
+  /** Canonical transaction sender (tx.from), never client-supplied. */
+  sender: Address;
+  /** Canonical block timestamp in milliseconds, never client-supplied. */
+  blockTimestampMs: number;
+  blockNumber: bigint;
+  transfers: ObservedTransfer[];
+}
+
+/** Extended reader for the S4 purchase verifier. Base reader is untouched. */
+export interface VerifierChainReader extends ArcChainReader {
+  /** Null when the transaction/block cannot be established (ambiguous). */
+  getTransferEvidence(txHash: Hex): Promise<TransferEvidence | null>;
+}
+
 export class ViemArcReader implements ArcChainReader {
   private client;
   constructor(rpcUrl: string) {
@@ -355,6 +406,45 @@ export class ViemArcReader implements ArcChainReader {
       closed: c.closed,
       returned: c.returned,
     };
+  }
+
+  async getTransferEvidence(txHash: Hex): Promise<TransferEvidence | null> {
+    let tx: { from: Address; blockNumber: bigint | null } | null = null;
+    let receipt: { status: string; logs: Array<{ address: Address; data: Hex; topics: [Hex, ...Hex[]] }> } | null = null;
+    try {
+      const [t, r] = await Promise.all([
+        this.client.getTransaction({ hash: txHash }),
+        this.client.getTransactionReceipt({ hash: txHash }),
+      ]);
+      tx = { from: t.from, blockNumber: t.blockNumber };
+      receipt = {
+        status: r.status,
+        logs: r.logs as Array<{ address: Address; data: Hex; topics: [Hex, ...Hex[]] }>,
+      };
+    } catch {
+      return null;
+    }
+    if (!tx || tx.blockNumber === null || !receipt || receipt.status !== "success") return null;
+    let blockTimestampMs: number;
+    try {
+      const block = await this.client.getBlock({ blockNumber: tx.blockNumber });
+      blockTimestampMs = Number(block.timestamp) * 1000;
+    } catch {
+      return null;
+    }
+    const transfers: ObservedTransfer[] = [];
+    for (const log of receipt.logs) {
+      try {
+        const decoded = decodeEventLog({ abi: ERC20_ABI, data: log.data, topics: log.topics });
+        if (decoded.eventName === "Transfer") {
+          const a = decoded.args as unknown as { from: Address; to: Address; value: bigint };
+          transfers.push({ token: log.address, from: a.from, to: a.to, amount: a.value });
+        }
+      } catch {
+        // Not an ERC20 Transfer log: ignore.
+      }
+    }
+    return { sender: tx.from, blockTimestampMs, blockNumber: tx.blockNumber, transfers };
   }
 
   async usdcBalanceOf(usdc: Address, account: Address): Promise<bigint> {

@@ -1,11 +1,14 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/client";
 import {
+  attributionSessions,
   auditEvents,
   campaignFundings,
   campaignPolicyVersions,
   campaigns,
+  checkoutIntents,
   marketStates,
+  outcomes,
   partners,
   partnerTerms,
   privateInvites,
@@ -235,6 +238,18 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
           }
         : null;
     },
+    async getPartnerById(partnerId: string): Promise<StorePartner | null> {
+      const [row] = await db.select().from(partners).where(eq(partners.id, partnerId)).limit(1);
+      return row
+        ? {
+            id: row.id,
+            userId: row.userId,
+            payoutWallet: row.payoutWallet,
+            categories: [...row.categories],
+            rulesJson: (row.rulesJson ?? {}) as Record<string, unknown>,
+          }
+        : null;
+    },
     async updatePartnerRules(partnerId, rulesJson): Promise<StorePartner> {
       const [row] = await db
         .update(partners)
@@ -355,6 +370,113 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         .returning();
       if (!row) throw new Error("Invite not found");
       return row;
+    },
+    async insertAttributionSession(s) {
+      return unique(async () => {
+        const [row] = await db.insert(attributionSessions).values({
+          id: s.id,
+          referralId: s.referralId,
+          campaignId: s.campaignId,
+          partnerId: s.partnerId,
+          partnerTermsId: s.partnerTermsId,
+          expiresAt: s.expiresAt,
+        }).returning();
+        return row;
+      }, "Attribution session exists");
+    },
+    async getAttributionSession(id) {
+      const [row] = await db.select().from(attributionSessions).where(eq(attributionSessions.id, id)).limit(1);
+      return row ?? null;
+    },
+    async consumeAttributionSession(id) {
+      // Single conditional write: only an unused session flips to used.
+      const [row] = await db
+        .update(attributionSessions)
+        .set({ usedAt: new Date() })
+        .where(and(eq(attributionSessions.id, id), isNull(attributionSessions.usedAt)))
+        .returning();
+      return row ?? null;
+    },
+    async insertCheckoutIntent(i) {
+      return unique(async () => {
+        const [row] = await db.insert(checkoutIntents).values({
+          id: i.id,
+          orderId: i.orderId,
+          campaignId: i.campaignId,
+          policyVersionId: i.policyVersionId,
+          partnerId: i.partnerId,
+          partnerTermsId: i.partnerTermsId,
+          attributionSessionId: i.attributionSessionId,
+          payerAddress: i.payerAddress,
+          merchantAddress: i.merchantAddress,
+          amountMicroUsdc: i.amountMicroUsdc,
+          chainId: i.chainId,
+          usdcAddress: i.usdcAddress,
+          expiresAt: i.expiresAt,
+        }).returning();
+        return row;
+      }, "Order ID collision");
+    },
+    async getCheckoutIntent(id) {
+      const [row] = await db.select().from(checkoutIntents).where(eq(checkoutIntents.id, id)).limit(1);
+      return row ?? null;
+    },
+    async updateCheckoutIntent(id, patch) {
+      return unique(async () => {
+        const [row] = await db
+          .update(checkoutIntents)
+          .set({ ...patch, status: patch.status as "PREPARED" | "SUBMITTED" | "CONFIRMED" | "REJECTED" | "AMBIGUOUS" | undefined, updatedAt: new Date() })
+          .where(eq(checkoutIntents.id, id))
+          .returning();
+        if (!row) throw new Error("Checkout intent not found");
+        return row;
+      }, "Transaction hash already submitted");
+    },
+    async insertOutcome(o) {
+      return unique(async () => {
+        const [row] = await db.insert(outcomes).values({
+          id: o.id,
+          campaignId: o.campaignId,
+          partnerId: o.partnerId,
+          partnerTermsId: o.partnerTermsId,
+          checkoutIntentId: o.checkoutIntentId,
+          customerKeyHash: o.customerKeyHash,
+          purchaseTx: o.purchaseTx,
+          purchaseAmountMicroUsdc: o.purchaseAmountMicroUsdc,
+        }).returning();
+        return row;
+      }, "Outcome already exists");
+    },
+    async getOutcome(id) {
+      const [row] = await db.select().from(outcomes).where(eq(outcomes.id, id)).limit(1);
+      return row ?? null;
+    },
+    async getOutcomeByIntent(checkoutIntentId) {
+      const [row] = await db.select().from(outcomes).where(eq(outcomes.checkoutIntentId, checkoutIntentId)).limit(1);
+      return row ?? null;
+    },
+    async getOutcomeByTx(purchaseTx) {
+      const [row] = await db.select().from(outcomes).where(eq(outcomes.purchaseTx, purchaseTx)).limit(1);
+      return row ?? null;
+    },
+    async getOutcomeByCustomer(campaignId, customerKeyHash) {
+      const [row] = await db
+        .select()
+        .from(outcomes)
+        .where(and(eq(outcomes.campaignId, campaignId), eq(outcomes.customerKeyHash, customerKeyHash)))
+        .limit(1);
+      return row ?? null;
+    },
+    async updateOutcome(id, patch) {
+      return unique(async () => {
+        const [row] = await db
+          .update(outcomes)
+          .set({ ...patch, status: patch.status as "PENDING" | "VERIFIED" | "REJECTED" | undefined, updatedAt: new Date() })
+          .where(eq(outcomes.id, id))
+          .returning();
+        if (!row) throw new Error("Outcome not found");
+        return row;
+      }, "Outcome uniqueness conflict");
     },
   };
 }

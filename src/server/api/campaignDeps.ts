@@ -4,6 +4,7 @@ import { createDrizzleCampaignStore, drizzleAuditSink } from "@/server/services/
 import type { CampaignDeps } from "@/server/services/campaigns";
 import type { FundingDeps } from "@/server/services/fundings";
 import type { MarketDeps } from "@/server/services/markets";
+import type { CheckoutDeps } from "@/server/services/checkout";
 import { unconfigured } from "@/server/api/errors";
 
 export function campaignDepsOr503(): { deps: CampaignDeps } | { response: Response } {
@@ -14,6 +15,19 @@ export function campaignDepsOr503(): { deps: CampaignDeps } | { response: Respon
 export function marketDepsOr503(): { deps: MarketDeps } | { response: Response } {
   if (!isDbConfigured()) return { response: unconfigured() };
   return { deps: { store: createDrizzleCampaignStore(), audit: drizzleAuditSink } };
+}
+
+export function checkoutDepsOr503(): { deps: CheckoutDeps } | { response: Response } {
+  if (!isDbConfigured()) return { response: unconfigured() };
+  const config = arcConfigFromEnv();
+  return {
+    deps: {
+      store: createDrizzleCampaignStore(),
+      audit: drizzleAuditSink,
+      config,
+      reader: config ? new ViemArcReader(config.rpcUrl) : null,
+    },
+  };
 }
 
 export function fundingDepsOr503(): { deps: FundingDeps } | { response: Response } {

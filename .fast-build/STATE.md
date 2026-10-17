@@ -10,6 +10,7 @@
 - [x] S1: Campaign Intent + Policy Engine
 - [x] S2: ThesmaMarketVault + Arc campaign funding (contract + local verification; chain exercise LOCAL ONLY)
 - [x] S3: Live market + Partner rules + join + referral routes
+- [x] S4: Customer Arc purchase + attribution consumption + outcome verifier (LOCAL ONLY chain exercise)
 - [ ] S4: Customer purchase + verifier
 - [ ] S5: Automatic payout + reconciliation
 - [ ] S6: Dynamic Demand Agent (pricing kernel)
@@ -17,7 +18,17 @@
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S3 Live market + Partner rules + join + referral routes — Shipped (this session)
+- S4 Customer Arc purchase + attribution consumption + outcome verifier — Shipped (this session)
+
+## Completed (S4 this session)
+- Attribution portability: attribution_sessions (opaque single-use handle in ?thesma_attribution=); /r/:code keeps signed cookie + appends handle
+- Checkout: account-free intent (unsigned transfer calldata, exact micro-USDC), submit (SUBMITTED + PENDING, hash never trusted), public receipt state
+- Verifier: VerifierChainReader (sender/block-time/Transfer logs) + 15 ordered checks (chain, receipt, token, payer, merchant, amount, minimum, deadline/intent/terms on canonical time, self-dealing, funded-policy pin, 3 uniqueness scopes); AMBIGUOUS on uncertainty, idempotent terminals
+- Outcome/proof: VERIFIED + proofHash (keccak binding for S5 reuse) + customerKeyHash (salted, never raw wallet) + holdUntil = verifiedAt + refundHold (hold timer only, no refund detection)
+- Internal verify route behind VERIFIER_INTERNAL_SECRET bearer; accepts no facts
+- Tables: attribution_sessions, checkout_intents, outcomes (migration 0004, 17 tables total)
+- Tests: 13 checkout + 1 anvil E2E (+4 secret-gate asserts inside); 91 unit green + anvil green; forge 34 unchanged
+- Chain exercise: LOCAL ONLY (fake-reader units + opt-in anvil transfer->VERIFIED)
 
 ## Completed (S3 this session)
 - Market domain: MarketState reuse, strict PartnerRules (canonical + S0-legacy normalize), pure eligibility matrix, destination-URL guard, opaque referral codes
@@ -64,10 +75,22 @@
 - Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
 
 ## Schema created
+- S4: attribution_sessions (opaque handle PK, single-use, expiry), checkout_intents (unique order/tx, PREPARED/SUBMITTED/CONFIRMED/REJECTED/AMBIGUOUS), outcomes (unique intent/tx/customer-per-campaign/proof, PENDING/VERIFIED/REJECTED, holdUntil)
 - S3: market_states (campaign PK, bounty, OPEN status, destination, v1, policyVersion), partner_terms (unique campaign+partner, PUBLIC snapshot, expiry=deadline), referrals (unique opaque code), referral_events (CLICK + visitor hash), private_invites (token hash, expiry, max uses)
 - users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
 - S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
 - S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
+
+## Commands verified (S4)
+- npm install: pass (no new deps)
+- npm run db:generate: pass (drizzle/0004_cynical_mad_thinker.sql, 17 tables total; NOT applied, no live DB)
+- npm run typecheck: pass; npm run lint: pass (0 errors)
+- npm test: pass (11 files, 91 tests + 1 anvil-skip; S0-S3 all green)
+- ARC_ANVIL_TESTS=1: 1/1 pass (real ERC20 transfer -> receipt -> VERIFIED + onchain company balance)
+- npm run build: pass (16/16 routes incl. checkout + internal verify)
+- forge fmt --check / build / test: pass, 34 unchanged
+- npm run arc:doctor: NOT_CONFIGURED (honest, nothing contacted)
+- secrets scan: clean; no .env; VERIFIER_INTERNAL_SECRET only in .env.example (commented)
 
 ## Commands verified (S3)
 - npm install: pass (no new deps)
@@ -124,5 +147,11 @@
 - Join: partner row SELECT FOR UPDATE serializes active-cap count-then-insert per Partner; unique (campaign,partner) + referral-code unique with retry make losers deterministic/idempotent
 - Stale marketVersion rejected explicitly; terms snapshot frozen at join
 
+## S4 verifier notes
+- Canonical block timestamp decides timing; client time/webhooks never trusted
+- VERIFIED = evidence passed, NOT paid; S5 must respect holdUntil (refund detection NOT shipped)
+- Single-use attribution handles; conflicting submission hashes 409; unknown receipts stay AMBIGUOUS and recover
+- Anvil E2E is opt-in (ARC_ANVIL_TESTS=1), skipped by default, never mainnet
+
 ## Next action
-- S4 — CUSTOMER ARC PURCHASE + ATTRIBUTION CONSUMPTION + OUTCOME VERIFIER (do NOT start in this session)
+- S5 — AUTOMATIC PARTNER PAYOUT + RESERVATION + RECONCILIATION (do NOT start in this session)

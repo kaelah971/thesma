@@ -72,6 +72,17 @@ npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
 
+## S4 Shipped — Customer Arc Purchase + Attribution Consumption + Outcome Verifier
+
+- **Money path:** customer USDC goes DIRECTLY to the company wallet (`POST /api/checkout/intents` returns an unsigned `transfer(companyWallet, exactAmount)`; backend never signs). No Partner money moves — VERIFIED means evidence passed, NOT paid.
+- **Portable attribution:** `/r/:code` still sets the signed same-origin cookie AND appends an opaque `?thesma_attribution=<random>` handle backed by `attribution_sessions` (single-use, expiring; nothing sensitive in the URL).
+- **Checkout:** account-free intent (attribution/payer/amount checks incl. self-referral + self-purchase + minimum), `POST /api/checkout/:id/confirm` records SUBMITTED + PENDING outcome (hash format only — never success), `GET /api/checkout/:id` safe receipt state.
+- **Verifier (`POST /internal/checkout/:id/verify`, `VERIFIER_INTERNAL_SECRET` bearer):** reads Arc independently — chain match, receipt success, USDC Transfer(sender==payer, recipient==company, amount==intent), minimum, canonical block time vs deadline/intent/terms expiry, self-dealing re-checks, funded-policy pinning, one-tx/one-intent/one-customer uniqueness. Definitive failures → REJECTED + code; unknown RPC/receipt → AMBIGUOUS (recoverable, never blind). Success → VERIFIED + proofHash + `holdUntil = verifiedAt + refundHoldSeconds`.
+- **Refund boundary:** only the HOLD timer is implemented. No refund-event detection exists; S5 must not settle before `holdUntil`.
+- **New tables:** `attribution_sessions`, `checkout_intents` (unique order/tx), `outcomes` (unique intent/tx/customer-per-campaign/proof).
+- **Audit:** `checkout.intent_created/submitted/confirmed/rejected/ambiguous`, `outcome.verified/rejected`.
+- **Proven locally:** opt-in Anvil E2E (`ARC_ANVIL_TESTS=1`) drives a real ERC20 transfer through receipt → verifier → VERIFIED with onchain company settlement. No testnet/mainnet exercise.
+
 ## S3 Shipped — Live Market + Partner Rules + Join + Referral Routes
 
 - **Market open (owner-approved bootstrap bounty — temporary, S6 repricing owns strategy later):** `POST /api/campaigns/:id/market/open` requires LIVE + APPROVED + CONFIRMED funding for the same policy version, bounty within [floor, ceiling] and affordable (`target × bounty ≤ funded`), future deadline, validated destination URL, one open per campaign. Starts at version 1, status OPEN.
@@ -129,6 +140,8 @@ No money moves in S1.
 - negotiation/private terms (join source is always PUBLIC)
 - customer Arc checkout, purchase verification, outcome creation
 - revenue/CAC analytics derived from purchases
+- Partner payout (no reservation/spend movement of any kind in S4)
+- full refund detection (hold timer only)
 - Gateway/CCTP
 - live market
 - market pricing / repricing

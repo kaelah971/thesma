@@ -66,6 +66,20 @@ export const marketStatusEnum = pgEnum("market_status", [
   "CLOSED",
 ]);
 
+export const checkoutStatusEnum = pgEnum("checkout_status", [
+  "PREPARED",
+  "SUBMITTED",
+  "CONFIRMED",
+  "REJECTED",
+  "AMBIGUOUS",
+]);
+
+export const outcomeStatusEnum = pgEnum("outcome_status", [
+  "PENDING",
+  "VERIFIED",
+  "REJECTED",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -380,7 +394,118 @@ export const privateInvites = pgTable(
   ],
 );
 
+/**
+ * S4 portable attribution sessions. The opaque handle goes in the redirect
+ * URL (?thesma_attribution=...); only random IDs travel, never wallets or
+ * policy. Single-use: consumed when the first checkout intent is created.
+ */
+export const attributionSessions = pgTable(
+  "attribution_sessions",
+  {
+    id: text("id").primaryKey(),
+    referralId: text("referral_id")
+      .notNull()
+      .references(() => referrals.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    partnerTermsId: text("partner_terms_id")
+      .notNull()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("attribution_sessions_campaign_idx").on(t.campaignId)],
+);
+
+export const checkoutIntents = pgTable(
+  "checkout_intents",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    policyVersionId: text("policy_version_id")
+      .notNull()
+      .references(() => campaignPolicyVersions.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    partnerTermsId: text("partner_terms_id")
+      .notNull()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    attributionSessionId: text("attribution_session_id").references(() => attributionSessions.id, {
+      onDelete: "set null",
+    }),
+    payerAddress: text("payer_address").notNull(),
+    merchantAddress: text("merchant_address").notNull(),
+    amountMicroUsdc: bigint("amount_micro_usdc", { mode: "bigint" }).notNull(),
+    chainId: integer("chain_id").notNull(),
+    usdcAddress: text("usdc_address").notNull(),
+    status: checkoutStatusEnum("status").notNull().default("PREPARED"),
+    txHash: text("tx_hash"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("checkout_intents_order_unique").on(t.orderId),
+    uniqueIndex("checkout_intents_tx_unique").on(t.txHash),
+    index("checkout_intents_campaign_idx").on(t.campaignId),
+  ],
+);
+
+export const outcomes = pgTable(
+  "outcomes",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    partnerTermsId: text("partner_terms_id")
+      .notNull()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    checkoutIntentId: text("checkout_intent_id")
+      .notNull()
+      .references(() => checkoutIntents.id, { onDelete: "cascade" }),
+    customerKeyHash: text("customer_key_hash").notNull(),
+    purchaseTx: text("purchase_tx").notNull(),
+    purchaseAmountMicroUsdc: bigint("purchase_amount_micro_usdc", { mode: "bigint" }).notNull(),
+    status: outcomeStatusEnum("status").notNull().default("PENDING"),
+    proofHash: text("proof_hash"),
+    blockNumber: integer("block_number"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    holdUntil: timestamp("hold_until", { withTimezone: true }),
+    rejectionCode: text("rejection_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("outcomes_intent_unique").on(t.checkoutIntentId),
+    uniqueIndex("outcomes_purchase_tx_unique").on(t.purchaseTx),
+    uniqueIndex("outcomes_campaign_customer_unique").on(t.campaignId, t.customerKeyHash),
+    uniqueIndex("outcomes_proof_unique").on(t.proofHash),
+    index("outcomes_campaign_idx").on(t.campaignId),
+    index("outcomes_partner_idx").on(t.partnerId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbAttributionSession = typeof attributionSessions.$inferSelect;
+export type DbCheckoutIntent = typeof checkoutIntents.$inferSelect;
+export type DbOutcome = typeof outcomes.$inferSelect;
 export type DbFunding = typeof campaignFundings.$inferSelect;
 export type DbMarket = typeof marketStates.$inferSelect;
 export type DbTerms = typeof partnerTerms.$inferSelect;

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { isDbConfigured } from "@/server/db/client";
 import { createDrizzleCampaignStore } from "@/server/services/campaignStore.drizzle";
 import { resolveReferral } from "@/server/services/markets";
+import { mintAttributionSession } from "@/server/services/checkout";
 import { assertSafeDestinationUrl, REFERRAL_EVENT_CLICK } from "@/server/domain/market";
 import {
   ATTRIBUTION_COOKIE_NAME,
@@ -15,8 +16,10 @@ import { newId } from "@/server/auth/session";
 /**
  * GET /r/:code — referral redirect + first-party attribution.
  * Records a CLICK (no money moves), mints a signed attribution cookie when
- * the market is still attributable, and redirects to the stored destination.
- * Unknown codes 404; the destination always comes from storage, never input.
+ * the market is still attributable, appends a portable opaque handle
+ * (?thesma_attribution=...) for external/hosted checkout, and redirects to
+ * the stored destination. Unknown codes 404; the destination always comes
+ * from storage, never input. The handle carries nothing sensitive.
  */
 export async function GET(req: Request, ctx: { params: Promise<{ code: string }> }) {
   try {
@@ -43,9 +46,30 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       metadata: { attributable: resolved.attributable },
     });
 
-    const destination = assertSafeDestinationUrl(resolved.destinationUrl, {
+    let destination = assertSafeDestinationUrl(resolved.destinationUrl, {
       allowLocalhost: process.env.NODE_ENV !== "production",
     });
+    if (resolved.attributable) {
+      try {
+        const session = await mintAttributionSession(
+          { store, audit: async () => ({}) },
+          {
+            referralId: resolved.referral.id,
+            campaignId: resolved.campaignId,
+            partnerId: resolved.partnerId,
+            partnerTermsId: resolved.terms.id,
+            expiresAt: new Date(
+              Math.min(new Date(resolved.terms.expiresAt).getTime(), now.getTime() + 24 * 60 * 60 * 1000),
+            ),
+          },
+        );
+        const url = new URL(destination);
+        url.searchParams.set("thesma_attribution", session.handle);
+        destination = url.toString();
+      } catch {
+        // Portable handle is best-effort: the signed cookie path still works.
+      }
+    }
     const res = NextResponse.redirect(destination, 302);
     if (resolved.attributable) {
       const exp = Math.min(

@@ -105,6 +105,76 @@ export interface NewReferralEvent {
   metadata: Record<string, unknown> | null;
 }
 
+export interface StoredAttributionSession {
+  id: string;
+  referralId: string;
+  campaignId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface StoredCheckoutIntent {
+  id: string;
+  orderId: string;
+  campaignId: string;
+  policyVersionId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  attributionSessionId: string | null;
+  payerAddress: string;
+  merchantAddress: string;
+  amountMicroUsdc: bigint;
+  chainId: number;
+  usdcAddress: string;
+  status: string;
+  txHash: string | null;
+  expiresAt: Date;
+  submittedAt: Date | null;
+  confirmedAt: Date | null;
+  failureCode: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewCheckoutIntent {
+  id: string;
+  orderId: string;
+  campaignId: string;
+  policyVersionId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  attributionSessionId: string | null;
+  payerAddress: string;
+  merchantAddress: string;
+  amountMicroUsdc: bigint;
+  chainId: number;
+  usdcAddress: string;
+  expiresAt: Date;
+}
+
+export interface StoredOutcome {
+  id: string;
+  campaignId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  checkoutIntentId: string;
+  customerKeyHash: string;
+  purchaseTx: string;
+  purchaseAmountMicroUsdc: bigint;
+  status: string;
+  proofHash: string | null;
+  blockNumber: number | null;
+  occurredAt: Date | null;
+  verifiedAt: Date | null;
+  holdUntil: Date | null;
+  rejectionCode: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** Thrown (or translated from PG 23505) when a uniqueness race loses. Services retry or 409. */
 export function uniqueViolation(message: string) {
   return Object.assign(new Error(message), { code: "UNIQUE_VIOLATION", status: 409 });
@@ -204,6 +274,7 @@ export interface CampaignStore {
 /** Market persistence: markets, terms snapshots, referrals, clicks, invites. */
 export interface MarketStore extends FundingStore {
   getPartnerByUserId(userId: string): Promise<StorePartner | null>;
+  getPartnerById(partnerId: string): Promise<StorePartner | null>;
   updatePartnerRules(partnerId: string, rulesJson: Record<string, unknown>): Promise<StorePartner>;
   getMarket(campaignId: string): Promise<StoredMarket | null>;
   listMarkets(): Promise<StoredMarket[]>;
@@ -220,6 +291,28 @@ export interface MarketStore extends FundingStore {
   insertInvite(i: { id: string; campaignId: string; tokenHash: string; expiresAt: Date; maxUses: number | null; createdByUserId: string }): Promise<StoredInvite>;
   getInviteByHash(tokenHash: string): Promise<StoredInvite | null>;
   useInvite(tokenHash: string): Promise<StoredInvite>;
+  insertAttributionSession(s: { id: string; referralId: string; campaignId: string; partnerId: string; partnerTermsId: string; expiresAt: Date }): Promise<StoredAttributionSession>;
+  getAttributionSession(id: string): Promise<StoredAttributionSession | null>;
+  /** Single-use consume: null when missing or already used (race-safe). */
+  consumeAttributionSession(id: string): Promise<StoredAttributionSession | null>;
+  insertCheckoutIntent(i: NewCheckoutIntent): Promise<StoredCheckoutIntent>;
+  getCheckoutIntent(id: string): Promise<StoredCheckoutIntent | null>;
+  updateCheckoutIntent(
+    id: string,
+    patch: Partial<Pick<StoredCheckoutIntent, "status" | "txHash" | "submittedAt" | "confirmedAt" | "failureCode">>,
+  ): Promise<StoredCheckoutIntent>;
+  insertOutcome(o: {
+    id: string; campaignId: string; partnerId: string; partnerTermsId: string; checkoutIntentId: string;
+    customerKeyHash: string; purchaseTx: string; purchaseAmountMicroUsdc: bigint;
+  }): Promise<StoredOutcome>;
+  getOutcome(id: string): Promise<StoredOutcome | null>;
+  getOutcomeByIntent(checkoutIntentId: string): Promise<StoredOutcome | null>;
+  getOutcomeByTx(purchaseTx: string): Promise<StoredOutcome | null>;
+  getOutcomeByCustomer(campaignId: string, customerKeyHash: string): Promise<StoredOutcome | null>;
+  updateOutcome(
+    id: string,
+    patch: Partial<Pick<StoredOutcome, "status" | "purchaseTx" | "purchaseAmountMicroUsdc" | "customerKeyHash" | "proofHash" | "blockNumber" | "occurredAt" | "verifiedAt" | "holdUntil" | "rejectionCode">>,
+  ): Promise<StoredOutcome>;
 }
 
 /** Funding persistence. One record per (campaignId, policyVersion). */
@@ -265,6 +358,12 @@ export function createMemoryCampaignStore(seed?: {
   const referralsByCode = new Map<string, string>();
   const referralEvents: Array<NewReferralEvent & { occurredAt: Date }> = [];
   const invites = new Map<string, StoredInvite>();
+  const attrSessions = new Map<string, StoredAttributionSession>();
+  const intents = new Map<string, StoredCheckoutIntent>();
+  const intentsByOrder = new Map<string, string>();
+  const outcomes = new Map<string, StoredOutcome>();
+  const outcomesByIntent = new Map<string, string>();
+  const outcomesByTx = new Map<string, string>();
   for (const m of seed?.memberships ?? []) memberships.set(`${m.workspaceId}:${m.userId}`, m);
   for (const w of seed?.workspaces ?? []) {
     workspaceRows.set(w.id, {
@@ -369,6 +468,12 @@ export function createMemoryCampaignStore(seed?: {
       const snapReferralsByCode = new Map(referralsByCode);
       const snapEvents = [...referralEvents];
       const snapInvites = new Map(invites);
+      const snapAttr = new Map(attrSessions);
+      const snapIntents = new Map(intents);
+      const snapIntentsByOrder = new Map(intentsByOrder);
+      const snapOutcomes = new Map(outcomes);
+      const snapOutcomesByIntent = new Map(outcomesByIntent);
+      const snapOutcomesByTx = new Map(outcomesByTx);
       const buffered: Array<Parameters<AuditSink>[0]> = [];
       const bufferedAudit: AuditSink = (async (input) => {
         buffered.push(input);
@@ -405,6 +510,18 @@ export function createMemoryCampaignStore(seed?: {
         referralEvents.push(...snapEvents);
         invites.clear();
         for (const [k, v] of snapInvites) invites.set(k, v);
+        attrSessions.clear();
+        for (const [k, v] of snapAttr) attrSessions.set(k, v);
+        intents.clear();
+        for (const [k, v] of snapIntents) intents.set(k, v);
+        intentsByOrder.clear();
+        for (const [k, v] of snapIntentsByOrder) intentsByOrder.set(k, v);
+        outcomes.clear();
+        for (const [k, v] of snapOutcomes) outcomes.set(k, v);
+        outcomesByIntent.clear();
+        for (const [k, v] of snapOutcomesByIntent) outcomesByIntent.set(k, v);
+        outcomesByTx.clear();
+        for (const [k, v] of snapOutcomesByTx) outcomesByTx.set(k, v);
         throw e;
       }
     },
@@ -453,6 +570,9 @@ export function createMemoryCampaignStore(seed?: {
       const id = partnerByUser.get(userId);
       if (!id) return null;
       return partnerRows.get(id) ?? null;
+    },
+    async getPartnerById(partnerId) {
+      return partnerRows.get(partnerId) ?? null;
     },
     async updatePartnerRules(partnerId, rulesJson) {
       const row = partnerRows.get(partnerId);
@@ -524,6 +644,99 @@ export function createMemoryCampaignStore(seed?: {
       if (!row) throw new Error("Invite not found");
       const next = { ...row, uses: row.uses + 1 };
       invites.set(tokenHash, next);
+      return next;
+    },
+    async insertAttributionSession(s) {
+      if (attrSessions.has(s.id)) throw uniqueViolation("Attribution session exists");
+      const row: StoredAttributionSession = { ...s, usedAt: null, createdAt: now };
+      attrSessions.set(s.id, row);
+      return row;
+    },
+    async getAttributionSession(id) {
+      return attrSessions.get(id) ?? null;
+    },
+    async consumeAttributionSession(id) {
+      const row = attrSessions.get(id);
+      if (!row || row.usedAt) return null;
+      const next = { ...row, usedAt: now };
+      attrSessions.set(id, next);
+      return next;
+    },
+    async insertCheckoutIntent(i) {
+      if (intentsByOrder.has(i.orderId)) throw uniqueViolation("Order ID collision");
+      const row: StoredCheckoutIntent = {
+        ...i,
+        status: "PREPARED",
+        txHash: null,
+        submittedAt: null,
+        confirmedAt: null,
+        failureCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      intents.set(i.id, row);
+      intentsByOrder.set(i.orderId, i.id);
+      return row;
+    },
+    async getCheckoutIntent(id) {
+      return intents.get(id) ?? null;
+    },
+    async updateCheckoutIntent(id, patch) {
+      const row = intents.get(id);
+      if (!row) throw new Error("Checkout intent not found");
+      if (patch.txHash && [...intents.values()].some((o) => o.id !== id && o.txHash === patch.txHash)) {
+        throw uniqueViolation("Transaction hash already submitted");
+      }
+      const next = { ...row, ...patch, updatedAt: now };
+      intents.set(id, next);
+      return next;
+    },
+    async insertOutcome(o) {
+      if (outcomesByIntent.has(o.checkoutIntentId)) throw uniqueViolation("Outcome already exists for intent");
+      if (outcomesByTx.has(o.purchaseTx)) throw uniqueViolation("Purchase tx already used");
+      const row: StoredOutcome = {
+        ...o,
+        status: "PENDING",
+        proofHash: null,
+        blockNumber: null,
+        occurredAt: null,
+        verifiedAt: null,
+        holdUntil: null,
+        rejectionCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      outcomes.set(o.id, row);
+      outcomesByIntent.set(o.checkoutIntentId, o.id);
+      outcomesByTx.set(o.purchaseTx, o.id);
+      return row;
+    },
+    async getOutcome(id) {
+      return outcomes.get(id) ?? null;
+    },
+    async getOutcomeByIntent(checkoutIntentId) {
+      const id = outcomesByIntent.get(checkoutIntentId);
+      if (!id) return null;
+      return outcomes.get(id) ?? null;
+    },
+    async getOutcomeByTx(purchaseTx) {
+      const id = outcomesByTx.get(purchaseTx);
+      if (!id) return null;
+      return outcomes.get(id) ?? null;
+    },
+    async getOutcomeByCustomer(campaignId, customerKeyHash) {
+      return [...outcomes.values()].find((o) => o.campaignId === campaignId && o.customerKeyHash === customerKeyHash) ?? null;
+    },
+    async updateOutcome(id, patch) {
+      const row = outcomes.get(id);
+      if (!row) throw new Error("Outcome not found");
+      if (patch.purchaseTx && patch.purchaseTx !== row.purchaseTx) {
+        if (outcomesByTx.has(patch.purchaseTx)) throw uniqueViolation("Purchase tx already used");
+        outcomesByTx.delete(row.purchaseTx);
+        outcomesByTx.set(patch.purchaseTx, id);
+      }
+      const next = { ...row, ...patch, updatedAt: now };
+      outcomes.set(id, next);
       return next;
     },
   };
