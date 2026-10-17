@@ -1,5 +1,7 @@
 import {
+  bigint,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -24,6 +26,26 @@ export const workspaceRoleEnum = pgEnum("workspace_role", [
 ]);
 
 export const actorTypeEnum = pgEnum("actor_type", ["USER", "SYSTEM", "AGENT"]);
+
+/** Full lifecycle vocabulary. S1 may only enter DRAFT | REVIEW | APPROVED. */
+export const campaignStateEnum = pgEnum("campaign_state", [
+  "DRAFT",
+  "REVIEW",
+  "APPROVED",
+  "FUNDING",
+  "LIVE",
+  "PAUSED",
+  "CLOSING",
+  "CLOSED",
+]);
+
+export const policyVersionStatusEnum = pgEnum("policy_version_status", [
+  "DRAFT",
+  "REVIEW",
+  "APPROVED",
+]);
+
+export const marketVisibilityEnum = pgEnum("market_visibility", ["PUBLIC", "PRIVATE"]);
 
 export const users = pgTable(
   "users",
@@ -139,7 +161,57 @@ export const auditEvents = pgTable(
   ],
 );
 
+export const campaigns = pgTable(
+  "campaigns",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    state: campaignStateEnum("state").notNull().default("DRAFT"),
+    currentPolicyVersionId: text("current_policy_version_id"),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("campaigns_workspace_idx").on(t.workspaceId)],
+);
+
+export const campaignPolicyVersions = pgTable(
+  "campaign_policy_versions",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    intentText: text("intent_text").notNull(),
+    targetOutcomeCount: integer("target_outcome_count"),
+    budgetMicroUsdc: bigint("budget_micro_usdc", { mode: "bigint" }),
+    bountyFloorMicroUsdc: bigint("bounty_floor_micro_usdc", { mode: "bigint" }),
+    bountyCeilingMicroUsdc: bigint("bounty_ceiling_micro_usdc", { mode: "bigint" }),
+    minQualifyingPurchaseMicroUsdc: bigint("min_qualifying_purchase_micro_usdc", { mode: "bigint" }),
+    deadline: timestamp("deadline", { withTimezone: true }),
+    marketVisibility: marketVisibilityEnum("market_visibility").notNull().default("PUBLIC"),
+    allowedPartnerRulesJson: jsonb("allowed_partner_rules_json").notNull().default({}),
+    refundHoldSeconds: integer("refund_hold_seconds").notNull().default(0),
+    escalationRulesJson: jsonb("escalation_rules_json").notNull().default({}),
+    status: policyVersionStatusEnum("status").notNull().default("DRAFT"),
+    approvedByUserId: text("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("campaign_policy_versions_campaign_version_unique").on(t.campaignId, t.version),
+    index("campaign_policy_versions_campaign_idx").on(t.campaignId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbCampaign = typeof campaigns.$inferSelect;
+export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;
 export type DbWorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type DbPartner = typeof partners.$inferSelect;

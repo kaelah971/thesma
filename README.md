@@ -62,7 +62,20 @@ npm run db:generate  # drizzle-kit generate
 npm run db:migrate   # apply migrations
 ```
 
-## S0 Shipped
+## S1 Shipped — Campaign Intent + Policy Engine
+
+- Owner describes an objective in plain text; deterministic local interpreter (`LocalIntentInterpreter`) prepares a typed draft (counts, exact micro-USDC amounts, ISO deadlines only — relative dates are never guessed). Missing required fields are returned explicitly, never invented.
+- Draft lifecycle `DRAFT -> REVIEW -> APPROVED` with versioned owner-controlled policy (`campaigns` + `campaign_policy_versions`, unique `(campaignId, version)`). `FUNDING`/`LIVE`/etc. exist as enums but have no legal entry in S1.
+- Invariants (pure, tested): amounts > 0 (floor/min ≥ 0), floor ≤ ceiling, `target × floor ≤ budget`, deadline future at approval, no floats anywhere.
+- Ownership: any workspace member may draft/revise/request review; **only `ORGANIZATION_OWNER` can approve**. Cross-workspace access denied server-side.
+- APPROVED versions immutable: post-approval revision creates version N+1 and reopens at DRAFT; stale `expectedVersion` writes rejected (409); repeat approval is idempotent.
+- Endpoints: `POST /api/campaigns/draft`, `GET /api/campaigns?workspaceId=`, `GET /api/campaigns/:id`, `PATCH /api/campaigns/:id/draft`, `POST /api/campaigns/:id/review`, `POST /api/campaigns/:id/approve`.
+- Audit: `campaign.created`, `campaign.draft_revised`, `campaign.review_requested`, `campaign.policy_approved`, `campaign.policy_revision_created` (version IDs in metadata; not financial receipts).
+- Interpreter boundary: `CampaignIntentInterpreter` interface keeps model SDKs out of domain code; a real LLM Demand Agent plugs in later. The deterministic parser does not mean the conversational agent is shipped.
+
+No money moves in S1.
+
+## S0 Shipped (prior slice)
 
 - App + quality tooling (dev/build/lint/typecheck/test/db scripts)
 - Domain enums: `WorkspaceRole`, `CampaignState`, `MarketState`, `AgentActionState` (behavior-free, for S1+)
@@ -75,17 +88,18 @@ npm run db:migrate   # apply migrations
 
 ## Explicitly NOT implemented (Target/Roadmap)
 
-- wallet connection
+- actual LLM Demand Agent runtime (only the deterministic intent parser + adapter boundary exist)
+- wallet connection / wallet ownership proof
 - Arc
 - Circle
-- campaigns
 - campaign funding
 - vault (`ThesmaMarketVault`)
-- market pricing
-- agents (Demand/Supply runtime, negotiation)
+- live market
+- market pricing / repricing
+- Supply Agent
 - referrals
 - purchases
 - outcome verification
 - payouts
 
-Next slice: **S1 Campaign Intent + Policy Engine** (workspace wallet stub, intent-to-draft, owner-approved policy; no money movement).
+Next slice: **S2 — ThesmaMarketVault + Arc campaign funding**.
