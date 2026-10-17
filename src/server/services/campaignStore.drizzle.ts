@@ -178,7 +178,11 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
       if ("transaction" in db && typeof (db as Db).transaction === "function") {
         return (db as Db).transaction(async (tx) => {
           const scoped = drizzleStoreFromDb(tx as DbTx);
-          return work({ store: scoped, audit: txAudit });
+          // NOTE: must bind the sink to tx, NOT the outer txAudit (which is
+          // bound to the pool). A pool-bound audit inside this transaction
+          // deadlocks on FK checks against rows this transaction locked.
+          const scopedAudit: AuditSink = (input) => insertAuditEvent(tx as DbTx, input);
+          return work({ store: scoped, audit: scopedAudit });
         });
       }
       // Already inside a transaction: run directly with this handle's sink.
