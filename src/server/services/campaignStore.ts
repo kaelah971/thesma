@@ -1,4 +1,4 @@
-import type { CampaignState, WorkspaceRole } from "../domain/enums";
+import type { CampaignState, MarketState, WorkspaceRole } from "../domain/enums";
 import type { Campaign, CampaignPolicyFields, CampaignPolicyVersion, PolicyVersionStatus } from "../domain/campaign";
 
 /**
@@ -17,6 +17,104 @@ export interface StoreWorkspace {
   id: string;
   ownerUserId: string;
   companyWallet: string | null;
+  category: string | null;
+  name: string;
+}
+
+export interface StorePartner {
+  id: string;
+  userId: string;
+  payoutWallet: string | null;
+  categories: string[];
+  rulesJson: Record<string, unknown>;
+}
+
+export interface StoredMarket {
+  campaignId: string;
+  publicBountyMicroUsdc: bigint;
+  status: MarketState;
+  destinationUrl: string;
+  version: number;
+  policyVersion: number;
+  openedAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewMarket {
+  campaignId: string;
+  publicBountyMicroUsdc: bigint;
+  status: MarketState;
+  destinationUrl: string;
+  version: number;
+  policyVersion: number;
+}
+
+export interface StoredTerms {
+  id: string;
+  campaignId: string;
+  partnerId: string;
+  priceMicroUsdc: bigint;
+  allocationCount: number;
+  source: string;
+  expiresAt: Date;
+  policyVersion: number;
+  marketVersion: number;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewTerms {
+  id: string;
+  campaignId: string;
+  partnerId: string;
+  priceMicroUsdc: bigint;
+  allocationCount: number;
+  source: string;
+  expiresAt: Date;
+  policyVersion: number;
+  marketVersion: number;
+}
+
+export interface StoredReferral {
+  id: string;
+  code: string;
+  campaignId: string;
+  partnerId: string;
+  partnerTermsId: string;
+  status: string;
+  createdAt: Date;
+}
+
+export interface StoredInvite {
+  id: string;
+  campaignId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  maxUses: number | null;
+  uses: number;
+  createdByUserId: string;
+  createdAt: Date;
+}
+
+export interface NewReferralEvent {
+  id: string;
+  referralId: string;
+  eventType: string;
+  anonymousVisitorHash: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+/** Thrown (or translated from PG 23505) when a uniqueness race loses. Services retry or 409. */
+export function uniqueViolation(message: string) {
+  return Object.assign(new Error(message), { code: "UNIQUE_VIOLATION", status: 409 });
+}
+
+export function isUniqueViolation(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (code === "UNIQUE_VIOLATION" || code === "23505") return true;
+  const msg = (e as { message?: unknown } | null)?.message;
+  return typeof msg === "string" && /duplicate key value/i.test(msg);
 }
 
 export const FUNDING_STATUSES = ["PREPARED", "SUBMITTED", "CONFIRMED", "FAILED", "AMBIGUOUS"] as const;
@@ -103,6 +201,27 @@ export interface CampaignStore {
   setCompanyWallet(workspaceId: string, address: string): Promise<StoreWorkspace>;
 }
 
+/** Market persistence: markets, terms snapshots, referrals, clicks, invites. */
+export interface MarketStore extends FundingStore {
+  getPartnerByUserId(userId: string): Promise<StorePartner | null>;
+  updatePartnerRules(partnerId: string, rulesJson: Record<string, unknown>): Promise<StorePartner>;
+  getMarket(campaignId: string): Promise<StoredMarket | null>;
+  listMarkets(): Promise<StoredMarket[]>;
+  insertMarket(m: NewMarket): Promise<StoredMarket>;
+  getTerms(campaignId: string, partnerId: string): Promise<StoredTerms | null>;
+  listPartnerTerms(partnerId: string): Promise<StoredTerms[]>;
+  insertTerms(t: NewTerms): Promise<StoredTerms>;
+  /** Row-level lock (SELECT FOR UPDATE) serializing a Partner's concurrent joins. */
+  lockPartnerRow(partnerId: string): Promise<void>;
+  insertReferral(r: { id: string; code: string; campaignId: string; partnerId: string; partnerTermsId: string }): Promise<StoredReferral>;
+  getReferralByCode(code: string): Promise<StoredReferral | null>;
+  getReferralByTerms(partnerTermsId: string): Promise<StoredReferral | null>;
+  insertReferralEvent(e: NewReferralEvent): Promise<void>;
+  insertInvite(i: { id: string; campaignId: string; tokenHash: string; expiresAt: Date; maxUses: number | null; createdByUserId: string }): Promise<StoredInvite>;
+  getInviteByHash(tokenHash: string): Promise<StoredInvite | null>;
+  useInvite(tokenHash: string): Promise<StoredInvite>;
+}
+
 /** Funding persistence. One record per (campaignId, policyVersion). */
 export interface FundingStore extends CampaignStore {
   getFunding(campaignId: string, policyVersion: number): Promise<StoredFunding | null>;
@@ -128,21 +247,43 @@ export type AuditSink = (input: {
 /** Deterministic in-memory store for tests. Single-threaded: no races. */
 export function createMemoryCampaignStore(seed?: {
   memberships?: StoreMembership[];
-  workspaces?: StoreWorkspace[];
-}): FundingStore & { campaigns: Map<string, StoredCampaign>; versions: Map<string, StoredPolicyVersion[]> } {
+  workspaces?: Array<{ id: string; ownerUserId?: string; companyWallet?: string | null; category?: string | null; name?: string }>;
+  partners?: Array<{ id: string; userId: string; payoutWallet?: string | null; categories?: string[]; rulesJson?: Record<string, unknown> }>;
+}): MarketStore & { campaigns: Map<string, StoredCampaign>; versions: Map<string, StoredPolicyVersion[]> } {
   const now = new Date("2026-01-01T00:00:00.000Z");
   const campaigns = new Map<string, StoredCampaign>();
   const versions = new Map<string, StoredPolicyVersion[]>();
   const memberships = new Map<string, StoreMembership>();
   const workspaceRows = new Map<string, StoreWorkspace>();
   const fundings = new Map<string, StoredFunding>();
+  const partnerRows = new Map<string, StorePartner>();
+  const partnerByUser = new Map<string, string>();
+  const marketStates = new Map<string, StoredMarket>();
+  const termsRows = new Map<string, StoredTerms>();
+  const termsByPair = new Map<string, string>();
+  const referrals = new Map<string, StoredReferral>();
+  const referralsByCode = new Map<string, string>();
+  const referralEvents: Array<NewReferralEvent & { occurredAt: Date }> = [];
+  const invites = new Map<string, StoredInvite>();
   for (const m of seed?.memberships ?? []) memberships.set(`${m.workspaceId}:${m.userId}`, m);
-  for (const w of seed?.workspaces ?? []) workspaceRows.set(w.id, { ...w });
+  for (const w of seed?.workspaces ?? []) {
+    workspaceRows.set(w.id, {
+      id: w.id,
+      ownerUserId: w.ownerUserId ?? "",
+      companyWallet: w.companyWallet ?? null,
+      category: w.category ?? null,
+      name: w.name ?? "Workspace",
+    });
+  }
   // Membership implies a workspace row unless one was seeded explicitly.
   for (const m of seed?.memberships ?? []) {
     if (!workspaceRows.has(m.workspaceId)) {
-      workspaceRows.set(m.workspaceId, { id: m.workspaceId, ownerUserId: m.userId, companyWallet: null });
+      workspaceRows.set(m.workspaceId, { id: m.workspaceId, ownerUserId: m.userId, companyWallet: null, category: null, name: "Workspace" });
     }
+  }
+  for (const p of seed?.partners ?? []) {
+    partnerRows.set(p.id, { categories: [], rulesJson: {}, payoutWallet: null, ...p });
+    partnerByUser.set(p.userId, p.id);
   }
 
   const current = (campaignId: string): StoredPolicyVersion | null => {
@@ -150,7 +291,7 @@ export function createMemoryCampaignStore(seed?: {
     return list.length === 0 ? null : list[list.length - 1];
   };
 
-  const self: FundingStore & {
+  const self: MarketStore & {
     campaigns: Map<string, StoredCampaign>;
     versions: Map<string, StoredPolicyVersion[]>;
   } = {
@@ -219,6 +360,15 @@ export function createMemoryCampaignStore(seed?: {
       const snapVersions = new Map([...versions].map(([k, v]) => [k, [...v]] as const));
       const snapWorkspaces = new Map(workspaceRows);
       const snapFundings = new Map(fundings);
+      const snapPartners = new Map(partnerRows);
+      const snapPartnerByUser = new Map(partnerByUser);
+      const snapMarkets = new Map(marketStates);
+      const snapTerms = new Map(termsRows);
+      const snapTermsByPair = new Map(termsByPair);
+      const snapReferrals = new Map(referrals);
+      const snapReferralsByCode = new Map(referralsByCode);
+      const snapEvents = [...referralEvents];
+      const snapInvites = new Map(invites);
       const buffered: Array<Parameters<AuditSink>[0]> = [];
       const bufferedAudit: AuditSink = (async (input) => {
         buffered.push(input);
@@ -237,6 +387,24 @@ export function createMemoryCampaignStore(seed?: {
         for (const [k, v] of snapWorkspaces) workspaceRows.set(k, v);
         fundings.clear();
         for (const [k, v] of snapFundings) fundings.set(k, v);
+        partnerRows.clear();
+        for (const [k, v] of snapPartners) partnerRows.set(k, v);
+        partnerByUser.clear();
+        for (const [k, v] of snapPartnerByUser) partnerByUser.set(k, v);
+        marketStates.clear();
+        for (const [k, v] of snapMarkets) marketStates.set(k, v);
+        termsRows.clear();
+        for (const [k, v] of snapTerms) termsRows.set(k, v);
+        termsByPair.clear();
+        for (const [k, v] of snapTermsByPair) termsByPair.set(k, v);
+        referrals.clear();
+        for (const [k, v] of snapReferrals) referrals.set(k, v);
+        referralsByCode.clear();
+        for (const [k, v] of snapReferralsByCode) referralsByCode.set(k, v);
+        referralEvents.length = 0;
+        referralEvents.push(...snapEvents);
+        invites.clear();
+        for (const [k, v] of snapInvites) invites.set(k, v);
         throw e;
       }
     },
@@ -279,6 +447,83 @@ export function createMemoryCampaignStore(seed?: {
       if (!row) throw new Error("Funding not found");
       const next = { ...row, ...patch, updatedAt: now };
       fundings.set(key, next);
+      return next;
+    },
+    async getPartnerByUserId(userId) {
+      const id = partnerByUser.get(userId);
+      if (!id) return null;
+      return partnerRows.get(id) ?? null;
+    },
+    async updatePartnerRules(partnerId, rulesJson) {
+      const row = partnerRows.get(partnerId);
+      if (!row) throw new Error("Partner not found");
+      const next = { ...row, rulesJson };
+      partnerRows.set(partnerId, next);
+      return next;
+    },
+    async getMarket(campaignId) {
+      return marketStates.get(campaignId) ?? null;
+    },
+    async listMarkets() {
+      return [...marketStates.values()];
+    },
+    async insertMarket(m) {
+      if (marketStates.has(m.campaignId)) throw uniqueViolation("Market already open");
+      const row: StoredMarket = { ...m, openedAt: now, updatedAt: now };
+      marketStates.set(m.campaignId, row);
+      return row;
+    },
+    async getTerms(campaignId, partnerId) {
+      const id = termsByPair.get(`${campaignId}:${partnerId}`);
+      if (!id) return null;
+      return termsRows.get(id) ?? null;
+    },
+    async listPartnerTerms(partnerId) {
+      return [...termsRows.values()].filter((t) => t.partnerId === partnerId);
+    },
+    async insertTerms(t) {
+      const pair = `${t.campaignId}:${t.partnerId}`;
+      if (termsByPair.has(pair)) throw uniqueViolation("Partner terms already exist");
+      const row: StoredTerms = { ...t, status: "ACTIVE", createdAt: now, updatedAt: now };
+      termsRows.set(t.id, row);
+      termsByPair.set(pair, t.id);
+      return row;
+    },
+    async lockPartnerRow(partnerId) {
+      if (!partnerRows.has(partnerId)) throw new Error("Partner not found");
+    },
+    async insertReferral(r) {
+      if (referralsByCode.has(r.code)) throw uniqueViolation("Referral code collision");
+      const row: StoredReferral = { ...r, status: "ACTIVE", createdAt: now };
+      referrals.set(r.id, row);
+      referralsByCode.set(r.code, r.id);
+      return row;
+    },
+    async getReferralByCode(code) {
+      const id = referralsByCode.get(code);
+      if (!id) return null;
+      return referrals.get(id) ?? null;
+    },
+    async getReferralByTerms(partnerTermsId) {
+      return [...referrals.values()].find((r) => r.partnerTermsId === partnerTermsId) ?? null;
+    },
+    async insertReferralEvent(e) {
+      referralEvents.push({ ...e, occurredAt: now });
+    },
+    async insertInvite(i) {
+      if (invites.has(i.tokenHash)) throw uniqueViolation("Invite already exists");
+      const row: StoredInvite = { ...i, uses: 0, createdAt: now };
+      invites.set(i.tokenHash, row);
+      return row;
+    },
+    async getInviteByHash(tokenHash) {
+      return invites.get(tokenHash) ?? null;
+    },
+    async useInvite(tokenHash) {
+      const row = invites.get(tokenHash);
+      if (!row) throw new Error("Invite not found");
+      const next = { ...row, uses: row.uses + 1 };
+      invites.set(tokenHash, next);
       return next;
     },
   };

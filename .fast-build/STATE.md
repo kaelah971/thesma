@@ -9,8 +9,7 @@
 - [x] S0: Foundation (backend-first: app, auth, Postgres/Drizzle, audit, minimal API, tests)
 - [x] S1: Campaign Intent + Policy Engine
 - [x] S2: ThesmaMarketVault + Arc campaign funding (contract + local verification; chain exercise LOCAL ONLY)
-- [ ] S2: Campaign vault (ThesmaMarketVault + funding)
-- [ ] S3: Live market + Partner join/referral
+- [x] S3: Live market + Partner rules + join + referral routes
 - [ ] S4: Customer purchase + verifier
 - [ ] S5: Automatic payout + reconciliation
 - [ ] S6: Dynamic Demand Agent (pricing kernel)
@@ -18,7 +17,16 @@
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S2 ThesmaMarketVault + Arc campaign funding — Shipped (this session)
+- S3 Live market + Partner rules + join + referral routes — Shipped (this session)
+
+## Completed (S3 this session)
+- Market domain: MarketState reuse, strict PartnerRules (canonical + S0-legacy normalize), pure eligibility matrix, destination-URL guard, opaque referral codes
+- Market service: openMarket (LIVE+APPROVED+CONFIRMED binding, floor/ceiling/affordability, single-open), public feed (PUBLIC/LIVE/OPEN/unexpired, no policy JSON), join (snapshot + idempotent + stale-version + row-locked active cap), private invites (hash-only, expiry, max-uses), referral resolve (attributable flag, money-free)
+- Attribution: HMAC-signed v1 cookie tokens (referral/campaign/partner/exp/nonce only), 32-char secret minimum, /r/:code records CLICK + redirects stored destination
+- Tables: market_states, partner_terms (unique pair), referrals (unique code), referral_events, private_invites (migration 0003, 14 tables total)
+- Routes: market/open, market, markets (public), partners/me/rules, join, partners/me/campaigns, invites, /r/:code
+- Tests: 17 market + 4 attribution (78 vitest total green); S0-S2 suites untouched and green; forge 34 still green
+- Bootstrap bounty documented as temporary S3 seam (S6 owns strategy); no agent-pricing claims
 
 ## Completed (S2 this session)
 - S1 hardening: CampaignStore.atomic (Drizzle transactions; in-memory snapshot/restore + buffered audit); all S1 ops + funding transitions atomic; FUNDING/LIVE blocks policy mutation; FAILED confirmation returns campaign to APPROVED
@@ -56,9 +64,19 @@
 - Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
 
 ## Schema created
+- S3: market_states (campaign PK, bounty, OPEN status, destination, v1, policyVersion), partner_terms (unique campaign+partner, PUBLIC snapshot, expiry=deadline), referrals (unique opaque code), referral_events (CLICK + visitor hash), private_invites (token hash, expiry, max uses)
 - users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
 - S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
 - S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
+
+## Commands verified (S3)
+- npm install: pass (no new deps)
+- npm run db:generate: pass (drizzle/0003_common_runaways.sql, 14 tables total; NOT applied, no live DB)
+- npm run typecheck: pass; npm run lint: pass (0 errors)
+- npm test: pass (10 files, 78 tests: 57 S0-S2 + 21 S3)
+- npm run build: pass (15/15 routes incl. markets/join/invites/r)
+- forge fmt --check / build / test: pass, 34 unchanged
+- secrets scan: clean; no .env; ATTRIBUTION_SECRET only in .env.example (commented)
 
 ## Commands verified (S2)
 - npm install: pass (added viem 2.57.7; "type": "module" for tsx ESM)
@@ -101,5 +119,10 @@
 - Multi-write service transitions are sequential awaits, not a single DB transaction (single-node correctness holds; harden with transactions in S2 if funding races appear)
 - In-memory store timestamps fixed; wall-clock only via injected now() for deadline checks
 
+## S3 concurrency notes
+- Market open: check-then-insert inside atomic + campaignId PK unique backs the race (409)
+- Join: partner row SELECT FOR UPDATE serializes active-cap count-then-insert per Partner; unique (campaign,partner) + referral-code unique with retry make losers deterministic/idempotent
+- Stale marketVersion rejected explicitly; terms snapshot frozen at join
+
 ## Next action
-- S3 — LIVE MARKET + PARTNER RULES + JOIN + REFERRAL ROUTES (do NOT start in this session)
+- S4 — CUSTOMER ARC PURCHASE + ATTRIBUTION CONSUMPTION + OUTCOME VERIFIER (do NOT start in this session)

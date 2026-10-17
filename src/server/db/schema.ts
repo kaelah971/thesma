@@ -55,6 +55,17 @@ export const fundingStatusEnum = pgEnum("funding_status", [
   "AMBIGUOUS",
 ]);
 
+export const marketStatusEnum = pgEnum("market_status", [
+  "OPEN",
+  "THIN_SUPPLY",
+  "ON_PACE",
+  "BEHIND_PACE",
+  "BUDGET_PRESSURE",
+  "TARGET_REACHED",
+  "PAUSED",
+  "CLOSED",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -260,8 +271,122 @@ export const campaignFundings = pgTable(
   ],
 );
 
+/**
+ * S3 live-market rows. One per campaign. The public bounty here is an
+ * owner-approved bootstrap (S3); S6 repricing will version it further.
+ */
+export const marketStates = pgTable(
+  "market_states",
+  {
+    campaignId: text("campaign_id")
+      .primaryKey()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    publicBountyMicroUsdc: bigint("public_bounty_micro_usdc", { mode: "bigint" }).notNull(),
+    status: marketStatusEnum("status").notNull().default("OPEN"),
+    destinationUrl: text("destination_url").notNull(),
+    version: integer("version").notNull().default(1),
+    policyVersion: integer("policy_version").notNull(),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("market_states_status_idx").on(t.status)],
+);
+
+export const partnerTerms = pgTable(
+  "partner_terms",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    priceMicroUsdc: bigint("price_micro_usdc", { mode: "bigint" }).notNull(),
+    allocationCount: integer("allocation_count").notNull(),
+    source: text("source").notNull().default("PUBLIC"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    marketVersion: integer("market_version").notNull(),
+    status: text("status").notNull().default("ACTIVE"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("partner_terms_campaign_partner_unique").on(t.campaignId, t.partnerId),
+    index("partner_terms_campaign_idx").on(t.campaignId),
+    index("partner_terms_partner_idx").on(t.partnerId),
+  ],
+);
+
+export const referrals = pgTable(
+  "referrals",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    partnerTermsId: text("partner_terms_id")
+      .notNull()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("ACTIVE"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("referrals_code_unique").on(t.code),
+    index("referrals_campaign_idx").on(t.campaignId),
+    index("referrals_partner_idx").on(t.partnerId),
+  ],
+);
+
+export const referralEvents = pgTable(
+  "referral_events",
+  {
+    id: text("id").primaryKey(),
+    referralId: text("referral_id")
+      .notNull()
+      .references(() => referrals.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    anonymousVisitorHash: text("anonymous_visitor_hash"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    metadataJson: jsonb("metadata_json"),
+  },
+  (t) => [index("referral_events_referral_idx").on(t.referralId)],
+);
+
+export const privateInvites = pgTable(
+  "private_invites",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    maxUses: integer("max_uses"),
+    uses: integer("uses").notNull().default(0),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("private_invites_token_hash_unique").on(t.tokenHash),
+    index("private_invites_campaign_idx").on(t.campaignId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
 export type DbFunding = typeof campaignFundings.$inferSelect;
+export type DbMarket = typeof marketStates.$inferSelect;
+export type DbTerms = typeof partnerTerms.$inferSelect;
+export type DbReferral = typeof referrals.$inferSelect;
+export type DbReferralEvent = typeof referralEvents.$inferSelect;
+export type DbInvite = typeof privateInvites.$inferSelect;
 export type DbCampaign = typeof campaigns.$inferSelect;
 export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;

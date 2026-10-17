@@ -72,6 +72,16 @@ npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
 
+## S3 Shipped — Live Market + Partner Rules + Join + Referral Routes
+
+- **Market open (owner-approved bootstrap bounty — temporary, S6 repricing owns strategy later):** `POST /api/campaigns/:id/market/open` requires LIVE + APPROVED + CONFIRMED funding for the same policy version, bounty within [floor, ceiling] and affordable (`target × bounty ≤ funded`), future deadline, validated destination URL, one open per campaign. Starts at version 1, status OPEN.
+- **Partner rules (strict, canonical S3 names; legacy S0 keys still normalize):** `GET/PATCH /api/partners/me/rules` — minimum bounty (exact micro-USDC), allowed/blocked categories, max active campaigns, max allocation, `autoJoin`/`autoNegotiate` stored only (no autonomous action in S3).
+- **Discovery:** public `GET /api/markets` (LIVE + OPEN + unexpired + PUBLIC only; no policy internals) and authenticated `GET /api/campaigns/:id/market`. PRIVATE campaigns stay invisible publicly; owner-issued invites (`POST /api/campaigns/:id/invites`, hashed opaque tokens, expiry, optional max uses) gate private joins.
+- **Join (`POST /api/campaigns/:id/join`):** transactional eligibility (open/live/unexpired, min bounty, category allow/block, active cap with row-lock vs races, allocation cap, payout wallet), frozen PUBLIC terms snapshot (price + policy + market version), opaque referral code, idempotent re-join, stale-version rejection. Terms never silently change.
+- **Referral (`GET /r/:code`):** validates, records CLICK in `referral_events` (clicks never touch `audit_events`, never earn money), mints HMAC-signed first-party cookie (`ATTRIBUTION_SECRET`, ≥32 chars) with referral/campaign/partner/expiry/nonce only, redirects to the stored destination (re-validated; no open redirect). No customer PII stored.
+- **New tables:** `market_states`, `partner_terms` (unique campaign+partner), `referrals` (unique opaque code), `referral_events` (CLICK), `private_invites` (hash-only).
+- **Audit:** `market.opened`, `partner.rules_updated`, `partner.joined`, `referral.created`, `private_invite.created` (no receipt language).
+
 ## S2 Shipped — ThesmaMarketVault + Arc Campaign Funding
 
 **Deployment status: NOT EXERCISED on any chain.** Contract implementation and local verification are shipped; no testnet/mainnet deployment or funding has occurred. No addresses or tx hashes below because none exist yet.
@@ -114,6 +124,12 @@ No money moves in S1.
 - Arc deployment / live funding (contract + local verification shipped; chain exercise: LOCAL ONLY)
 - Circle
 - backend automatic Partner payout (contract primitive exists + tested; backend must not call it yet)
+- actual Supply Agent automation (rules are enforced data; no agent acts on them)
+- pricing/repricing (bootstrap bounty is owner-set; no pace calculation)
+- negotiation/private terms (join source is always PUBLIC)
+- customer Arc checkout, purchase verification, outcome creation
+- revenue/CAC analytics derived from purchases
+- Gateway/CCTP
 - live market
 - market pricing / repricing
 - Supply Agent

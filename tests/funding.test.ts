@@ -114,7 +114,7 @@ function setup(reader?: FakeReader) {
       { userId: "owner-1", workspaceId: "ws-A", role: "ORGANIZATION_OWNER" },
       { userId: "member-2", workspaceId: "ws-A", role: "ORGANIZATION_MEMBER" },
     ],
-    workspaces: [{ id: "ws-A", ownerUserId: "owner-1", companyWallet: null }],
+    workspaces: [{ id: "ws-A", ownerUserId: "owner-1", companyWallet: null, category: null, name: "Acme" }],
   }) as FundingStore;
   const { sink, events } = createMemoryAuditSink();
   const deps: FundingDeps = {
