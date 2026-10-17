@@ -20,7 +20,7 @@
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S8.1B Mainnet deployment verification + canonical record — Shipped (this session)
+- S8.2A Mainnet runtime provisioning + signer readiness — Shipped (this session, docs-only)
 
 ## Completed (S7.1 this session)
 - supply_commitments: one ACTIVE unit (price x 1) + one capacity unit per ACCEPT; unique per negotiation; consumed once by first S5 reservation; released on withdraw/revoke
@@ -265,5 +265,12 @@
 - Canonical record: contracts/deployments/arc-mainnet.json + README; fee 0.03293860972715287 USDC
 - No broadcasts/signing by this session; no runtime behavior changed
 
+## Completed (S8.2A this session)
+- Runbook: docs/MAINNET_RUNBOOK.md (DB commands, env template PUBLIC/SECRET, signer plan, worker checklist, isolation proof, 12-step execution manifest, deliverable gate, abort rules)
+- Verified: 5/5 internal routes secret-gated, no schedulers, no NEXT_PUBLIC secrets, chainId pinned per money record + asserted on every chain touch + EIP-712 domain (no schema change needed)
+- Signer status: owner stays browser-held; customer/executor/verifier fresh dedicated (owner-generated offline); recipient keyless; all keys/secrets currently ABSENT (correct fail-closed state)
+- S8.2 stays BLOCKED on: owner keys/env/DB, $1 deliverable definition
+- Tests: 143 unit + 34 forge green; no runtime behavior changed
+
 ## Next action
-- S8.2 — TINY ARC MAINNET END-TO-END PROOF (do NOT start in this session)
+- S8.2 — TINY ARC MAINNET END-TO-END PROOF, only after owner provisions signers + DB + deliverable (do NOT start in this session)
