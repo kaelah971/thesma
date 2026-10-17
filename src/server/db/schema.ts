@@ -47,6 +47,14 @@ export const policyVersionStatusEnum = pgEnum("policy_version_status", [
 
 export const marketVisibilityEnum = pgEnum("market_visibility", ["PUBLIC", "PRIVATE"]);
 
+export const fundingStatusEnum = pgEnum("funding_status", [
+  "PREPARED",
+  "SUBMITTED",
+  "CONFIRMED",
+  "FAILED",
+  "AMBIGUOUS",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -209,7 +217,51 @@ export const campaignPolicyVersions = pgTable(
   ],
 );
 
+/**
+ * S2 funding records. One row per (campaignId, policyVersion): a confirmed
+ * funding pins the exact campaignKey/policyHash/amount proven onchain.
+ * This is acquisition-budget evidence only — customer revenue never appears here.
+ */
+export const campaignFundings = pgTable(
+  "campaign_fundings",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    policyVersionId: text("policy_version_id")
+      .notNull()
+      .references(() => campaignPolicyVersions.id, { onDelete: "cascade" }),
+    policyVersion: integer("policy_version").notNull(),
+    campaignKey: text("campaign_key").notNull(),
+    policyHash: text("policy_hash").notNull(),
+    chainId: integer("chain_id").notNull(),
+    vaultAddress: text("vault_address").notNull(),
+    usdcAddress: text("usdc_address").notNull(),
+    ownerAddress: text("owner_address").notNull(),
+    expectedAmountMicroUsdc: bigint("expected_amount_micro_usdc", { mode: "bigint" }).notNull(),
+    status: fundingStatusEnum("status").notNull().default("PREPARED"),
+    createTxHash: text("create_tx_hash"),
+    approveTxHash: text("approve_tx_hash"),
+    fundingTxHash: text("funding_tx_hash"),
+    blockNumber: integer("block_number"),
+    observedAmountMicroUsdc: bigint("observed_amount_micro_usdc", { mode: "bigint" }),
+    failureCode: text("failure_code"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("campaign_fundings_campaign_version_unique").on(t.campaignId, t.policyVersion),
+    // Postgres treats NULLs as distinct: many un-submitted rows can coexist.
+    uniqueIndex("campaign_fundings_funding_tx_unique").on(t.fundingTxHash),
+    index("campaign_fundings_campaign_idx").on(t.campaignId),
+  ],
+);
+
 export type DbUser = typeof users.$inferSelect;
+export type DbFunding = typeof campaignFundings.$inferSelect;
 export type DbCampaign = typeof campaigns.$inferSelect;
 export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;

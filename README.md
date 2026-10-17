@@ -1,4 +1,4 @@
-# Thesma — S0 Backend Foundation
+# Thesma — Backend (S2: Vault + Funding)
 
 **Thesma is an autonomous market for verified business outcomes.** A company sets a customer goal, budget, and hard limits; a Demand Agent prices the next verified result inside those limits while Partner Supply Agents join or negotiate inside their own rules. A deterministic verifier establishes whether a qualifying purchase happened before any payout settles in USDC on Arc (target).
 
@@ -28,6 +28,7 @@ src/
 - Vitest tests, ESLint, npm
 - Auth: lightweight email/password with `bcryptjs` + opaque DB sessions (`sessions` table, sha256 token hash, httpOnly cookie). No OAuth.
   - Why: avoids an auth rabbit hole for S0, stays Drizzle-first, keeps a clean swap boundary (`src/server/auth/*`) for better-auth/Auth.js later if needed.
+- Chain: `viem` read client + unsigned-intent builder (never signs); Solidity `ThesmaMarketVault` + Foundry tests (forge-std, OpenZeppelin v5.7.0).
 
 ## Local setup
 
@@ -47,6 +48,13 @@ Postgres options: local Docker (`docker run -e POSTGRES_PASSWORD=postgres -p 543
 | --- | -------- | ------- |
 | `DATABASE_URL` | yes (runtime) | Provider-neutral Postgres connection. Build + unit tests pass without it; API routes return `503 UNCONFIGURED` until set. |
 | `SESSION_COOKIE_NAME` | no | Defaults to `thesma_session`. |
+| `ARC_CHAIN_ID` | for funding | Expected chain ID; RPC `eth_chainId` must match or every chain op fails closed. |
+| `ARC_RPC_URL` | for funding | Arc RPC endpoint. Absent → funding APIs report unconfigured, `arc:doctor` reports NOT_CONFIGURED. |
+| `ARC_USDC_ADDRESS` | no | Defaults to `0x3600000000000000000000000000000000000000` (Arc USDC). |
+| `THESMA_VAULT_ADDRESS` | for funding | Deployed `ThesmaMarketVault`. Absent → intents cannot be built. |
+| `THESMA_EXECUTOR_ADDRESS` | for campaign creation | Executor bound into created campaigns. |
+| `THESMA_VERIFIER_ADDRESS` | for campaign creation | Verifier bound into created campaigns. |
+| `ARC_EXPLORER_BASE_URL` | no | Optional explorer base for receipt links. |
 
 No secrets are committed. Never put private keys in `.env` for the agent runtime.
 
@@ -60,7 +68,20 @@ npm run typecheck    # tsc --noEmit
 npm test             # vitest run (no live DB required)
 npm run db:generate  # drizzle-kit generate
 npm run db:migrate   # apply migrations
+npm run arc:doctor   # read-only chain check (never signs/broadcasts)
+forge build/test    # run inside contracts/ (32 unit+fuzz+invariant + 2 vector pins)
 ```
+
+## S2 Shipped — ThesmaMarketVault + Arc Campaign Funding
+
+**Deployment status: NOT EXERCISED on any chain.** Contract implementation and local verification are shipped; no testnet/mainnet deployment or funding has occurred. No addresses or tx hashes below because none exist yet.
+
+- **Money separation:** customer revenue (`customer -> company wallet`) never touches the vault. The vault custodies only the pre-funded acquisition budget (`company wallet -> ThesmaMarketVault -> Partner payout`). The backend holds no keys and never signs.
+- **Contract** (`contracts/src/ThesmaMarketVault.sol`, non-upgradeable, OZ SafeERC20/EIP-712/ReentrancyGuard): `createCampaign` (immutable policyHash, cap/ceiling/deadline/executor/verifier checks), `fundCampaign` (owner-only, cap-enforced, pre-deadline, partial + exact-cap), `pauseCampaign`, `closeCampaign`, `returnUnspent` (exact `funded - spent`, once), plus a tested-but-unwired `payoutVerifiedOutcome` (executor-only EIP-712, ceiling/balance/replay/expiry checks; pre-deadline outcomes may settle after deadline via `occurredAt`). No generic withdraw path by construction.
+- **Bindings:** `campaignKey = keccak256(abi.encode("thesma:campaign", campaignId, policyVersion))`; `policyHash = keccak256(abi.encode("thesma:policy:v1", campaignId, version, target, budget, floor, ceiling, minPurchase, deadlineUnix, visibility, refundHold, allowedRulesHash, escalationRulesHash, companyWallet))` with stable-sorted rules JSON. Pinned by `contracts/test/KeyVector.t.sol` against backend vectors.
+- **Funding sequence:** `POST .../funding-intent` (owner, APPROVED + wallet + config required → `APPROVED→FUNDING`, PREPARED record, unsigned create/approve/fund actions) → owner signs in browser → `POST .../funding-submitted` (hash format only, never LIVE) → `POST .../funding-confirm` (reads Arc: chain, receipt status, vault address, key event, owner, policyHash, full-budget funded → CONFIRMED + `LIVE`; failures → FAILED with code; unknown → AMBIGUOUS; idempotent). Partial funding never goes LIVE. S1 transitions are now atomic (DB transactions; snapshot-rollback in memory).
+- **New tables:** `campaign_fundings` (one row per campaign+version, unique funding tx) + `funding_status` enum. New endpoints listed above plus `POST /api/workspaces/:id/company-wallet` (register, not verify) and `GET /api/campaigns/:id/funding`.
+- **Audit:** `workspace.company_wallet_registered`, `campaign.funding_prepared/submitted/confirmed/failed/ambiguous`, `campaign.live` (not payout receipts).
 
 ## S1 Shipped — Campaign Intent + Policy Engine
 
@@ -89,11 +110,10 @@ No money moves in S1.
 ## Explicitly NOT implemented (Target/Roadmap)
 
 - actual LLM Demand Agent runtime (only the deterministic intent parser + adapter boundary exist)
-- wallet connection / wallet ownership proof
-- Arc
+- wallet connection / cryptographic wallet ownership proof (address is registered, not verified)
+- Arc deployment / live funding (contract + local verification shipped; chain exercise: LOCAL ONLY)
 - Circle
-- campaign funding
-- vault (`ThesmaMarketVault`)
+- backend automatic Partner payout (contract primitive exists + tested; backend must not call it yet)
 - live market
 - market pricing / repricing
 - Supply Agent

@@ -1,6 +1,7 @@
 /**
- * Future adapter boundaries. S0 intentionally ships these as documented
- * stubs so domain code never imports a chain/wallet/AI SDK directly.
+ * Adapter boundaries. S2 implements the Arc chain boundary for real
+ * (see src/server/chain/arc.ts + keys.ts); the remaining entries stay as
+ * documented stubs so domain code never imports a wallet/AI SDK directly.
  *
  * TARGET (not shipped):
  * - Arc RPC + wallet adapter      -> src/server/adapters/arc.ts

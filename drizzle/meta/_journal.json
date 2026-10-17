@@ -15,6 +15,13 @@
       "when": 1792234330381,
       "tag": "0001_tough_callisto",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792236089085,
+      "tag": "0002_nostalgic_stranger",
+      "breakpoints": true
     }
   ]
 }
