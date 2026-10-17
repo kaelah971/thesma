@@ -161,7 +161,7 @@ export function OperatorWorkspace({ snapshot, initials }: { snapshot: WorkspaceS
               </div>
             ) : (
               <div key={m.id} className={styles.thesma}>
-                <LogoMark size={28} />
+                <LogoMark size={30} tile />
                 <div className={styles.bubble}>
                   <span className="sr-only">Thesma:</span>
                   <p>{m.reply.text}</p>
@@ -181,7 +181,7 @@ export function OperatorWorkspace({ snapshot, initials }: { snapshot: WorkspaceS
           )}
           {busy && (
             <div className={styles.thesma}>
-              <LogoMark size={28} />
+              <LogoMark size={30} tile />
               <div className={styles.bubble}>
                 <p className={styles.pending}>Preparing draft…</p>
               </div>

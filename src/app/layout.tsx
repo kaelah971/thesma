@@ -17,15 +17,15 @@ const jetbrains = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Thesma — Pay for outcomes. Not promises.",
+    default: "Thesma · Autonomous operators for growth campaigns",
     template: "%s · Thesma",
   },
   description:
-    "Launch outcome-based campaigns, verify real results, and settle payouts only when the proof checks out.",
+    "Autonomous operators for growth campaigns. Pay only for verified results, with every payment bound to proof, budget and policy.",
   openGraph: {
-    title: "Thesma — Pay for outcomes. Not promises.",
+    title: "Thesma · Autonomous operators for growth campaigns",
     description:
-      "A market for verified business outcomes: fund a campaign, verify real customer results, settle USDC payouts with receipts.",
+      "Fund a campaign, verify real customer results and settle USDC payouts with a receipt for every payment.",
     type: "website",
   },
 };

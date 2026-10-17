@@ -1,4 +1,5 @@
 import { Hero } from "@/components/landing/Hero";
+import { RevealObserver } from "@/components/landing/RevealObserver";
 import {
   ClosingCta,
   DevelopersSection,
@@ -24,6 +25,7 @@ export default function Home() {
         <ClosingCta />
       </main>
       <SiteFooter />
+      <RevealObserver />
     </>
   );
 }

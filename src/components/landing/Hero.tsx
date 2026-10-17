@@ -4,14 +4,24 @@ import { SiteNav } from "./SiteNav";
 import styles from "./landing.module.css";
 
 const LEFT = [
-  { title: "Launch campaigns", body: "Define the outcome, price and rules.", tone: "blue", glyph: "target" },
-  { title: "Fund the market", body: "Commit the budget before results arrive.", tone: "lav", glyph: "stack" },
+  { title: "Set the outcome", body: "Choose the result, the price and the rules.", tone: "blue", glyph: "target" },
+  { title: "Fund it upfront", body: "The budget is committed before a single result arrives.", tone: "lav", glyph: "stack" },
 ] as const;
 
 const RIGHT = [
-  { title: "Verify outcomes", body: "Real evidence before payout.", tone: "mint", glyph: "seal" },
-  { title: "Settle automatically", body: "Verified outcomes move through hold → payout → receipt.", tone: "cream", glyph: "receipt" },
+  { title: "Verify every result", body: "Evidence is checked before anything becomes payable.", tone: "mint", glyph: "seal" },
+  { title: "Release on proof", body: "Hold, payout, receipt. In that order, every time.", tone: "cream", glyph: "receipt" },
 ] as const;
+
+const enter = (i: number) => ({ ["--i" as string]: i }) as React.CSSProperties;
+
+export function ArrowIcon() {
+  return (
+    <svg className="btn-arrow" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path d="M2.5 7h8.5M7.5 3.5 11 7l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 type Glyph = (typeof LEFT)[number]["glyph"] | (typeof RIGHT)[number]["glyph"];
 
@@ -47,9 +57,9 @@ export function CalloutGlyph({ glyph }: { glyph: Glyph }) {
   );
 }
 
-function Callout({ item, side }: { item: (typeof LEFT)[number] | (typeof RIGHT)[number]; side: "left" | "right" }) {
+function Callout({ item, side, i }: { item: (typeof LEFT)[number] | (typeof RIGHT)[number]; side: "left" | "right"; i: number }) {
   return (
-    <div className={styles.callout} data-side={side}>
+    <div className={`${styles.callout} ${styles.enterFade}`} data-side={side} style={enter(i)}>
       <span className={styles.calloutIcon} data-tone={item.tone}>
         <CalloutGlyph glyph={item.glyph} />
       </span>
@@ -63,28 +73,28 @@ function Callout({ item, side }: { item: (typeof LEFT)[number] | (typeof RIGHT)[
 
 export function Hero() {
   return (
-    <section className={styles.hero} aria-labelledby="hero-title">
+    <section className={styles.hero} aria-labelledby="hero-title" data-inview-track>
       <div className={styles.heroWash} aria-hidden="true" />
       <SiteNav />
 
       <div className={styles.heroCopy}>
-        <p className={styles.heroEyebrow}>
+        <p className={`${styles.heroEyebrow} ${styles.enter}`} style={enter(0)}>
           <span className="pill" data-tone="mint">
-            USDC on Arc
+            Proof before payout
           </span>
-          A market for verified business outcomes
+          Outcome campaigns for growing businesses
         </p>
-        <h1 id="hero-title" className={styles.heroTitle}>
-          Pay for outcomes.
-          <br />
-          Not promises.
+        <h1 id="hero-title" className={`${styles.heroTitle} ${styles.enter}`} style={enter(1)}>
+          Autonomous operators for growth campaigns.
+          <span className={styles.heroTitleEm}>Pay only for verified results.</span>
         </h1>
-        <p className={styles.heroLede}>
-          Launch outcome-based campaigns, verify real results, and settle payouts only when the proof checks out.
+        <p className={`${styles.heroLede} ${styles.enter}`} style={enter(2)}>
+          Thesma helps teams launch and run outcome campaigns, verify real business results, and control when money moves. Its autonomous operators manage pricing, partner decisions, verification, holds and payouts, while every payment stays bound to proof, budget and policy.
         </p>
-        <div className={styles.heroCtas}>
+        <div className={`${styles.heroCtas} ${styles.enter}`} style={enter(3)}>
           <Link href="/signin?next=/app/campaigns/new" className="btn btn-primary">
             Launch a campaign
+            <ArrowIcon />
           </Link>
           <a href="#how-it-works" className="btn btn-ghost">
             See how it works
@@ -94,19 +104,21 @@ export function Hero() {
 
       <div className={styles.stage}>
         <div className={styles.calloutCol} data-side="left">
-          {LEFT.map((item) => (
-            <Callout key={item.title} item={item} side="left" />
+          {LEFT.map((item, i) => (
+            <Callout key={item.title} item={item} side="left" i={6 + i} />
           ))}
         </div>
         <div className={styles.center}>
-          <div className={styles.bigWord} aria-hidden="true">
+          <div className={`${styles.bigWord} ${styles.enterFade}`} aria-hidden="true" style={enter(3)}>
             Verified
           </div>
-          <PhoneMockup />
+          <div className={`${styles.phoneRise} ${styles.enterRise}`} style={enter(4)}>
+            <PhoneMockup />
+          </div>
         </div>
         <div className={styles.calloutCol} data-side="right">
-          {RIGHT.map((item) => (
-            <Callout key={item.title} item={item} side="right" />
+          {RIGHT.map((item, i) => (
+            <Callout key={item.title} item={item} side="right" i={6 + i} />
           ))}
         </div>
       </div>

@@ -83,7 +83,7 @@
   max-width: 760px;
 }
 
-.thesma > svg {
+.thesma > span:first-child {
   flex: none;
 }
 
@@ -400,7 +400,7 @@
     padding: 16px;
     gap: 14px;
   }
-  .thesma > svg,
+  .thesma > span:first-child,
   .user .avatar {
     display: none;
   }
