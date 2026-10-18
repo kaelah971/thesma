@@ -191,6 +191,12 @@ export function assertSafeDestinationUrl(raw: string, opts?: { allowLocalhost?: 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw Object.assign(new Error("Destination URL must use http or https"), { status: 400, code: "BAD_REQUEST" });
   }
+  // Production never allows plaintext http: phishing scanners flag
+  // http redirect targets, and destinations handle value. Localhost http
+  // stays available for development via allowLocalhost.
+  if (url.protocol !== "https:" && !opts?.allowLocalhost) {
+    throw Object.assign(new Error("Destination URL must use https"), { status: 400, code: "BAD_REQUEST" });
+  }
   if (url.username || url.password) {
     throw Object.assign(new Error("Destination URL must not embed credentials"), { status: 400, code: "BAD_REQUEST" });
   }

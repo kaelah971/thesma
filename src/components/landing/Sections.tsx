@@ -481,6 +481,7 @@ export function SiteFooter() {
                 <a href="#receipts">Receipts</a>
                 <Link href="/markets">Live markets</Link>
                 <a href="#faq">FAQ</a>
+                <Link href="/security">Security</Link>
               </div>
               <div>
                 <h3>Get started</h3>
