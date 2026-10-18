@@ -183,6 +183,222 @@ export async function listPublicMarkets(deps: MarketDeps) {
   return { markets: items };
 }
 
+/* ---------------- Public history + judge detail (read-only) ---------------- */
+
+function isLivePublicMarket(
+  market: StoredMarket,
+  campaign: { state: string },
+  version: { status: string; marketVisibility: string; deadline: Date | null } | null,
+  now: Date,
+): boolean {
+  if (market.status !== "OPEN") return false;
+  if (campaign.state !== "LIVE") return false;
+  if (!version || version.status !== "APPROVED") return false;
+  if (version.marketVisibility !== "PUBLIC") return false;
+  if (!version.deadline || version.deadline <= now) return false;
+  return true;
+}
+
+export interface CompletedMarketMetrics {
+  verifiedOutcomes: number;
+  settledSpendMicroUsdc: string;
+  verifiedRevenueMicroUsdc: string | null;
+  realizedCacMicroUsdc: string | null;
+  remainingMicroUsdc: string | null;
+  partnerCount: number;
+}
+
+async function completedMetrics(
+  deps: MarketDeps,
+  campaignId: string,
+  budgetMicroUsdc: bigint | null,
+): Promise<CompletedMarketMetrics> {
+  const reservations = await deps.store.listReservationsByCampaign(campaignId);
+  let spend = 0n;
+  let revenue = 0n;
+  let verified = 0;
+  const partners = new Set<string>();
+  for (const r of reservations) {
+    partners.add(r.partnerId);
+    if (r.state === "SETTLED") spend += r.amountMicroUsdc;
+    const outcome = await deps.store.getOutcome(r.outcomeId);
+    if (outcome && outcome.status === "VERIFIED") {
+      verified += 1;
+      revenue += outcome.purchaseAmountMicroUsdc;
+    }
+  }
+  const verifiedCount = await deps.store.countVerifiedOutcomes(campaignId);
+  return {
+    verifiedOutcomes: Math.max(verified, verifiedCount),
+    settledSpendMicroUsdc: spend.toString(),
+    verifiedRevenueMicroUsdc: verified > 0 ? revenue.toString() : null,
+    realizedCacMicroUsdc: verified > 0 && spend > 0n ? (spend / BigInt(verified)).toString() : null,
+    remainingMicroUsdc: budgetMicroUsdc === null ? null : (budgetMicroUsdc - spend).toString(),
+    partnerCount: partners.size,
+  };
+}
+
+/**
+ * Public markets that are no longer accepting participation but keep proof.
+ * Never mutates; never includes non-PUBLIC campaigns.
+ */
+export async function listCompletedMarkets(deps: MarketDeps) {
+  const now = deps.now?.() ?? new Date();
+  const markets = await deps.store.listMarkets();
+  const items = [];
+  for (const m of markets) {
+    const campaign = await deps.store.getCampaign(m.campaignId);
+    if (!campaign) continue;
+    const version = await deps.store.getVersion(m.campaignId, m.policyVersion);
+    if (!version || version.status !== "APPROVED") continue;
+    if (version.marketVisibility !== "PUBLIC") continue;
+    if (isLivePublicMarket(m, campaign, version, now)) continue;
+    const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+    const metrics = await completedMetrics(deps, m.campaignId, version.budgetMicroUsdc);
+    items.push({
+      campaignId: campaign.id,
+      workspaceName: workspace?.name ?? "Workspace",
+      category: workspace?.category ?? null,
+      goal: version.targetOutcomeCount,
+      finalState: campaign.state,
+      marketStatus: m.status,
+      finalBountyMicroUsdc: m.publicBountyMicroUsdc.toString(),
+      deadline: version.deadline?.toISOString() ?? null,
+      startedAt: campaign.createdAt.toISOString(),
+      policyVersion: m.policyVersion,
+      ...metrics,
+    });
+  }
+  return { markets: items };
+}
+
+function txUrl(explorerBaseUrl: string | null, txHash: string | null): string | null {
+  if (!explorerBaseUrl || !txHash) return null;
+  return `${explorerBaseUrl.replace(/\/$/, "")}/tx/${txHash}`;
+}
+
+/**
+ * Judge-proof public detail. PUBLIC campaigns only; private ones 404.
+ * Exposes only safe fields: no policy JSON, no secrets, no customer PII,
+ * no private negotiation terms.
+ */
+export async function getPublicMarketDetail(
+  deps: MarketDeps,
+  params: { campaignId: string; explorerBaseUrl?: string | null },
+) {
+  const now = deps.now?.() ?? new Date();
+  const base = params.explorerBaseUrl ?? null;
+  const campaign = await deps.store.getCampaign(params.campaignId);
+  if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
+  const market = await deps.store.getMarket(params.campaignId);
+  if (!market) fail(404, "MARKET_NOT_FOUND", "No market for this campaign");
+  const version = await deps.store.getVersion(params.campaignId, market.policyVersion);
+  if (!version || version.marketVisibility !== "PUBLIC") fail(404, "NOT_FOUND", "Campaign not found");
+  const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+  const verifiedCount = await deps.store.countVerifiedOutcomes(params.campaignId);
+  const reservations = await deps.store.listReservationsByCampaign(params.campaignId);
+  const partners = new Set<string>();
+  let spend = 0n;
+  const payouts: Array<{
+    id: string; recipient: string; amountMicroUsdc: string; state: string;
+    txHash: string | null; explorerUrl: string | null; blockNumber: number | null; settledAt: string | null;
+  }> = [];
+  const outcomeProofs: string[] = [];
+  for (const r of reservations) {
+    partners.add(r.partnerId);
+    if (r.state === "SETTLED") spend += r.amountMicroUsdc;
+    const payout = await deps.store.getPayoutByReservation(r.id);
+    if (payout) {
+      payouts.push({
+        id: payout.id,
+        recipient: payout.recipient,
+        amountMicroUsdc: payout.amountMicroUsdc.toString(),
+        state: payout.state,
+        txHash: payout.txHash,
+        explorerUrl: txUrl(base, payout.txHash),
+        blockNumber: payout.blockNumber,
+        settledAt: payout.settledAt?.toISOString() ?? null,
+      });
+    }
+    const outcome = await deps.store.getOutcome(r.outcomeId);
+    if (outcome?.proofHash) outcomeProofs.push(outcome.proofHash);
+  }
+  const funding = await deps.store.getFunding(params.campaignId, market.policyVersion);
+  const latestDecision = await deps.store.getLatestPricingDecision(params.campaignId);
+  const live = isLivePublicMarket(market, campaign, version, now);
+  const core = {
+    campaignId: campaign.id,
+    workspaceName: workspace?.name ?? "Workspace",
+    category: workspace?.category ?? null,
+    state: campaign.state,
+    marketStatus: market.status,
+    live,
+    objective: version.intentText,
+    qualificationRule: version.minQualifyingPurchaseMicroUsdc?.toString() ?? null,
+    approvedBudgetMicroUsdc: version.budgetMicroUsdc?.toString() ?? null,
+    publicBountyMicroUsdc: market.publicBountyMicroUsdc.toString(),
+    bountyFloorMicroUsdc: version.bountyFloorMicroUsdc?.toString() ?? null,
+    bountyCeilingMicroUsdc: version.bountyCeilingMicroUsdc?.toString() ?? null,
+    deadline: version.deadline?.toISOString() ?? null,
+    startedAt: campaign.createdAt.toISOString(),
+    progress: { verified: verifiedCount, target: version.targetOutcomeCount },
+    participatingPartners: partners.size,
+    latestAgentDecision: latestDecision
+      ? {
+          decision: latestDecision.decision,
+          paceState: latestDecision.paceState,
+          reasonCodes: latestDecision.reasonCodes,
+          oldBountyMicroUsdc: latestDecision.oldBountyMicroUsdc?.toString() ?? null,
+          newBountyMicroUsdc: latestDecision.newBountyMicroUsdc?.toString() ?? null,
+          createdAt: latestDecision.createdAt.toISOString(),
+        }
+      : null,
+    verifiedOutcomes: verifiedCount,
+    funding: funding
+      ? {
+          status: funding.status,
+          expectedMicroUsdc: funding.expectedAmountMicroUsdc.toString(),
+          observedMicroUsdc: funding.observedAmountMicroUsdc?.toString() ?? null,
+          createTxHash: funding.createTxHash,
+          fundingTxHash: funding.fundingTxHash,
+          fundingExplorerUrl: txUrl(base, funding.fundingTxHash),
+          blockNumber: funding.blockNumber,
+        }
+      : null,
+  };
+  if (live) return { ...core, kind: "live" as const };
+  let revenue = 0n;
+  let verified = 0;
+  for (const r of reservations) {
+    const outcome = await deps.store.getOutcome(r.outcomeId);
+    if (outcome && outcome.status === "VERIFIED") {
+      verified += 1;
+      revenue += outcome.purchaseAmountMicroUsdc;
+    }
+  }
+  return {
+    ...core,
+    kind: "completed" as const,
+    settledSpendMicroUsdc: spend.toString(),
+    finalOutcome: {
+      reachedTarget: version.targetOutcomeCount !== null && verifiedCount >= version.targetOutcomeCount,
+      verifiedOutcomes: verifiedCount,
+      goal: version.targetOutcomeCount,
+    },
+    timeline: { startedAt: campaign.createdAt.toISOString(), deadline: version.deadline?.toISOString() ?? null },
+    payouts,
+    verifiedRevenueMicroUsdc: verified > 0 ? revenue.toString() : null,
+    realizedCacMicroUsdc: verified > 0 && spend > 0n ? (spend / BigInt(verified)).toString() : null,
+    remainingMicroUsdc:
+      version.budgetMicroUsdc === null ? null : (version.budgetMicroUsdc - spend).toString(),
+    decisionReceipts: latestDecision
+      ? [{ decision: latestDecision.decision, reasonCodes: latestDecision.reasonCodes, createdAt: latestDecision.createdAt.toISOString() }]
+      : [],
+    outcomeProofs,
+    payoutExplorerUrls: payouts.map((p) => p.explorerUrl).filter((u): u is string => u !== null),
+  };
+}
+
 /** Market state for an authenticated user (public-safe fields only). */
 export async function getMarketState(deps: MarketDeps, params: { campaignId: string; userId: string }) {
   const campaign = await deps.store.getCampaign(params.campaignId);

@@ -20,7 +20,7 @@
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- S8.2A Mainnet runtime provisioning + signer readiness — Shipped (this session, docs-only)
+- Public market discovery + completed proof + Partner agent onboarding — Shipped (this session)
 
 ## Completed (S7.1 this session)
 - supply_commitments: one ACTIVE unit (price x 1) + one capacity unit per ACCEPT; unique per negotiation; consumed once by first S5 reservation; released on withdraw/revoke
@@ -264,6 +264,13 @@
 - Exactly one deployment tx (deployer nonce 0 → 1); no setup txs required or observed
 - Canonical record: contracts/deployments/arc-mainnet.json + README; fee 0.03293860972715287 USDC
 - No broadcasts/signing by this session; no runtime behavior changed
+
+## Completed (public markets + supply agent this session)
+- Public discovery: GET /api/markets?status=live (unchanged default) + ?status=completed (PUBLIC, no-longer-live, never deleted after close/expiry); /markets (login-free live + completed cards) + /markets/[campaignId] judge detail (safe fields only, PRIVATE 404s, explorer links when configured, no fabricated metrics)
+- Detail reuses existing store reads (reservations->outcomes->payouts chain); no store changes, no migrations, no state mutation for presentation
+- Supply Agent: pure domain parser (free text -> typed PartnerRules, exact micro-USDC, progressive questions, confirmation card) + services (status/matches/run/ask over real state, runAgent reuses joinCampaign inside rules) + 6 authed routes (status/matches/onboard/confirm/run/ask)
+- Honest boundaries: chat never persists (confirm required); autoNegotiate stored-only with explicit "automation not available" answer; no background daemon — auto-join executes on explicit run; no social publishing
+- Tests: 7 public-markets + 8 supply-agent (197 vitest total green); typecheck/lint/build green; forge unavailable in this environment (contracts untouched)
 
 ## Completed (S8.2A this session)
 - Runbook: docs/MAINNET_RUNBOOK.md (DB commands, env template PUBLIC/SECRET, signer plan, worker checklist, isolation proof, 12-step execution manifest, deliverable gate, abort rules)

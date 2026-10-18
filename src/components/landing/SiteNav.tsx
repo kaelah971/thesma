@@ -6,6 +6,7 @@ import { Logo } from "@/components/brand/Logo";
 import styles from "./landing.module.css";
 
 const LINKS = [
+  { href: "/markets", label: "Live markets" },
   { href: "#product", label: "Product" },
   { href: "#how-it-works", label: "How it works" },
   { href: "#verified-outcomes", label: "Verified outcomes" },
