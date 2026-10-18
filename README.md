@@ -77,9 +77,31 @@ What this guarantees:
 
 What Thesma does **not** claim: Circle Gateway, CCTP, x402, Circle Wallets / App Kit / Agent Stack, paymasters, fiat ramps, or LLM-decided payouts.
 
-## Product surfaces
+## Product
 
-The live app at [thesma.vercel.app](https://thesma.vercel.app) gives each workspace:
+Screenshots from the live production app at [thesma.vercel.app](https://thesma.vercel.app), showing the real Arc Mainnet proof campaign (1.00 USDC funded, one payout settled and reconciled onchain).
+
+<p align="center">
+  <img src="docs/readme/landing.png" alt="Thesma landing page" width="900" />
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme/overview.png" alt="Thesma workspace overview" /><br /><sub><strong>Overview</strong> — funded, available, verified and settled budget at a glance.</sub></td>
+    <td width="50%"><img src="docs/readme/campaign-create.png" alt="Draft a campaign from plain language" /><br /><sub><strong>Campaign creation</strong> — plain-language intent becomes a draft policy; nothing is funded until the owner approves.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme/campaign-detail.png" alt="Campaign detail with policy and funding" /><br /><sub><strong>Campaign detail</strong> — frozen policy, confirmed onchain funding and budget accounting.</sub></td>
+    <td width="50%"><img src="docs/readme/operator.png" alt="Operator answering over live workspace state" /><br /><sub><strong>Operator</strong> — deterministic answers over live workspace state.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/readme/payout-receipt.png" alt="Settled payout receipt with live checks" width="50%" /><br /><sub><strong>Payout receipt</strong> — marked settled only after reconciliation matched the onchain <code>OutcomePaid</code> event.</sub></td>
+  </tr>
+</table>
+
+### Product surfaces
+
+The live app gives each workspace:
 
 - **Overview** — funded vs committed vs available budget per campaign.
 - **Campaigns** — draft, review, approve, fund, and open markets within policy bounds.
