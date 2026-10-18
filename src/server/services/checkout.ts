@@ -443,6 +443,69 @@ export async function verifyCheckoutIntent(deps: CheckoutDeps, params: { intentI
   });
 }
 
+export interface AttributionMetadata {
+  campaignId: string;
+  productName: string;
+  requiredAmountMicroUsdc: string;
+  merchant: Address;
+  partnerPayoutWallet: Address | null;
+  chainId: number;
+  usdcAddress: Address;
+  deadline: string;
+  handleExpiresAt: string;
+}
+
+/**
+ * Public pre-purchase metadata for an attribution handle. Read-only: never
+ * consumes the handle and never creates state. Mirrors the eligibility
+ * preconditions of createCheckoutIntent so the page can show the exact
+ * required amount before any intent exists.
+ */
+export async function resolveAttributionMetadata(
+  deps: CheckoutDeps,
+  params: { attributionHandle: string },
+): Promise<AttributionMetadata> {
+  const now = deps.now?.() ?? new Date();
+  const ms = deps.store as MarketStore;
+  const session = await ms.getAttributionSession(params.attributionHandle);
+  if (!session) fail(404, "ATTRIBUTION_INVALID", "Unknown purchase reference");
+  if (session.usedAt) fail(410, "ATTRIBUTION_USED", "This purchase link was already used");
+  if (session.expiresAt <= now) fail(410, "ATTRIBUTION_EXPIRED", "This purchase link has expired");
+  const campaign = await ms.getCampaign(session.campaignId);
+  if (!campaign || campaign.state !== "LIVE") fail(400, "CAMPAIGN_NOT_LIVE", "Campaign is not live");
+  const terms = await ms.getTerms(session.campaignId, session.partnerId);
+  if (!terms || terms.id !== session.partnerTermsId || terms.status !== "ACTIVE") {
+    fail(400, "TERMS_INVALID", "Partner terms are no longer applicable");
+  }
+  const version = await deps.store.getVersion(session.campaignId, terms.policyVersion);
+  if (!version || !version.deadline) fail(500, "INTERNAL", "Policy version is missing");
+  if (version.deadline <= now) fail(400, "EXPIRED", "Campaign deadline has passed");
+  if (terms.expiresAt <= now) fail(400, "TERMS_EXPIRED", "Partner terms have expired");
+  const funding = await ms.getFunding(session.campaignId, terms.policyVersion);
+  if (!funding || funding.status !== "CONFIRMED") fail(400, "NOT_FUNDED", "Policy version is not funded");
+  const current = await deps.store.getCurrentVersion(session.campaignId);
+  if (!current || current.id !== version.id) fail(400, "POLICY_SUPERSEDED", "Policy version is no longer current");
+  const workspace = await ms.getWorkspace(campaign.workspaceId);
+  const merchant = workspace?.companyWallet;
+  if (!merchant) fail(500, "INTERNAL", "Company wallet is not configured");
+  if (version.minQualifyingPurchaseMicroUsdc === null || version.minQualifyingPurchaseMicroUsdc === undefined) {
+    fail(500, "INTERNAL", "Campaign minimum purchase is missing");
+  }
+  if (!deps.config) fail(503, "ARC_UNCONFIGURED", "Arc chain configuration is absent");
+  const partnerProfile = await ms.getPartnerById(session.partnerId);
+  return {
+    campaignId: session.campaignId,
+    productName: version.intentText,
+    requiredAmountMicroUsdc: (version.minQualifyingPurchaseMicroUsdc as bigint).toString(),
+    merchant: normalizeAddress(merchant),
+    partnerPayoutWallet: partnerProfile?.payoutWallet ? normalizeAddress(partnerProfile.payoutWallet) : null,
+    chainId: deps.config.chainId,
+    usdcAddress: deps.config.usdcAddress,
+    deadline: version.deadline.toISOString(),
+    handleExpiresAt: session.expiresAt.toISOString(),
+  };
+}
+
 /**
  * Safe public payment/outcome state. No Partner internals, no attribution
  * material, no private policy — only what a customer receipt needs.
