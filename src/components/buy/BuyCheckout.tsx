@@ -92,8 +92,22 @@ type Phase =
   | "failed"
   | "ambiguous";
 
+export type BuyPhase = Phase;
+
+/**
+ * Connection/preflight errors must be visible while the user is still on the
+ * ready screen (e.g. a failed "Connect wallet" click). Errors in terminal
+ * phases are always shown; transient working phases surface status text
+ * instead so a stale message cannot linger mid-flow.
+ */
+export function shouldShowError(phase: Phase, error: string | null): boolean {
+  if (!error) return false;
+  return phase === "ready" || phase === "failed" || phase === "ambiguous";
+}
+
 export function BuyCheckout({ handle }: { handle: string }) {
   const [phase, setPhase] = useState<Phase>("loading");
+  const [connecting, setConnecting] = useState(false);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [balanceNote, setBalanceNote] = useState<string | null>(null);
@@ -280,6 +294,8 @@ export function BuyCheckout({ handle }: { handle: string }) {
   }
 
   async function prepare() {
+    if (connecting) return;
+    setConnecting(true);
     setError(null);
     try {
       const { provider, connected } = await connect();
@@ -287,6 +303,8 @@ export function BuyCheckout({ handle }: { handle: string }) {
       setAccount(connected);
     } catch (e) {
       fail(e instanceof Error ? e.message : "Could not connect the wallet.", "ready");
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -443,8 +461,8 @@ export function BuyCheckout({ handle }: { handle: string }) {
           {busyNote && <p style={{ fontSize: 13, opacity: 0.85 }}>{busyNote}</p>}
           {balanceNote && <p style={{ fontSize: 13, opacity: 0.85 }}>{balanceNote}</p>}
           {!account ? (
-            <button type="button" className="btn btn-primary" onClick={prepare}>
-              Connect wallet
+            <button type="button" className="btn btn-primary" onClick={prepare} disabled={connecting}>
+              {connecting ? "Connecting…" : "Connect wallet"}
             </button>
           ) : intentId ? (
             <button type="button" className="btn btn-primary" onClick={continuePrepared}>
@@ -483,7 +501,7 @@ export function BuyCheckout({ handle }: { handle: string }) {
         </div>
       )}
 
-      {(phase === "ambiguous" || (phase === "failed" && error)) && error && (
+      {shouldShowError(phase, error) && error && (
         <p className="form-error" role="alert" style={{ fontSize: 14 }}>{error}</p>
       )}
       {phase === "failed" && !intentId && (
