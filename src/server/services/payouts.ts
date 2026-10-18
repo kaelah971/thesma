@@ -252,7 +252,10 @@ function requireChainDeps(deps: PayoutDeps) {
  * Sign + broadcast a RESERVED payout. Revalidates everything; SUBMITTED is
  * idempotent (never resends). Pre-broadcast failures release safely.
  */
-export async function settleReservedPayout(deps: PayoutDeps, params: { reservationId: string }) {
+export async function settleReservedPayout(
+  deps: PayoutDeps,
+  params: { reservationId: string; path?: "legacy" | "autonomous" | "approved" },
+) {
   const now = deps.now?.() ?? new Date();
   return deps.store.atomic(deps.audit, async ({ store, audit }) => {
     const ms = store as MarketStore;
@@ -340,7 +343,19 @@ export async function settleReservedPayout(deps: PayoutDeps, params: { reservati
       validUntil,
     };
     const signature = await signer.signVerifiedOutcomeProof({ chainId: config.chainId, vault: config.vaultAddress as Address, message });
-    const txHash = await executor.submitVerifiedOutcomePayout({ vault: config.vaultAddress as Address, ...message, signature });
+    // Operator vault routing (testnet): identical message + signature, gated
+    // entrypoint. Legacy path is byte-for-byte unchanged for mainnet.
+    const path = params.path ?? "legacy";
+    let txHash: Hex;
+    if (path === "legacy") {
+      txHash = await executor.submitVerifiedOutcomePayout({ vault: config.vaultAddress as Address, ...message, signature });
+    } else if (path === "autonomous") {
+      if (!executor.submitAutonomousPayout) fail(500, "OPERATOR_ABI_UNSUPPORTED", "Executor cannot submit operator payouts");
+      txHash = await executor.submitAutonomousPayout({ vault: config.vaultAddress as Address, ...message, signature });
+    } else {
+      if (!executor.submitApprovedPayout) fail(500, "OPERATOR_ABI_UNSUPPORTED", "Executor cannot submit operator payouts");
+      txHash = await executor.submitApprovedPayout({ vault: config.vaultAddress as Address, ...message, signature });
+    }
     const nextReservation = await ms.updateReservation(reservation.id, { state: "SUBMITTED" });
     const nextPayout = await ms.updatePayout(payout.id, {
       state: "SUBMITTED",

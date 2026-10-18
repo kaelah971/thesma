@@ -1,6 +1,7 @@
 import { getMembership, requireUser } from "@/server/auth/guard";
 import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
+import { arcConfigFromEnv, readOperatorPolicyState } from "@/server/chain/arc";
 import {
   decideObligation,
   DEFAULT_OPERATOR_POLICY,
@@ -63,6 +64,45 @@ export async function GET(req: Request) {
       .filter((h) => !decidedIds.has((h.metadata.escalationId as string | undefined) ?? ""))
       .map((h) => ({ id: h.id, createdAt: h.createdAt.toISOString(), metadata: h.metadata }));
 
+    // Onchain authority truth (testnet operator vault only, best-effort).
+    // Null = unverified, never permission: execution validity is enforced
+    // by the contract itself at payout time.
+    let onchain: {
+      vaultAddress: string;
+      network: string;
+      chainId: number;
+      explorerBaseUrl: string | null;
+      policies: Record<string, unknown>;
+    } | null = null;
+    try {
+      const chain = arcConfigFromEnv();
+      if (chain && chain.network === "testnet" && chain.vaultAddress) {
+        const campaigns = await wired.deps.store.listCampaigns(workspaceId).catch(() => []);
+        const policies: Record<string, unknown> = {};
+        for (const c of campaigns.filter((x) => x.state === "LIVE")) {
+          const version = await wired.deps.store.getCurrentVersion(c.id).catch(() => null);
+          const funding = version ? await wired.deps.store.getFunding(c.id, version.version).catch(() => null) : null;
+          const key = (funding as { campaignKey?: string } | null)?.campaignKey;
+          if (!key || !key.startsWith("0x")) continue;
+          const p = await readOperatorPolicyState(chain.rpcUrl, chain.vaultAddress, key as `0x${string}`).catch(() => null);
+          policies[c.id] =
+            p === null
+              ? null
+              : {
+                  minReserveMicroUsdc: p.minReserve.toString(),
+                  maxAutonomousPaymentMicroUsdc: p.maxAutonomousPayment.toString(),
+                  periodSpendCapMicroUsdc: p.periodSpendCap.toString(),
+                  periodDurationSeconds: p.periodDuration.toString(),
+                  spentInPeriodMicroUsdc: p.spentInPeriod.toString(),
+                  enabled: p.enabled,
+                };
+        }
+        onchain = { vaultAddress: chain.vaultAddress, network: chain.network ?? "testnet", chainId: chain.chainId, explorerBaseUrl: chain.explorerBaseUrl, policies };
+      }
+    } catch {
+      onchain = null;
+    }
+
     return Response.json({
       policy: {
         minReserveMicroUsdc: policy.minReserveMicroUsdc.toString(),
@@ -72,6 +112,7 @@ export async function GET(req: Request) {
       snapshot: { ...input.snapshot, obligations: decided },
       recommendation,
       metrics: summarizeOperatorMetrics(history.map((h) => ({ action: h.action, metadata: h.metadata }))),
+      onchain,
       pendingEscalations,
       decisions: history
         .filter((h) => h.action.startsWith("operator."))

@@ -377,6 +377,160 @@ export function buildFundingIntent(args: {
   return actions;
 }
 
+/* ---------------- Operator vault (testnet RFB 04 hardening) ---------------- */
+
+/**
+ * ThesmaOperatorVault fragment: the two gated payout entrypoints, the
+ * owner-only approval/policy writers, and the policy view. The v1
+ * VAULT_ABI stays frozen for mainnet; this fragment is used only when the
+ * operator executes on the Canteen testnet vault. Payout tuples are
+ * identical to v1; the OutcomePaid event is identical so reconciliation
+ * needs no changes.
+ */
+export const OPERATOR_VAULT_ABI = [
+  {
+    type: "function",
+    name: "payoutAutonomous",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "campaignKey", type: "bytes32" },
+      { name: "outcomeId", type: "bytes32" },
+      { name: "recipient", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "proofHash", type: "bytes32" },
+      { name: "occurredAt", type: "uint64" },
+      { name: "validUntil", type: "uint64" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "payoutApproved",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "campaignKey", type: "bytes32" },
+      { name: "outcomeId", type: "bytes32" },
+      { name: "recipient", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "proofHash", type: "bytes32" },
+      { name: "occurredAt", type: "uint64" },
+      { name: "validUntil", type: "uint64" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "approveObligation",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "campaignKey", type: "bytes32" },
+      { name: "outcomeId", type: "bytes32" },
+      { name: "recipient", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "proofHash", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setOperatorPolicy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "campaignKey", type: "bytes32" },
+      { name: "minReserve", type: "uint256" },
+      { name: "maxAutonomousPayment", type: "uint256" },
+      { name: "periodSpendCap", type: "uint256" },
+      { name: "periodDuration", type: "uint64" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "getOperatorPolicy",
+    stateMutability: "view",
+    inputs: [{ name: "campaignKey", type: "bytes32" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "minReserve", type: "uint256" },
+          { name: "maxAutonomousPayment", type: "uint256" },
+          { name: "periodSpendCap", type: "uint256" },
+          { name: "periodDuration", type: "uint64" },
+          { name: "periodStart", type: "uint64" },
+          { name: "spentInPeriod", type: "uint256" },
+          { name: "enabled", type: "bool" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+/** Exact unsigned approveObligation calldata for the owner to sign. Never signs. */
+export function buildApprovalIntent(args: {
+  vault: Address;
+  campaignKey: Hex;
+  outcomeId: Hex;
+  recipient: Address;
+  amountMicroUsdc: bigint;
+  proofHash: Hex;
+}): { to: Address; data: Hex; value: "0" } {
+  if (args.amountMicroUsdc <= 0n) throw new Error("Approval amount must be positive");
+  return {
+    to: args.vault,
+    data: encodeFunctionData({
+      abi: OPERATOR_VAULT_ABI,
+      functionName: "approveObligation",
+      args: [args.campaignKey, args.outcomeId, args.recipient, args.amountMicroUsdc, args.proofHash],
+    }),
+    value: "0",
+  };
+}
+
+/**
+ * Best-effort onchain operator-policy read (views only, never signs).
+ * Returns null when the vault has no policy for the campaign or the RPC
+ * cannot be reached — callers treat null as "unverified", never as
+ * permission. Used to display onchain truth next to the DB cache.
+ */
+export async function readOperatorPolicyState(
+  rpcUrl: string,
+  vault: Address,
+  campaignKey: Hex,
+): Promise<{
+  minReserve: bigint;
+  maxAutonomousPayment: bigint;
+  periodSpendCap: bigint;
+  periodDuration: bigint;
+  periodStart: bigint;
+  spentInPeriod: bigint;
+  enabled: boolean;
+} | null> {
+  try {
+    const client = createPublicClient({ transport: http(rpcUrl) });
+    const p = await client.readContract({
+      address: vault,
+      abi: OPERATOR_VAULT_ABI,
+      functionName: "getOperatorPolicy",
+      args: [campaignKey],
+    });
+    return {
+      minReserve: p.minReserve,
+      maxAutonomousPayment: p.maxAutonomousPayment,
+      periodSpendCap: p.periodSpendCap,
+      periodDuration: p.periodDuration,
+      periodStart: p.periodStart,
+      spentInPeriod: p.spentInPeriod,
+      enabled: p.enabled,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------- Chain reader ---------------- */
 
 export interface VaultCampaignState {

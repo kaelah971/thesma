@@ -654,7 +654,7 @@ export async function executeOperatorDecision(
     return { executed: false, payoutId: null, txHash: null, settled: false, reason: `Not executable: ${decision.decision}` };
   }
   forbidMainnet(deps.config);
-  return settleOutcomeViaWorker(deps, decision.outcomeId);
+  return settleOutcomeViaWorker(deps, decision.outcomeId, "autonomous");
 }
 
 /**
@@ -668,10 +668,10 @@ export async function executeApprovedObligation(
   outcomeId: string,
 ): Promise<OperatorExecution> {
   forbidMainnet(deps.config);
-  return settleOutcomeViaWorker(deps, outcomeId);
+  return settleOutcomeViaWorker(deps, outcomeId, "approved");
 }
 
-async function settleOutcomeViaWorker(deps: PayoutDeps, outcomeId: string): Promise<OperatorExecution> {
+async function settleOutcomeViaWorker(deps: PayoutDeps, outcomeId: string, path: "autonomous" | "approved"): Promise<OperatorExecution> {
   const reserved = await reserveOutcomePayout(deps, { outcomeId });
   const resAny = reserved as { reserved?: boolean; alreadyReserved?: boolean; settled?: boolean; reason?: string; reservation?: { id: string } | null; payout?: { id: string } | null };
   if (!resAny.reserved || !resAny.reservation || !resAny.payout) {
@@ -680,7 +680,7 @@ async function settleOutcomeViaWorker(deps: PayoutDeps, outcomeId: string): Prom
     }
     return { executed: false, payoutId: null, txHash: null, settled: false, reason: resAny.reason ?? "NOT_ELIGIBLE" };
   }
-  const settled = await settleReservedPayout(deps, { reservationId: resAny.reservation.id });
+  const settled = await settleReservedPayout(deps, { reservationId: resAny.reservation.id, path });
   const setAny = settled as { advanced?: boolean; payout?: { id: string } | null; failureCode?: string };
   if (!setAny.advanced || !setAny.payout) {
     return { executed: false, payoutId: null, txHash: null, settled: false, reason: setAny.failureCode ?? "NOT_ADVANCED" };

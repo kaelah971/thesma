@@ -47,6 +47,13 @@ interface OperatorBriefing {
   };
   pendingEscalations: { id: string; createdAt: string; metadata: Record<string, unknown> }[];
   decisions: { id: string; action: string; createdAt: string; metadata: Record<string, unknown> }[];
+  onchain: {
+    vaultAddress: string;
+    network: string;
+    chainId: number;
+    explorerBaseUrl: string | null;
+    policies: Record<string, unknown>;
+  } | null;
 }
 
 /**
@@ -188,7 +195,7 @@ export function OperatorAutonomy({ workspaceId, isOwner }: { workspaceId: string
               <ul className={styles.history} style={{ marginTop: 6 }}>
                 {brief.decisions.slice(0, 5).map((d) => (
                   <li key={d.id}>
-                    <strong>{actionLabel(String(d.action))}</strong>
+                    <strong>{decisionStatus(d.action, d.metadata)}</strong>
                     <span style={{ display: "block", fontSize: 12.5, opacity: 0.8 }}>
                       {String((d.metadata.reason as string | undefined) ?? (d.metadata.decision as string | undefined) ?? "")}
                     </span>
@@ -197,6 +204,30 @@ export function OperatorAutonomy({ workspaceId, isOwner }: { workspaceId: string
               </ul>
             </div>
           )}
+          <div style={{ marginTop: 12 }}>
+            <span className={styles.ctxLabel}>Authority</span>
+            <p className={styles.muted} style={{ marginTop: 6 }}>
+              {brief.onchain ? (
+                <>
+                  Onchain · {brief.onchain.network} vault{" "}
+                  <span className="mono">{brief.onchain.vaultAddress.slice(0, 10)}…</span> ·{" "}
+                  {Object.keys(brief.onchain.policies).length} live campaign policies verified
+                  {brief.onchain.explorerBaseUrl ? (
+                    <>
+                      {" "}·{" "}
+                      <a href={`${brief.onchain.explorerBaseUrl}/address/${brief.onchain.vaultAddress}`} target="_blank" rel="noreferrer">
+                        policy contract
+                      </a>
+                    </>
+                  ) : (
+                    <> · explorer link appears with ARC_TESTNET_EXPLORER_BASE_URL</>
+                  )}
+                </>
+              ) : (
+                <>Offchain policy cache — onchain verification appears once the testnet operator vault is configured.</>
+              )}
+            </p>
+          </div>
           <p className={styles.muted} style={{ marginTop: 12 }}>
             {brief.metrics.decisions} decisions · {brief.metrics.escalated} escalated ·{" "}
             {formatUsdc(brief.metrics.autonomousPaidMicroUsdc)} USDC paid autonomously
@@ -214,12 +245,18 @@ export function OperatorAutonomy({ workspaceId, isOwner }: { workspaceId: string
   );
 }
 
-function actionLabel(action: string): string {
-  if (action === "operator.decision") return "Decision";
-  if (action === "operator.escalation") return "Escalated";
-  if (action === "operator.escalation.decision") return "Human verdict";
+/** Ledger status words: POLICY REFUSED vs HUMAN APPROVED vs AUTONOMOUS. */
+function decisionStatus(action: string, metadata: Record<string, unknown>): string {
+  if (action === "operator.escalation") return "Policy refused — escalated";
+  if (action === "operator.escalation.decision")
+    return metadata.approved === true ? "Human approved" : "Human rejected";
   if (action === "operator.policy.updated") return "Policy updated";
-  return action;
+  const execution = metadata.execution as { status?: string } | undefined;
+  if ((metadata.rule as string | undefined) === "HUMAN_APPROVED") return "Human approved — executed";
+  if (execution?.status === "EXECUTED") return metadata.autonomous === true ? "Autonomous" : "Human approved — executed";
+  if (execution?.status === "ESCALATED") return "Policy refused — escalated";
+  if (execution?.status === "REFUSED") return "Refused";
+  return "Decision";
 }
 
 /** Operator voice over real numbers — never a template with fake values. */

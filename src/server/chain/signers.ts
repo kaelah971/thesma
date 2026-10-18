@@ -10,7 +10,21 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { outcomeProofDomain, OUTCOME_PROOF_TYPES, type OutcomeProofMessage } from "../domain/payout";
-import { VAULT_ABI } from "./arc";
+import { OPERATOR_VAULT_ABI, VAULT_ABI } from "./arc";
+
+/** Shared 8-field payout tuple: identical across v1 + operator entrypoints. */
+function payoutArgsTuple(args: PayoutSubmitArgs) {
+  return [
+    args.campaignKey,
+    args.outcomeId,
+    args.recipient,
+    args.amount,
+    args.proofHash,
+    args.occurredAt,
+    args.validUntil,
+    args.signature,
+  ] as const;
+}
 
 /**
  * Signer/executor boundaries (S5). The model, the client, and route handlers
@@ -43,6 +57,12 @@ export interface PayoutExecutor {
   /** Executor identity that must equal the campaign's onchain executor. */
   readonly address: Address;
   submitVerifiedOutcomePayout(args: PayoutSubmitArgs): Promise<Hex>;
+  /**
+   * ThesmaOperatorVault (testnet) entrypoints. Optional so existing
+   * executors keep compiling; the operator path fails closed when absent.
+   */
+  submitAutonomousPayout?(args: PayoutSubmitArgs): Promise<Hex>;
+  submitApprovedPayout?(args: PayoutSubmitArgs): Promise<Hex>;
 }
 
 function parsePrivateKey(raw: string | undefined, name: string): Hex {
@@ -105,16 +125,23 @@ export class LocalKeyPayoutExecutor implements PayoutExecutor {
     const data = encodeFunctionData({
       abi: VAULT_ABI,
       functionName: "payoutVerifiedOutcome",
-      args: [
-        args.campaignKey,
-        args.outcomeId,
-        args.recipient,
-        args.amount,
-        args.proofHash,
-        args.occurredAt,
-        args.validUntil,
-        args.signature,
-      ],
+      args: payoutArgsTuple(args),
+    });
+    return this.wallet.sendTransaction({ to: args.vault, data, value: 0n });
+  }
+  async submitAutonomousPayout(args: PayoutSubmitArgs): Promise<Hex> {
+    const data = encodeFunctionData({
+      abi: OPERATOR_VAULT_ABI,
+      functionName: "payoutAutonomous",
+      args: payoutArgsTuple(args),
+    });
+    return this.wallet.sendTransaction({ to: args.vault, data, value: 0n });
+  }
+  async submitApprovedPayout(args: PayoutSubmitArgs): Promise<Hex> {
+    const data = encodeFunctionData({
+      abi: OPERATOR_VAULT_ABI,
+      functionName: "payoutApproved",
+      args: payoutArgsTuple(args),
     });
     return this.wallet.sendTransaction({ to: args.vault, data, value: 0n });
   }
