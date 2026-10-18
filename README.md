@@ -29,7 +29,7 @@
 <img src="https://img.shields.io/badge/settlement-USDC-66F2A2?style=flat-square" alt="Settlement: USDC" />
 <img src="https://img.shields.io/badge/proof-reconciled-66F2A2?style=flat-square" alt="Proof: reconciled" />
 <img src="https://img.shields.io/badge/safety-no_double_pay-66F2A2?style=flat-square" alt="Safety: no double pay" />
-<img src="https://img.shields.io/badge/tests-155_passing-66F2A2?style=flat-square" alt="Tests: 155 passing" />
+<img src="https://img.shields.io/badge/tests-176_passing-66F2A2?style=flat-square" alt="Tests: 176 passing" />
 <img src="https://img.shields.io/badge/next.js-16-111111?style=flat-square" alt="Next.js 16" />
 <img src="https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square" alt="TypeScript strict" />
 </p>
@@ -45,6 +45,30 @@
 </p>
 
 </div>
+
+---
+
+## Live production usage
+
+On October 18, 2026, a user-operated production run took a fresh Thesma campaign from approved policy to LIVE on Arc Mainnet through the deployed web app and MetaMask — not a script-only chain call.
+
+- Workspace: Beaconfield Studio
+- Campaign: `dcec0b71-2a4d-496c-b573-6999d09c8cb2`
+- Budget funded: **0.90 USDC** (900,000 micro-USDC)
+- Register campaign: `0x09fed70acc01a01db5a338226d58bafd5664cc485aa5663711a634682c1c9377`
+- Approve USDC: `0xd0ee24f7acf0c0689efb633f00da19b66c0cbf0ec1ac70f1281b7f8a07d92006`
+- Fund campaign: `0x10465a59d6fc5309fc8220a04f0af9f81d8bd564def54d567502328842fbcae6`
+- Reconciled product state: **LIVE**, funding **CONFIRMED**, funded **900000**, spent **0**
+
+The owner signed each transaction in the Thesma UI. Thesma moved the campaign to LIVE only after independently reading Arc and matching the expected onchain funding state.
+
+This run is intentionally separate from the canonical completed lifecycle below. Run #1 already completed:
+
+customer purchase → deterministic verification → legitimate 1-hour safety hold → partner payout → independent onchain reconciliation → SETTLED.
+
+This demonstrates both:
+1. a fresh user-operated campaign can be launched through the production product;
+2. the canonical full lifecycle has already settled successfully on Arc Mainnet.
 
 ---
 
@@ -168,13 +192,13 @@ No secrets are committed. Server secrets are never exposed via `NEXT_PUBLIC` var
 ```bash
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest run — 155 passing, 2 env-gated (Anvil) skipped
+npm test             # vitest run — 176 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **155 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **176 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Security guarantees
 
