@@ -99,6 +99,24 @@ export function serializePartnerRules(r: PartnerRules) {
 
 /* ---------------- Join eligibility (pure, deterministic) ---------------- */
 
+/* ---------------- Target-settled completion (pure, deterministic) ---------------- */
+
+export interface TargetSettledInputs {
+  target: number | null;
+  verifiedOutcomes: number;
+  settledPayouts: number;
+}
+
+/**
+ * A market is target-settled only when the target exists, enough outcomes are
+ * VERIFIED, and at least that many payouts for this campaign are genuinely
+ * SETTLED. SUBMITTED/PREPARED/AMBIGUOUS never count. VERIFIED != PAID.
+ */
+export function checkTargetSettled(args: TargetSettledInputs): boolean {
+  if (args.target === null) return false;
+  return args.verifiedOutcomes >= args.target && args.settledPayouts >= args.target;
+}
+
 export type EligibilityFailure =
   | "MARKET_NOT_OPEN"
   | "CAMPAIGN_NOT_LIVE"

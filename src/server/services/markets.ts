@@ -3,6 +3,7 @@ import { newId } from "../auth/session";
 import {
   assertSafeDestinationUrl,
   checkJoinEligibility,
+  checkTargetSettled,
   newReferralCode,
   parsePartnerRules,
   serializePartnerRules,
@@ -179,16 +180,22 @@ export async function evaluateTargetSettled(
   const verified = await store.countVerifiedOutcomes(campaignId);
   let settledPayouts = 0;
   if (verified >= target) {
-    const reservations = await store.listReservationsByCampaign(campaignId);
-    for (const r of reservations) {
-      if (r.campaignId !== campaignId) continue;
-      const payout = await store.getPayoutByReservation(r.id);
-      if (payout && payout.campaignId === campaignId && payout.state === "SETTLED") {
-        settledPayouts += 1;
-      }
+    settledPayouts = await countSettledPayouts(store, campaignId);
+  }
+  return { target, verified, settledPayouts, complete: checkTargetSettled({ target, verifiedOutcomes: verified, settledPayouts }) };
+}
+
+/** Shared settled-payout count used by evaluation and the detail fast path. */
+export async function countSettledPayouts(store: MarketStore, campaignId: string): Promise<number> {
+  const reservations = await store.listReservationsByCampaign(campaignId);
+  const payouts = await Promise.all(reservations.map((r) => store.getPayoutByReservation(r.id)));
+  let settledPayouts = 0;
+  for (const payout of payouts) {
+    if (payout && payout.campaignId === campaignId && payout.state === "SETTLED") {
+      settledPayouts += 1;
     }
   }
-  return { target, verified, settledPayouts, complete: verified >= target && settledPayouts >= target };
+  return settledPayouts;
 }
 
 export type FinalizeResult =
@@ -384,15 +391,42 @@ export async function getPublicMarketDetail(
 ) {
   const now = deps.now?.() ?? new Date();
   const base = params.explorerBaseUrl ?? null;
-  const campaign = await deps.store.getCampaign(params.campaignId);
+  // Batch 1: campaign + market are independent of each other.
+  const [campaign, market] = await Promise.all([
+    deps.store.getCampaign(params.campaignId),
+    deps.store.getMarket(params.campaignId),
+  ]);
   if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
-  const market = await deps.store.getMarket(params.campaignId);
   if (!market) fail(404, "MARKET_NOT_FOUND", "No market for this campaign");
-  const version = await deps.store.getVersion(params.campaignId, market.policyVersion);
+  // Batch 2: everything derivable from campaign + market, all independent.
+  const [version, workspace, verifiedCount, reservations, funding, latestDecision] = await Promise.all([
+    deps.store.getVersion(params.campaignId, market.policyVersion),
+    deps.store.getWorkspace(campaign.workspaceId),
+    deps.store.countVerifiedOutcomes(params.campaignId),
+    deps.store.listReservationsByCampaign(params.campaignId),
+    deps.store.getFunding(params.campaignId, market.policyVersion),
+    deps.store.getLatestPricingDecision(params.campaignId),
+  ]);
   if (!version || version.marketVisibility !== "PUBLIC") fail(404, "NOT_FOUND", "Campaign not found");
-  const workspace = await deps.store.getWorkspace(campaign.workspaceId);
-  const verifiedCount = await deps.store.countVerifiedOutcomes(params.campaignId);
-  const reservations = await deps.store.listReservationsByCampaign(params.campaignId);
+  // Batch 3: per-reservation payout + outcome pairs, all independent.
+  // Each outcome is fetched exactly once and reused below (no second loop,
+  // no re-read inside completion evaluation).
+  const perReservation = await Promise.all(
+    reservations.map(async (r) => ({
+      reservation: r,
+      payout: await deps.store.getPayoutByReservation(r.id),
+      outcome: await deps.store.getOutcome(r.outcomeId),
+    })),
+  );
+  const target = version.targetOutcomeCount ?? null;
+  let settledPayouts = 0;
+  for (const { payout } of perReservation) {
+    if (payout && payout.campaignId === params.campaignId && payout.state === "SETTLED") {
+      settledPayouts += 1;
+    }
+  }
+  const targetComplete = checkTargetSettled({ target, verifiedOutcomes: verifiedCount, settledPayouts });
+  const live = isLivePublicMarket(market, campaign, version, now) && !targetComplete;
   const partners = new Set<string>();
   let spend = 0n;
   const payouts: Array<{
@@ -402,10 +436,11 @@ export async function getPublicMarketDetail(
   const outcomeProofs: string[] = [];
   const purchaseTxs: Array<{ txHash: string; explorerUrl: string | null; amountMicroUsdc: string; status: string }> = [];
   let settledPayoutTotal = 0n;
-  for (const r of reservations) {
+  let revenue = 0n;
+  let verified = 0;
+  for (const { reservation: r, payout, outcome } of perReservation) {
     partners.add(r.partnerId);
     if (r.state === "SETTLED") spend += r.amountMicroUsdc;
-    const payout = await deps.store.getPayoutByReservation(r.id);
     if (payout) {
       if (payout.state === "SETTLED") settledPayoutTotal += payout.amountMicroUsdc;
       payouts.push({
@@ -419,9 +454,10 @@ export async function getPublicMarketDetail(
         settledAt: payout.settledAt?.toISOString() ?? null,
       });
     }
-    const outcome = await deps.store.getOutcome(r.outcomeId);
     if (outcome?.proofHash) outcomeProofs.push(outcome.proofHash);
     if (outcome && outcome.status === "VERIFIED") {
+      verified += 1;
+      revenue += outcome.purchaseAmountMicroUsdc;
       purchaseTxs.push({
         txHash: outcome.purchaseTx,
         explorerUrl: txUrl(base, outcome.purchaseTx),
@@ -430,10 +466,6 @@ export async function getPublicMarketDetail(
       });
     }
   }
-  const funding = await deps.store.getFunding(params.campaignId, market.policyVersion);
-  const latestDecision = await deps.store.getLatestPricingDecision(params.campaignId);
-  const targetSettled = await evaluateTargetSettled(deps.store, params.campaignId, market.policyVersion);
-  const live = isLivePublicMarket(market, campaign, version, now) && !targetSettled.complete;
   const core = {
     campaignId: campaign.id,
     workspaceName: workspace?.name ?? "Workspace",
@@ -475,19 +507,11 @@ export async function getPublicMarketDetail(
       : null,
   };
   if (live) return { ...core, kind: "live" as const };
-  let revenue = 0n;
-  let verified = 0;
-  for (const r of reservations) {
-    const outcome = await deps.store.getOutcome(r.outcomeId);
-    if (outcome && outcome.status === "VERIFIED") {
-      verified += 1;
-      revenue += outcome.purchaseAmountMicroUsdc;
-    }
-  }
+  // revenue/verified already accumulated in the single pass above.
   return {
     ...core,
     kind: "completed" as const,
-    completionReason: targetSettled.complete ? "TARGET_SETTLED" : "ENDED",
+    completionReason: targetComplete ? "TARGET_SETTLED" : "ENDED",
     settledSpendMicroUsdc: spend.toString(),
     finalOutcome: {
       reachedTarget: version.targetOutcomeCount !== null && verifiedCount >= version.targetOutcomeCount,
