@@ -362,6 +362,26 @@
   list-style: none;
 }
 
+.history li {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--paper);
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.summary {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0 0 12px;
+}
+
+.muted {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
 .history button {
   width: 100%;
   padding: 10px 12px;

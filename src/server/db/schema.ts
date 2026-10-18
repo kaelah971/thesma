@@ -159,6 +159,22 @@ export const workspaces = pgTable(
   (t) => [index("workspaces_owner_idx").on(t.ownerUserId)],
 );
 
+/**
+ * Human-controlled autonomous-spending authority per workspace (RFB 04).
+ * The AI can never write this table — only organization owners via the
+ * policy API. Missing row ⇒ conservative DEFAULT_OPERATOR_POLICY.
+ */
+export const operatorPolicies = pgTable("operator_policies", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  minReserveMicroUsdc: text("min_reserve_micro_usdc").notNull().default("0"),
+  maxAutonomousPaymentMicroUsdc: text("max_autonomous_payment_micro_usdc").notNull().default("10000000"),
+  maxAutonomousSpendPerPeriodMicroUsdc: text("max_autonomous_spend_per_period_micro_usdc"),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const workspaceMembers = pgTable(
   "workspace_members",
   {

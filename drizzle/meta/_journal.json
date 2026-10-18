@@ -71,6 +71,13 @@
       "when": 1792329600000,
       "tag": "0009_cuddly_persona_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792363648591,
+      "tag": "0010_black_omega_flight",
+      "breakpoints": true
     }
   ]
 }
