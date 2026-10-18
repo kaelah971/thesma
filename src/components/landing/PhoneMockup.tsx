@@ -103,7 +103,7 @@ export function PhoneMockup() {
                 <span className={styles.dot} data-tone="lav" />
                 <div>
                   <b>Budget reserved</b>
-                  <small>60 USDC · frozen price</small>
+                  <small>60 USDC · price locked</small>
                 </div>
                 <em>14m</em>
               </li>
@@ -111,7 +111,7 @@ export function PhoneMockup() {
                 <span className={styles.dot} data-tone="mint" />
                 <div>
                   <b>Payout settled</b>
-                  <small>Reconciled onchain</small>
+                  <small>Payment confirmed</small>
                 </div>
                 <em>1h</em>
               </li>
@@ -134,7 +134,7 @@ export function PhoneMockup() {
           </div>
           <strong className="tnum">60 USDC</strong>
         </div>
-        <Rail steps={["Verify", "Hold", "Reserve", "Settle"]} current={1} size="sm" tone="cream" label="Payout progress" />
+        <Rail steps={["Verify", "Hold", "Settle"]} current={1} size="sm" tone="cream" label="Payout progress" />
       </div>
 
       <div className={`${styles.floatCard} ${styles.floatLight}`} aria-hidden="true">

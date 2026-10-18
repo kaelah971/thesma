@@ -4,13 +4,13 @@ import { SiteNav } from "./SiteNav";
 import styles from "./landing.module.css";
 
 const LEFT = [
-  { title: "Set the outcome", body: "Choose the result, the price and the rules.", tone: "blue", glyph: "target" },
-  { title: "Fund it upfront", body: "The budget is committed before a single result arrives.", tone: "lav", glyph: "stack" },
+  { title: "Set the outcome", body: "The result, the price, the rules.", tone: "blue", glyph: "target" },
+  { title: "Fund it upfront", body: "Your budget is set aside first.", tone: "lav", glyph: "stack" },
 ] as const;
 
 const RIGHT = [
-  { title: "Verify every result", body: "Evidence is checked before anything becomes payable.", tone: "mint", glyph: "seal" },
-  { title: "Release on proof", body: "Hold, payout, receipt. In that order, every time.", tone: "cream", glyph: "receipt" },
+  { title: "Verify every result", body: "Checked before it can be paid.", tone: "mint", glyph: "seal" },
+  { title: "Release on proof", body: "Hold, payout, receipt. In order.", tone: "cream", glyph: "receipt" },
 ] as const;
 
 const enter = (i: number) => ({ ["--i" as string]: i }) as React.CSSProperties;
@@ -23,7 +23,7 @@ export function ArrowIcon() {
   );
 }
 
-type Glyph = (typeof LEFT)[number]["glyph"] | (typeof RIGHT)[number]["glyph"];
+export type Glyph = (typeof LEFT)[number]["glyph"] | (typeof RIGHT)[number]["glyph"] | "clock" | "shield" | "repeat" | "one";
 
 export function CalloutGlyph({ glyph }: { glyph: Glyph }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -51,6 +51,30 @@ export function CalloutGlyph({ glyph }: { glyph: Glyph }) {
         <>
           <path d="M4 2h10v14l-2.5-1.5L9 16l-2.5-1.5L4 16z" {...common} />
           <path d="M6.5 6h5M6.5 9h5" {...common} />
+        </>
+      )}
+      {glyph === "clock" && (
+        <>
+          <circle cx="9" cy="9" r="6.5" {...common} />
+          <path d="M9 5.5V9l2.4 1.6" {...common} />
+        </>
+      )}
+      {glyph === "shield" && (
+        <>
+          <path d="M9 1.8 15 4v4.6c0 3.6-2.6 6.4-6 7.6-3.4-1.2-6-4-6-7.6V4z" {...common} />
+          <path d="M6.3 9.1 8.2 11l3.5-3.7" {...common} />
+        </>
+      )}
+      {glyph === "repeat" && (
+        <>
+          <path d="M3 8.2V7a3 3 0 0 1 3-3h8.5M12.3 1.8 14.5 4l-2.2 2.2" {...common} />
+          <path d="M15 9.8V11a3 3 0 0 1-3 3H3.5M5.7 16.2 3.5 14l2.2-2.2" {...common} />
+        </>
+      )}
+      {glyph === "one" && (
+        <>
+          <rect x="2.5" y="2.5" width="13" height="13" rx="3.5" {...common} />
+          <path d="M7.6 6.6 9.4 5.4v7.2M7.4 12.6h4" {...common} />
         </>
       )}
     </svg>
@@ -82,14 +106,12 @@ export function Hero() {
           <span className="pill" data-tone="mint">
             Proof before payout
           </span>
-          Outcome campaigns for growing businesses
         </p>
         <h1 id="hero-title" className={`${styles.heroTitle} ${styles.enter}`} style={enter(1)}>
-          Autonomous operators for growth campaigns.
-          <span className={styles.heroTitleEm}>Pay only for verified results.</span>
+          Pay for <span className={styles.spectrumText}>proof</span>,<br /> not promises.
         </h1>
         <p className={`${styles.heroLede} ${styles.enter}`} style={enter(2)}>
-          Thesma helps teams launch and run outcome campaigns, verify real business results, and control when money moves. Its autonomous operators manage pricing, partner decisions, verification, holds and payouts, while every payment stays bound to proof, budget and policy.
+          Thesma&apos;s autonomous operators run your growth campaigns and release payment only when a real customer result is verified.
         </p>
         <div className={`${styles.heroCtas} ${styles.enter}`} style={enter(3)}>
           <Link href="/signin?next=/app/campaigns/new" className="btn btn-primary">
@@ -103,18 +125,21 @@ export function Hero() {
       </div>
 
       <div className={styles.stage}>
+        <span className={`${styles.splitWord} ${styles.enterFade}`} data-half="start" aria-hidden="true" style={enter(3)}>
+          Veri
+        </span>
+        <div className={styles.center}>
+          <div className={`${styles.phoneRise} ${styles.enterRise}`} style={enter(4)}>
+            <PhoneMockup />
+          </div>
+        </div>
+        <span className={`${styles.splitWord} ${styles.enterFade}`} data-half="end" aria-hidden="true" style={enter(4)}>
+          fied
+        </span>
         <div className={styles.calloutCol} data-side="left">
           {LEFT.map((item, i) => (
             <Callout key={item.title} item={item} side="left" i={6 + i} />
           ))}
-        </div>
-        <div className={styles.center}>
-          <div className={`${styles.bigWord} ${styles.enterFade}`} aria-hidden="true" style={enter(3)}>
-            Verified
-          </div>
-          <div className={`${styles.phoneRise} ${styles.enterRise}`} style={enter(4)}>
-            <PhoneMockup />
-          </div>
         </div>
         <div className={styles.calloutCol} data-side="right">
           {RIGHT.map((item, i) => (

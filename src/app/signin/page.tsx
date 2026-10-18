@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
+import { landingFonts } from "@/components/landing/fonts";
 import { Rail } from "@/components/ui/Rail";
 import { getSessionUser } from "@/server/auth/guard";
 import { isDbConfigured } from "@/server/db/client";
@@ -21,8 +22,9 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   if (isDbConfigured() && (await getSessionUser())) redirect(next);
 
   return (
-    <div className={styles.page}>
+    <div className={`${landingFonts} ${styles.page}`}>
       <div className={styles.panel}>
+        <span className={styles.shine} aria-hidden="true" />
         <div className={styles.formSide}>
           <Logo />
           <div className={styles.formBody}>
@@ -36,7 +38,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
               </p>
             )}
           </div>
-          <p className={styles.legal}>Accounts use email and password. Payout keys are never held in the browser.</p>
+          <p className={styles.legal}>Sign in with your work email. Payment keys are never stored in your browser.</p>
         </div>
 
         <aside className={styles.artSide} aria-hidden="true">
@@ -44,8 +46,8 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
           <div className={styles.artCard}>
             <span className={styles.artLabel}>Payout in safety hold</span>
             <strong className="tnum">60 USDC</strong>
-            <Rail steps={["Verify", "Hold", "Reserve", "Submit", "Settle"]} current={1} size="sm" />
-            <p>Settlement stays blocked until the campaign hold expires.</p>
+            <Rail steps={["Verify", "Hold", "Settle"]} current={1} size="sm" />
+            <p>Verified, not yet paid. Payment waits until the campaign hold ends.</p>
           </div>
         </aside>
       </div>

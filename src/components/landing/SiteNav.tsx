@@ -9,8 +9,8 @@ const LINKS = [
   { href: "/markets", label: "Live markets" },
   { href: "#product", label: "Product" },
   { href: "#how-it-works", label: "How it works" },
-  { href: "#verified-outcomes", label: "Verified outcomes" },
-  { href: "#developers", label: "Developers" },
+  { href: "#operator", label: "Operator" },
+  { href: "#receipts", label: "Receipts" },
   { href: "#faq", label: "FAQ" },
 ];
 

@@ -3,9 +3,13 @@
   display: grid;
   place-items: center;
   padding: 12px;
+  font-family: var(--font-body), var(--font-mono);
+  font-size: 14px;
 }
 
 .panel {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 1fr 1fr;
   width: 100%;
@@ -16,6 +20,65 @@
   border: 1px solid var(--line);
   box-shadow: var(--shadow-md);
   overflow: hidden;
+}
+
+/* Localized light entering the card from its top-left corner:
+   a soft bloom (breathes via opacity/transform) and a rim that is
+   brightest at the corner and fades along the top and left edges. */
+.shine {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.shine::before {
+  content: "";
+  position: absolute;
+  left: -220px;
+  top: -220px;
+  width: 640px;
+  height: 640px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(79, 198, 214, 0.26), rgba(95, 211, 165, 0.12) 45%, transparent);
+  transform-origin: 34% 34%;
+}
+
+.shine::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #4fc6d6 0%, rgba(95, 211, 165, 0.55) 9%, transparent 26%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .shine::before {
+    animation: breathe 7s ease-in-out infinite;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.formSide,
+.artSide {
+  position: relative;
+  z-index: 1;
 }
 
 .formSide {
@@ -32,12 +95,16 @@
 }
 
 .formBody h1 {
-  font-size: 34px;
-  letter-spacing: -0.03em;
+  font-family: var(--font-display), var(--font-mono);
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
 }
 
 .formBody > p {
-  margin: 10px 0 28px;
+  margin: 14px 0 28px;
   color: var(--ink-2);
 }
 
@@ -100,13 +167,19 @@
 .artWord {
   position: absolute;
   left: 50%;
-  bottom: -0.16em;
+  bottom: 0.3em;
   transform: translateX(-50%);
-  font-size: clamp(96px, 11vw, 136px);
-  font-weight: 600;
-  letter-spacing: -0.06em;
+  font-family: var(--font-display), var(--font-mono);
+  font-size: clamp(48px, 6vw, 72px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
   line-height: 1;
+  text-transform: uppercase;
   white-space: nowrap;
+  background: linear-gradient(90deg, #1f9d74 0%, #1597a8 25%, #3667d6 52%, #6a4fd6 76%, #c96a2e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .artCard {

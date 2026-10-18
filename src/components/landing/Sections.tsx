@@ -2,13 +2,38 @@ import Image from "next/image";
 import Link from "next/link";
 import { Logo, LogoMark } from "@/components/brand/Logo";
 import { Rail } from "@/components/ui/Rail";
-import { ArrowIcon } from "./Hero";
+import { ArrowIcon, CalloutGlyph, type Glyph } from "./Hero";
 import styles from "./landing.module.css";
 
 /** Scroll reveal hook (see RevealObserver). `i` staggers siblings. */
 const reveal = (i = 0) => ({ "data-reveal": "", style: { ["--reveal-i" as string]: i } as React.CSSProperties });
 
-/* ---------------- Product value ---------------- */
+/* ---------------- Product value (notched cards) ---------------- */
+
+function ValueCard({ tone, glyph, tag, title, body, i, id, children }: {
+  tone: string;
+  glyph: Glyph;
+  tag: string;
+  title: string;
+  body: string;
+  i: number;
+  id?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <article id={id} className={styles.valueCard} data-tone={tone} {...reveal(i)}>
+      <div className={styles.notchSurface}>
+        <span className={styles.valueIcon} aria-hidden="true">
+          <CalloutGlyph glyph={glyph} />
+        </span>
+        <h3>{title}</h3>
+        <p>{body}</p>
+        <div className={styles.valueVisual}>{children}</div>
+      </div>
+      <span className={styles.notchTag}>{tag}</span>
+    </article>
+  );
+}
 
 export function ValueSection() {
   return (
@@ -16,109 +41,93 @@ export function ValueSection() {
       <div className="container">
         <div className={styles.sectionHead} {...reveal()}>
           <p className="eyebrow">Product</p>
-          <h2 id="product-title">Spend moves only when the result is real.</h2>
-          <p>Every campaign runs on fixed rules, independent verification and a receipt for each payment. Nothing pays out on a claim.</p>
+          <h2 id="product-title">Spend only on real results.</h2>
+          <p>You decide the result, the price and the rules. Thesma checks every claim before any money moves.</p>
         </div>
 
         <div className={styles.valueGrid}>
-          <article className={styles.valueCard} data-tone="blue" {...reveal(0)}>
-            <div className={styles.valueVisual}>
-              <div className={styles.ruleCard}>
-                <span className={styles.ruleKey}>Outcome</span>
-                <span>Paid customer</span>
-                <span className={styles.ruleKey}>Qualifies at</span>
-                <span className="tnum">30 USDC or more</span>
-                <span className={styles.ruleKey}>Price range</span>
-                <span className="tnum">40 to 80 USDC</span>
+          <ValueCard tone="blue" glyph="target" tag="Terms" title="Pay for a result" body="Name the exact result you’ll pay for, and nothing else." i={0}>
+            <div className={styles.ruleCard}>
+              <span className={styles.ruleKey}>Outcome</span>
+              <span>Paid customer</span>
+              <span className={styles.ruleKey}>Qualifies at</span>
+              <span className="tnum">30 USDC or more</span>
+              <span className={styles.ruleKey}>Price range</span>
+              <span className="tnum">40 to 80 USDC</span>
+            </div>
+          </ValueCard>
+
+          <ValueCard id="verified-outcomes" tone="mint" glyph="seal" tag="Checks" title="Every result checked" body="Nothing becomes payable until it passes your rules." i={1}>
+            <ul className={styles.checkList}>
+              <li>Paid to your wallet</li>
+              <li>Above the minimum</li>
+              <li>New customer only</li>
+              <li>Buyer is not the referrer</li>
+            </ul>
+          </ValueCard>
+
+          <ValueCard tone="cream" glyph="clock" tag="Hold" title="A safety window" body="Payment waits out a hold, so refunds surface before anyone is paid." i={2}>
+            <div className={styles.holdVisual}>
+              <span className={styles.ruleKey}>Safety hold</span>
+              <strong className="tnum">00:42:10</strong>
+              <Rail steps={["Verify", "Hold", "Settle"]} current={1} size="sm" />
+            </div>
+          </ValueCard>
+
+          <ValueCard tone="lav" glyph="receipt" tag="Receipt" title="Proof for every payment" body="Open any payment and see exactly why it was made." i={3}>
+            <dl className={styles.receiptMini}>
+              <div>
+                <dt>Payout</dt>
+                <dd className="tnum">60.00 USDC</dd>
               </div>
-            </div>
-            <h3>Outcome campaigns</h3>
-            <p>Name the exact result you will pay for, and nothing else.</p>
-          </article>
-
-          <article id="verified-outcomes" className={styles.valueCard} data-tone="mint" {...reveal(1)}>
-            <div className={styles.valueVisual}>
-              <ul className={styles.checkList}>
-                <li>Paid to your wallet</li>
-                <li>Above the minimum</li>
-                <li>New customer only</li>
-                <li>Buyer is not the referrer</li>
-              </ul>
-            </div>
-            <h3>Verified evidence</h3>
-            <p>No outcome becomes payable until it passes verification.</p>
-          </article>
-
-          <article className={styles.valueCard} data-tone="cream" {...reveal(2)}>
-            <div className={styles.valueVisual}>
-              <div className={styles.holdVisual}>
-                <span className={styles.ruleKey}>Safety hold</span>
-                <strong className="tnum">00:42:10</strong>
-                <Rail steps={["Verify", "Hold", "Reserve", "Settle"]} current={1} size="sm" />
+              <div>
+                <dt>Status</dt>
+                <dd>
+                  <span className="pill" data-tone="mint">
+                    Settled
+                  </span>
+                </dd>
               </div>
-            </div>
-            <h3>Protected settlement</h3>
-            <p>A safety hold and reconciliation stand between proof and payment.</p>
-          </article>
-
-          <article className={styles.valueCard} data-tone="lav" {...reveal(3)}>
-            <div className={styles.valueVisual}>
-              <dl className={styles.receiptMini}>
-                <div>
-                  <dt>Payout</dt>
-                  <dd className="tnum">60.00 USDC</dd>
-                </div>
-                <div>
-                  <dt>State</dt>
-                  <dd>
-                    <span className="pill" data-tone="mint">
-                      Settled
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Proof</dt>
-                  <dd className="mono">0x91c4…e0a2</dd>
-                </div>
-              </dl>
-            </div>
-            <h3>Transparent receipts</h3>
-            <p>Every payment leaves a record you can open and check.</p>
-          </article>
+              <div>
+                <dt>Proof</dt>
+                <dd className="mono">0x91c4…e0a2</dd>
+              </div>
+            </dl>
+          </ValueCard>
         </div>
       </div>
     </section>
   );
 }
 
-/* ---------------- How it works ---------------- */
+/* ---------------- How it works (linked light) ---------------- */
 
 const STEPS = [
   {
     n: "01",
     title: "Create a campaign",
-    body: "Define the business outcome, the price and who is eligible.",
-    detail: "Approved by the owner",
+    body: "Choose the result you’ll pay for, the price, and who can earn it.",
+    detail: "You approve it before launch",
     tone: "blue",
   },
   {
     n: "02",
     title: "Fund the budget",
-    body: "Commit USDC to the campaign before any result arrives.",
-    detail: "Held in the campaign vault",
+    body: "Set money aside for the campaign before any result arrives.",
+    detail: "Locked to this campaign",
     tone: "lav",
   },
   {
     n: "03",
     title: "Verify the result",
-    body: "Real customer activity and its evidence are checked before anything is payable.",
-    detail: "Read independently onchain",
+    body: "Each customer purchase is checked against your rules before anything is payable.",
+    detail: "Checked from the payment itself",
     tone: "mint",
   },
   {
     n: "04",
-    title: "Settle the payout",
-    body: "Once the safety hold passes, the payout is reserved, submitted and reconciled onchain.",
+    title: "Pay out on proof",
+    body: "After the safety hold, the payout is sent. It only counts as settled once it’s confirmed.",
     detail: "A receipt for every payout",
     tone: "cream",
   },
@@ -126,7 +135,7 @@ const STEPS = [
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className={styles.section} aria-labelledby="how-title">
+    <section id="how-it-works" className={styles.section} aria-labelledby="how-title" data-inview-track>
       <div className="container">
         <div className={styles.sectionHead} {...reveal()}>
           <p className="eyebrow">How it works</p>
@@ -136,14 +145,17 @@ export function HowItWorks() {
 
         <ol className={styles.steps}>
           {STEPS.map((s, i) => (
-            <li key={s.n} className={styles.step} data-tone={s.tone} {...reveal(i)}>
-              <div className={styles.stepTop}>
-                <span className={`${styles.stepNum} tnum`}>{s.n}</span>
-                <span className={styles.stepNode} aria-hidden="true" />
+            <li key={s.n} className={styles.step} data-tone={s.tone} style={{ ["--step" as string]: i } as React.CSSProperties}>
+              <div className={styles.stepCard} {...reveal(i)}>
+                <div className={styles.stepTop}>
+                  <span className={`${styles.stepNum} tnum`}>{s.n}</span>
+                  <span className={styles.stepNode} aria-hidden="true" />
+                </div>
+                <h3>{s.title}</h3>
+                <p>{s.body}</p>
+                <span className={styles.stepDetail}>{s.detail}</span>
               </div>
-              <h3>{s.title}</h3>
-              <p>{s.body}</p>
-              <span className={styles.stepDetail}>{s.detail}</span>
+              {i < STEPS.length - 1 && <span className={styles.stepLink} aria-hidden="true" />}
             </li>
           ))}
         </ol>
@@ -159,12 +171,12 @@ const PROMPTS = ["Show campaign status", "What is awaiting verification?", "Expl
 
 export function OperatorShowcase() {
   return (
-    <section id="operator" className={styles.section} aria-labelledby="operator-title">
+    <section id="operator" className={styles.section} aria-labelledby="operator-title" data-inview-track>
       <div className="container">
         <div className={styles.sectionHead} {...reveal()}>
           <p className="eyebrow">Operator</p>
           <h2 id="operator-title">Ask your campaign what it&apos;s doing.</h2>
-          <p>Get straight answers on holds, budget, evidence and receipts, with the numbers attached.</p>
+          <p>Straight answers on holds, budget and payments, with the numbers attached.</p>
         </div>
 
         <div className={styles.opFrame} {...reveal(1)}>
@@ -208,7 +220,7 @@ export function OperatorShowcase() {
                   <LogoMark size={28} tile />
                   <div className={styles.msgBody}>
                     <p>
-                      1 verified outcome is currently in its safety hold. Payout becomes eligible in <b>42 minutes</b>.
+                      1 verified outcome is in its safety hold. The payout becomes eligible in <b>42 minutes</b>.
                     </p>
                     <div className={styles.msgFacts}>
                       <div>
@@ -233,9 +245,9 @@ export function OperatorShowcase() {
                 <div className={styles.msgThesma}>
                   <LogoMark size={28} tile />
                   <div className={styles.msgBody}>
-                    <p>The outcome is verified, but settlement is intentionally blocked until the campaign hold expires.</p>
+                    <p>The result is verified, but payment waits until the campaign&apos;s safety hold ends. Verified isn&apos;t the same as paid.</p>
                     <div className={styles.msgRail}>
-                      <Rail steps={["Verify", "Hold", "Reserve", "Submit", "Settle"]} current={1} size="sm" />
+                      <Rail steps={["Verify", "Hold", "Settle"]} current={1} size="sm" />
                     </div>
                     <div className={styles.msgActions} aria-hidden="true">
                       <span>Open outcome</span>
@@ -246,6 +258,7 @@ export function OperatorShowcase() {
               </div>
 
               <div className={styles.opComposer} aria-hidden="true">
+                <span className={styles.composerLight} />
                 <span className={styles.opPlaceholder}>Ask about campaigns, outcomes or payouts</span>
                 <div className={styles.opComposerRow}>
                   <div className={styles.opChips}>
@@ -274,7 +287,7 @@ export function OperatorShowcase() {
               <div className={`${styles.opCard} ${styles.opHold}`}>
                 <span className={styles.ruleKey}>Next payout eligible</span>
                 <strong className="tnum">42m</strong>
-                <p>Outcome 7f3a91c2 · 60 USDC · hold set by campaign policy</p>
+                <p>60 USDC · hold set by your campaign rules</p>
               </div>
             </aside>
           </div>
@@ -284,90 +297,87 @@ export function OperatorShowcase() {
   );
 }
 
-/* ---------------- Trust / principles ---------------- */
+/* ---------------- Trust / safeguards (agentic light cards) ---------------- */
 
-const PRINCIPLES = [
-  { title: "Verified payouts only", body: "No evidence, no payment. Clicks and signups never earn on their own.", rule: "outcome.status = VERIFIED" },
-  { title: "Bounded by budget", body: "Each payout reserves against funded budget, so parallel results can never overspend.", rule: "funded − committed ≥ price" },
-  { title: "Safety and refund holds", body: "Every campaign sets a hold window that must pass before money moves.", rule: "now ≥ holdUntil" },
-  { title: "Reconcile before retry", body: "Unclear results are reconciled first. A payment is never resent blindly.", rule: "AMBIGUOUS → reconcile" },
-  { title: "No double payments", body: "One reservation and one payout per outcome, for life.", rule: "unique(outcome_id)" },
-  { title: "Onchain receipts", body: "Settled means a matching payout event exists onchain. Nothing less.", rule: "OutcomePaid ✓" },
+const PRINCIPLES: { title: string; body: string; glyph: Glyph; tone: string }[] = [
+  { title: "Verified results only", body: "Clicks and sign-ups never earn on their own. Only results that pass verification can be paid.", glyph: "seal", tone: "mint" },
+  { title: "Never over budget", body: "Every payout comes out of money you’ve already funded, so spend can’t run past your budget.", glyph: "stack", tone: "aqua" },
+  { title: "A hold before money moves", body: "Each campaign sets a waiting period, so refunds and reversals surface before anyone is paid.", glyph: "clock", tone: "blue" },
+  { title: "Confirmed, never resent", body: "If a payment’s status is unclear, Thesma confirms what happened instead of sending it again.", glyph: "repeat", tone: "lav" },
+  { title: "One result, one payment", body: "Each result can be paid exactly once. No duplicates, ever.", glyph: "one", tone: "cream" },
+  { title: "Public proof of payment", body: "Settled means the payment is confirmed on a public ledger, not just marked done.", glyph: "shield", tone: "mint" },
 ];
 
 export function TrustSection() {
   return (
     <section className={styles.section} aria-labelledby="trust-title">
       <div className="container">
-        <div className={styles.trustPanel} {...reveal()}>
-          <div className={styles.trustHead}>
-            <p className="eyebrow">System principles</p>
-            <h2 id="trust-title">Hard rules, enforced on every payment.</h2>
-          </div>
-          <ul className={styles.trustGrid}>
-            {PRINCIPLES.map((p, i) => (
-              <li key={p.title} {...reveal(i)}>
-                <code className="mono">{p.rule}</code>
-                <h3>{p.title}</h3>
-                <p>{p.body}</p>
-              </li>
-            ))}
-          </ul>
+        <div className={styles.sectionHead} {...reveal()}>
+          <p className="eyebrow">Built-in safeguards</p>
+          <h2 id="trust-title">Rules every payment must pass.</h2>
+          <p>Enforced on every payout, for every campaign. You never have to take a claim on trust.</p>
         </div>
+        <ul className={styles.trustGrid}>
+          {PRINCIPLES.map((p, i) => (
+            <li key={p.title} className={styles.principle} data-tone={p.tone} {...reveal(i)}>
+              <span className={styles.principleIcon} aria-hidden="true">
+                <CalloutGlyph glyph={p.glyph} />
+              </span>
+              <h3>{p.title}</h3>
+              <p>{p.body}</p>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   );
 }
 
-/* ---------------- Developers ---------------- */
+/* ---------------- Receipts ---------------- */
 
-export function DevelopersSection() {
+const RECEIPT_CHECKS = ["Campaign budget was funded", "Amount matches the agreed price", "Paid to the partner’s own wallet", "Safety hold completed"];
+
+export function ReceiptsSection() {
   return (
-    <section id="developers" className={styles.section} aria-labelledby="dev-title">
-      <div className={`container ${styles.devGrid}`}>
-        <div className={styles.devCopy} {...reveal()}>
-          <p className="eyebrow">Developers</p>
-          <h2 id="dev-title">Every payout has a receipt you can fetch.</h2>
+    <section id="receipts" className={styles.section} aria-labelledby="receipts-title">
+      <div className={`container ${styles.receiptsGrid}`}>
+        <div className={styles.receiptsCopy} {...reveal()}>
+          <p className="eyebrow">Receipts</p>
+          <h2 id="receipts-title">Every payout comes with proof.</h2>
           <p>
-            Receipts recheck funding, frozen terms, the recipient wallet and the hold on every request. They only say settled once the chain has been reconciled.
+            Each payment has a receipt anyone can open. It re-checks the terms every time it&apos;s viewed, and only says settled once the payment is confirmed. Sent is not the same as settled.
           </p>
-          <ul className={styles.devList}>
-            <li>
-              <code className="mono">GET /api/markets</code>
-              <span>Public live markets</span>
-            </li>
-            <li>
-              <code className="mono">GET /api/campaigns/:id/market/pricing</code>
-              <span>Price, pace and last decision</span>
-            </li>
-            <li>
-              <code className="mono">GET /api/receipts/payouts/:id</code>
-              <span>Payout receipt with live checks</span>
-            </li>
-          </ul>
+          <div className={styles.receiptsActions}>
+            <Link href="/markets" className="btn btn-ghost">
+              See live proof
+              <ArrowIcon />
+            </Link>
+          </div>
+          <p className={styles.receiptsNote}>Building on Thesma? Receipts and live markets are also available through a public, read-only API.</p>
         </div>
-        <figure className={styles.codeCard} {...reveal(1)}>
-          <figcaption>
-            <span className="mono">GET /api/receipts/payouts/:id</span>
-            <span className={styles.codeNote}>Example response</span>
-          </figcaption>
-          <pre className="mono">
-            <code>{`{
-  "payout": {
-    "state": "SETTLED",
-    "amountMicroUsdc": "60000000",
-    "txHash": "0x7a3e…41bf",
-    "reconciledAt": "2026-10-17T11:02:14Z"
-  },
-  "checks": {
-    "policyFunded": true,
-    "amountMatchesTerms": true,
-    "recipientMatchesWallet": true,
-    "holdCleared": true
-  },
-  "settledMeansReconciled": true
-}`}</code>
-          </pre>
+
+        <figure className={styles.receiptCard} {...reveal(1)}>
+          <div className={styles.notchSurface}>
+            <figcaption className={styles.receiptHead}>
+              <span className={styles.ruleKey}>Payout receipt</span>
+              <strong className="tnum">
+                60.00 <small>USDC</small>
+              </strong>
+              <span className={styles.receiptMeta}>Paid customer · Growth Campaign</span>
+            </figcaption>
+            <ul className={styles.receiptChecks}>
+              {RECEIPT_CHECKS.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+            <div className={styles.receiptFoot}>
+              <span>Confirmed on the public ledger</span>
+              <span className="mono">0x7a3e…41bf</span>
+            </div>
+          </div>
+          <span className={styles.notchTag} data-tone="mint">
+            Settled
+          </span>
         </figure>
       </div>
     </section>
@@ -379,23 +389,23 @@ export function DevelopersSection() {
 const FAQS = [
   {
     q: "What counts as an outcome?",
-    a: "Whatever your campaign policy defines. Today that is a qualifying paid customer: a purchase that reaches your company wallet, meets the minimum amount and comes from a new customer through a partner referral.",
+    a: "Whatever your campaign defines. Today that’s a qualifying paid customer: a purchase that reaches your company wallet, meets your minimum amount and comes from a new customer referred by a partner.",
   },
   {
     q: "When does a partner get paid?",
-    a: "Only after the outcome is verified and the campaign's safety hold has passed. The payout is then reserved against funded budget, submitted onchain and reconciled before it counts as settled.",
+    a: "Only after the result is verified and the campaign’s safety hold has ended. The payment is then set aside from your funded budget, sent, and confirmed before it counts as settled.",
   },
   {
     q: "What prevents double payments?",
-    a: "Each outcome can have exactly one reservation and one payout, for life. If a chain result is unclear, Thesma reconciles it instead of sending again.",
+    a: "Each result can be paid exactly once. If a payment’s status is ever unclear, Thesma confirms what happened instead of sending it again.",
   },
   {
     q: "Where does the money sit?",
-    a: "Customer revenue goes straight to your company wallet. Only the campaign budget sits in the campaign vault, and it can leave only as a verified payout or a return to you.",
+    a: "Customer revenue goes straight to your company wallet. Only the campaign budget is locked to the campaign, and it can leave only as a verified payout or a return to you.",
   },
   {
     q: "Can pricing change my budget or limits?",
-    a: "No. You set the budget, floor, ceiling, minimum purchase, deadline and hold. Pricing can only move inside the range you approved.",
+    a: "No. You set the budget, the price range, the minimum purchase, the deadline and the hold. Thesma can only adjust the price inside the range you approved.",
   },
 ];
 
@@ -430,7 +440,7 @@ export function ClosingCta() {
     <section className={styles.section} aria-labelledby="cta-title">
       <div className="container">
         <div className={styles.cta} {...reveal()}>
-          <h2 id="cta-title">Run campaigns where every payout has proof.</h2>
+          <h2 id="cta-title">Every payout, backed by proof.</h2>
           <p className={styles.ctaLede}>Set up your first campaign in minutes. Nothing is funded until you approve it.</p>
           <div className={styles.heroCtas}>
             <Link href="/signin?next=/app/campaigns/new" className="btn btn-primary">
@@ -455,20 +465,21 @@ export function SiteFooter() {
           <div className={styles.footerTop}>
             <div className={styles.footerBrand}>
               <Logo />
-              <p>Verified outcomes, accountable settlement.</p>
+              <p>Pay for proof, not promises.</p>
             </div>
             <nav className={styles.footerCols} aria-label="Footer">
               <div>
                 <h3>Product</h3>
                 <a href="#product">Campaigns</a>
-                <a href="#verified-outcomes">Outcomes</a>
-                <a href="#how-it-works">Settlement</a>
+                <a href="#verified-outcomes">Verification</a>
+                <a href="#how-it-works">Payouts</a>
                 <a href="#operator">Operator</a>
               </div>
               <div>
                 <h3>Learn</h3>
                 <a href="#how-it-works">How it works</a>
-                <a href="#developers">Developers</a>
+                <a href="#receipts">Receipts</a>
+                <Link href="/markets">Live markets</Link>
                 <a href="#faq">FAQ</a>
               </div>
               <div>
@@ -485,7 +496,7 @@ export function SiteFooter() {
 
           <div className={styles.footerBottom}>
             <span>© {new Date().getFullYear()} Thesma</span>
-            <span>Settled in USDC on Arc</span>
+            <span>Payouts settled in USDC</span>
           </div>
         </div>
       </div>
