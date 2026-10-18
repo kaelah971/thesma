@@ -62,6 +62,23 @@ describe("operator liquidity kernel", () => {
     const snap = snapshotFor({ funded: 10n * U, committed: 5n * U, obligations: [] });
     expect(snap.availableToDeployMicroUsdc).toBe("0");
   });
+
+  it("carries per-campaign target progress without touching money math", () => {
+    const snap = buildOperatorSnapshot(
+      {
+        fundedMicroUsdc: 100n * U,
+        committedMicroUsdc: 0n,
+        settledMicroUsdc: 0n,
+        obligations: [],
+        campaignProgress: [{ campaignId: "c-1", targetOutcomeCount: 5, verifiedCount: 2 }],
+        now: NOW,
+      },
+      POLICY,
+    );
+    expect(snap.campaignProgress).toEqual([{ campaignId: "c-1", targetOutcomeCount: 5, verifiedCount: 2 }]);
+    expect(snap.availableToDeployMicroUsdc).toBe((80n * U).toString());
+    expect(snapshotFor({ funded: 100n * U, committed: 0n * U, obligations: [] }).campaignProgress).toEqual([]);
+  });
 });
 
 describe("deterministic authority validator", () => {
@@ -237,6 +254,7 @@ describe("decision ledger + RFB metrics", () => {
       { action: "operator.escalation.decision", metadata: { approved: false } },
     ]);
     expect(m.decisions).toBe(2);
+    expect(m.autonomousDecisions).toBe(2);
     expect(m.escalated).toBe(1);
     expect(m.approved).toBe(1);
     expect(m.rejected).toBe(1);

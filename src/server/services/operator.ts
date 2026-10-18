@@ -57,6 +57,7 @@ export interface OperatorSnapshotInput {
   committedMicroUsdc: bigint;
   settledMicroUsdc: bigint;
   obligations: Obligation[];
+  campaignProgress?: { campaignId: string; targetOutcomeCount: number | null; verifiedCount: number }[];
   now?: Date;
 }
 
@@ -64,6 +65,12 @@ export type ObligationState = "ELIGIBLE" | "HELD" | "PENDING" | "OTHER";
 
 export interface PricedObligation extends Obligation {
   state: ObligationState;
+}
+
+export interface CampaignProgress {
+  campaignId: string;
+  targetOutcomeCount: number | null;
+  verifiedCount: number;
 }
 
 export interface OperatorSnapshot {
@@ -79,6 +86,8 @@ export interface OperatorSnapshot {
   nextDueAt: string | null;
   remainingObligations: number;
   obligations: PricedObligation[];
+  /** Per-campaign target vs verified counts (progress, not money). */
+  campaignProgress: CampaignProgress[];
 }
 
 function obligationState(o: Obligation, now: Date): ObligationState {
@@ -117,6 +126,7 @@ export function buildOperatorSnapshot(
     nextDueAt: nextDue !== null && eligible.length > 0 ? new Date(Math.max(nextDue, 0)).toISOString() : null,
     remainingObligations: eligible.length,
     obligations: priced,
+    campaignProgress: input.campaignProgress ?? [],
   };
 }
 
@@ -342,6 +352,7 @@ export async function loadOperatorInput(
   let committed = 0n;
   let settled = 0n;
   const obligations: Obligation[] = [];
+  const campaignProgress: { campaignId: string; targetOutcomeCount: number | null; verifiedCount: number }[] = [];
   for (const c of campaigns) {
     const version = await store.getCurrentVersion(c.id);
     const funding = version ? await store.getFunding(c.id, version.version).catch(() => null) : null;
@@ -349,6 +360,11 @@ export async function loadOperatorInput(
       funded += funding.observedAmountMicroUsdc ?? funding.expectedAmountMicroUsdc;
     }
     committed += await committedForCampaign(store, c.id).catch(() => 0n);
+    campaignProgress.push({
+      campaignId: c.id,
+      targetOutcomeCount: version?.targetOutcomeCount ?? null,
+      verifiedCount: await store.countVerifiedOutcomes(c.id).catch(() => 0),
+    });
     const verified = await store.listOutcomesByStatus("VERIFIED", 200).catch(() => []);
     for (const o of verified.filter((v) => v.campaignId === c.id)) {
       const [terms, payout, reservation] = await Promise.all([
@@ -377,7 +393,17 @@ export async function loadOperatorInput(
     }
   }
   return {
-    snapshot: buildOperatorSnapshot({ fundedMicroUsdc: funded, committedMicroUsdc: committed, settledMicroUsdc: settled, obligations, now }, policy),
+    snapshot: buildOperatorSnapshot(
+      {
+        fundedMicroUsdc: funded,
+        committedMicroUsdc: committed,
+        settledMicroUsdc: settled,
+        obligations,
+        campaignProgress,
+        now,
+      },
+      policy,
+    ),
     policy,
     spentThisPeriodMicroUsdc: 0n,
   };
@@ -524,6 +550,7 @@ export async function listOperatorHistory(workspaceId: string, limit = 50): Prom
 /** Pure RFB 04 metrics over operator audit rows. No fabrication: all derived. */
 export interface OperatorMetrics {
   decisions: number;
+  autonomousDecisions: number;
   escalated: number;
   approved: number;
   rejected: number;
@@ -535,6 +562,7 @@ export interface OperatorMetrics {
 
 export function summarizeOperatorMetrics(rows: { action: string; metadata: Record<string, unknown> }[]): OperatorMetrics {
   let decisions = 0;
+  let autonomousDecisions = 0;
   let escalated = 0;
   let approved = 0;
   let rejected = 0;
@@ -545,6 +573,7 @@ export function summarizeOperatorMetrics(rows: { action: string; metadata: Recor
     const m = r.metadata ?? {};
     if (r.action === OPERATOR_DECISION_ACTION) {
       decisions += 1;
+      if (m.autonomous === true) autonomousDecisions += 1;
       const ex = m.execution as { status?: string; settled?: boolean } | undefined;
       if (ex?.status === "EXECUTED" && m.autonomous === true) {
         if (typeof m.amountMicroUsdc === "string") autonomousPaid += BigInt(m.amountMicroUsdc);
@@ -561,6 +590,7 @@ export function summarizeOperatorMetrics(rows: { action: string; metadata: Recor
   const denom = settledAutonomously + approvedExecuted;
   return {
     decisions,
+    autonomousDecisions,
     escalated,
     approved,
     rejected,
