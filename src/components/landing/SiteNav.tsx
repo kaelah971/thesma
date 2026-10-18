@@ -36,10 +36,10 @@ export function SiteNav() {
           ))}
         </nav>
         <div className={styles.navActions}>
-          <Link href="/signin" className={styles.navSignin}>
+          <Link href="/start" className={styles.navSignin}>
             Open app
           </Link>
-          <Link href="/signin?next=/app/campaigns/new" className="btn btn-primary btn-sm">
+          <Link href="/onboarding/organization" className="btn btn-primary btn-sm">
             Launch a campaign
           </Link>
         </div>
@@ -63,10 +63,10 @@ export function SiteNav() {
           ))}
         </nav>
         <div className={styles.mobileActions}>
-          <Link href="/signin" className="btn btn-ghost">
+          <Link href="/start" className="btn btn-ghost">
             Open app
           </Link>
-          <Link href="/signin?next=/app/campaigns/new" className="btn btn-primary">
+          <Link href="/onboarding/organization" className="btn btn-primary">
             Launch a campaign
           </Link>
         </div>

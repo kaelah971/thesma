@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { NewCampaignForm } from "@/components/app/NewCampaignForm";
-import { NoWorkspace } from "@/components/app/NoWorkspace";
 import { Card, PageHeader } from "@/components/app/ui";
 import styles from "@/components/app/app.module.css";
 import { requireWorkspace } from "../../data";
@@ -9,7 +9,9 @@ export const metadata: Metadata = { title: "New campaign" };
 
 export default async function NewCampaignPage() {
   const { snapshot } = await requireWorkspace();
-  if (!snapshot) return <NoWorkspace />;
+  // Route semantics: workspace creation lives at /onboarding/organization.
+  // Once a workspace exists, this page is purely campaign creation.
+  if (!snapshot) redirect("/onboarding/organization");
 
   return (
     <>

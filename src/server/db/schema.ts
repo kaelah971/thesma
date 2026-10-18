@@ -26,6 +26,18 @@ export const workspaceRoleEnum = pgEnum("workspace_role", [
   "PARTNER",
 ]);
 
+/**
+ * Product persona for the role gateway (/start). This is onboarding/entry
+ * state only — it never grants workspace/partner authorization, which stays
+ * on workspace_members + ownership checks.
+ */
+export const personaEnum = pgEnum("user_persona", [
+  "CUSTOMER",
+  "CREATOR",
+  "ORGANIZATION",
+  "DEVELOPER",
+]);
+
 export const actorTypeEnum = pgEnum("actor_type", ["USER", "SYSTEM", "AGENT"]);
 
 /** Full lifecycle vocabulary. S1 may only enter DRAFT | REVIEW | APPROVED. */
@@ -182,6 +194,29 @@ export const partners = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("partners_user_unique").on(t.userId)],
+);
+
+/**
+ * One row per user recording their /start persona choice plus the small
+ * profile fields collected during role onboarding. Additive only: existing
+ * auth, workspace and partner tables are untouched.
+ */
+export const userPersonas = pgTable(
+  "user_personas",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    persona: personaEnum("persona").notNull(),
+    handle: text("handle"),
+    bio: text("bio"),
+    category: text("category"),
+    project: text("project"),
+    onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("user_personas_handle_unique").on(t.handle)],
 );
 
 export const sessions = pgTable(
@@ -742,6 +777,7 @@ export const supplyCommitments = pgTable(
   ],
 );
 
+export type DbUserPersona = typeof userPersonas.$inferSelect;
 export type DbUser = typeof users.$inferSelect;
 export type DbSupplyCommitment = typeof supplyCommitments.$inferSelect;
 export type DbNegotiation = typeof negotiations.$inferSelect;

@@ -109,8 +109,8 @@ export function Hero() {
           Thesma&apos;s autonomous operators run your growth campaigns and release payment only when a real customer result is verified.
         </p>
         <div className={`${styles.heroCtas} ${styles.enter}`} style={enter(3)}>
-          <Link href="/signin?next=/app/campaigns/new" className="btn btn-primary">
-            Launch a campaign
+          <Link href="/start" className="btn btn-primary">
+            Open app
             <ArrowIcon />
           </Link>
           <a href="#how-it-works" className="btn btn-ghost">

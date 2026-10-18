@@ -17,7 +17,9 @@ function safeNext(raw: string | string[] | undefined): string {
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
-  const next = safeNext(params.next);
+  // Role-aware default: /welcome resolves the stored persona to the correct
+  // onboarding or role home. Explicit ?next= destinations are still honored.
+  const next = params.next === undefined ? "/welcome" : safeNext(params.next);
   if (isDbConfigured() && (await getSessionUser())) redirect(next);
 
   return (
