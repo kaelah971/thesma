@@ -13,7 +13,9 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx ./src/server/db/migrate.ts",
-    "arc:doctor": "tsx ./scripts/arc-doctor.ts"
+    "arc:doctor": "tsx ./scripts/arc-doctor.ts",
+    "mainnet:preflight": "tsx ./scripts/mainnet-preflight.ts",
+    "production:doctor": "tsx ./scripts/mainnet-preflight.ts"
   },
   "dependencies": {
     "bcryptjs": "3.0.3",

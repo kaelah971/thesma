@@ -89,8 +89,33 @@ export default async function MarketDetailPage({ params }: { params: Promise<{ c
                   { label: "Verified revenue", value: detail.verifiedRevenueMicroUsdc ? `${formatUsdc(detail.verifiedRevenueMicroUsdc)} USDC` : "—" },
                   { label: "Realized CAC", value: detail.realizedCacMicroUsdc ? `${formatUsdc(detail.realizedCacMicroUsdc)} USDC` : "—" },
                   { label: "Remaining budget", value: detail.remainingMicroUsdc ? `${formatUsdc(detail.remainingMicroUsdc)} USDC` : "—" },
+                  { label: "Settled payouts total", value: `${formatUsdc(detail.settledPayoutTotalMicroUsdc)} USDC` },
                 ]}
               />
+              {detail.displayNotes.map((n) => (
+                <p key={n.slice(0, 24)} style={{ margin: "8px 0 0", fontSize: 13, opacity: 0.7 }}>{n}</p>
+              ))}
+            </Card>
+            <Card title={`Customer purchases (${detail.purchaseTxs.length})`}>
+              {detail.purchaseTxs.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 14, opacity: 0.7 }}>No verified purchases recorded.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {detail.purchaseTxs.map((t) => (
+                    <p key={t.txHash} style={{ margin: 0, fontSize: 14 }}>
+                      {formatUsdc(t.amountMicroUsdc)} USDC · {t.status}
+                      {" · "}
+                      {t.explorerUrl ? (
+                        <a href={t.explorerUrl} target="_blank" rel="noreferrer">
+                          {t.txHash.slice(0, 18)}…↗
+                        </a>
+                      ) : (
+                        <code style={{ fontSize: 12 }}>{t.txHash.slice(0, 18)}…</code>
+                      )}
+                    </p>
+                  ))}
+                </div>
+              )}
             </Card>
             <Card title={`Payouts (${detail.payouts.length})`}>
               {detail.payouts.length === 0 ? (

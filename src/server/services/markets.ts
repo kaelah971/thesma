@@ -304,11 +304,14 @@ export async function getPublicMarketDetail(
     txHash: string | null; explorerUrl: string | null; blockNumber: number | null; settledAt: string | null;
   }> = [];
   const outcomeProofs: string[] = [];
+  const purchaseTxs: Array<{ txHash: string; explorerUrl: string | null; amountMicroUsdc: string; status: string }> = [];
+  let settledPayoutTotal = 0n;
   for (const r of reservations) {
     partners.add(r.partnerId);
     if (r.state === "SETTLED") spend += r.amountMicroUsdc;
     const payout = await deps.store.getPayoutByReservation(r.id);
     if (payout) {
+      if (payout.state === "SETTLED") settledPayoutTotal += payout.amountMicroUsdc;
       payouts.push({
         id: payout.id,
         recipient: payout.recipient,
@@ -322,6 +325,14 @@ export async function getPublicMarketDetail(
     }
     const outcome = await deps.store.getOutcome(r.outcomeId);
     if (outcome?.proofHash) outcomeProofs.push(outcome.proofHash);
+    if (outcome && outcome.status === "VERIFIED") {
+      purchaseTxs.push({
+        txHash: outcome.purchaseTx,
+        explorerUrl: txUrl(base, outcome.purchaseTx),
+        amountMicroUsdc: outcome.purchaseAmountMicroUsdc.toString(),
+        status: outcome.status,
+      });
+    }
   }
   const funding = await deps.store.getFunding(params.campaignId, market.policyVersion);
   const latestDecision = await deps.store.getLatestPricingDecision(params.campaignId);
@@ -387,6 +398,12 @@ export async function getPublicMarketDetail(
     },
     timeline: { startedAt: campaign.createdAt.toISOString(), deadline: version.deadline?.toISOString() ?? null },
     payouts,
+    settledPayoutTotalMicroUsdc: settledPayoutTotal.toString(),
+    purchaseTxs,
+    displayNotes: [
+      "SUBMITTED is not SETTLED: only onchain OutcomePaid reconciliation settles a payout.",
+      "A VERIFIED outcome is not a paid Partner: payment happens only through the payout path above.",
+    ],
     verifiedRevenueMicroUsdc: verified > 0 ? revenue.toString() : null,
     realizedCacMicroUsdc: verified > 0 && spend > 0n ? (spend / BigInt(verified)).toString() : null,
     remainingMicroUsdc:

@@ -3,6 +3,10 @@
     {
       "path": "/internal/payouts/process",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/internal/agents/supply/run",
+      "schedule": "30 6 * * *"
     }
   ]
 }

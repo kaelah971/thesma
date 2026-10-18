@@ -24,6 +24,139 @@ interface LiveMarketCtx {
   publicBountyMicroUsdc: string;
 }
 
+export interface SupplyWorkerSkip {
+  partnerId: string;
+  campaignId: string | null;
+  reason: string;
+  message: string;
+  recommendation?: string;
+}
+
+export interface SupplyWorkerSummary {
+  partnersEvaluated: number;
+  marketsEvaluated: number;
+  joined: Array<{ partnerId: string; campaignId: string; referralCode: string; alreadyJoined: boolean }>;
+  skipped: SupplyWorkerSkip[];
+  failed: Array<{ partnerId: string; error: string }>;
+}
+
+/**
+ * Background Supply Agent worker. Loads every autoJoin Partner and evaluates
+ * live PUBLIC markets through the SAME deterministic rules + joinCampaign
+ * path as manual joins (same gates, same audit, same idempotency).
+ * One Partner's failure never aborts the rest. Read-only until a join passes.
+ */
+export async function runSupplyAgentWorker(deps: MarketDeps): Promise<SupplyWorkerSummary> {
+  const now = deps.now?.() ?? new Date();
+  const summary: SupplyWorkerSummary = {
+    partnersEvaluated: 0,
+    marketsEvaluated: 0,
+    joined: [],
+    skipped: [],
+    failed: [],
+  };
+  const markets = await livePublicMarkets(deps);
+  summary.marketsEvaluated = markets.length;
+  const partners = await deps.store.listAutoJoinPartners();
+  for (const profile of partners) {
+    try {
+      summary.partnersEvaluated += 1;
+      const parsed = parsePartnerRules(profile.rulesJson);
+      if (!parsed.ok) {
+        summary.failed.push({ partnerId: profile.id, error: "INVALID_RULES" });
+        continue;
+      }
+      const rules = (parsed as { ok: true; rules: PartnerRules }).rules;
+      if (rules.autoJoin !== true) continue;
+      const terms = await deps.store.listPartnerTerms(profile.id);
+      const active = terms.filter((t) => t.status === "ACTIVE");
+      const joinedIds = new Set(terms.map((t) => t.campaignId));
+      let joinedThisRun = 0;
+      const runSkips: SupplyWorkerSkip[] = [];
+      for (const m of markets) {
+        if (joinedIds.has(m.campaignId)) {
+          runSkips.push({
+            partnerId: profile.id,
+            campaignId: m.campaignId,
+            reason: "ALREADY_JOINED",
+            message: "Already joined: the unique (campaign, partner) terms stand, no second join.",
+          });
+          continue;
+        }
+        const fit = rankMarketFit(
+          {
+            campaignId: m.campaignId,
+            marketStatus: m.market.status,
+            campaignLive: true,
+            deadline: new Date(m.deadline),
+            publicBountyMicroUsdc: BigInt(m.publicBountyMicroUsdc),
+            campaignCategory: m.category,
+            alreadyJoined: joinedIds.has(m.campaignId),
+            now,
+          },
+          rules,
+          { activeTermsCount: active.length + joinedThisRun, payoutWallet: profile.payoutWallet },
+        );
+        if (fit.verdict !== "join") {
+          const skip: SupplyWorkerSkip = {
+            partnerId: profile.id,
+            campaignId: m.campaignId,
+            reason: fit.skipReason ?? "INELIGIBLE",
+            message: fit.reasons[0] ?? "Skipped",
+          };
+          if (fit.skipReason === "MIN_BOUNTY" && rules.autoNegotiate) {
+            skip.recommendation = `Consider proposing private terms manually; ${NEGOTIATION_AUTOMATION_UNAVAILABLE}`;
+          }
+          runSkips.push(skip);
+          continue;
+        }
+        try {
+          const res = await joinCampaign(deps, {
+            campaignId: m.campaignId,
+            userId: profile.userId,
+            allocationCount: rules.maxAllocationCount ?? 1,
+            expectedMarketVersion: m.market.version,
+          });
+          joinedThisRun += res.alreadyJoined ? 0 : 1;
+          if (!res.alreadyJoined) joinedIds.add(m.campaignId);
+          summary.joined.push({
+            partnerId: profile.id,
+            campaignId: m.campaignId,
+            referralCode: res.referral.code,
+            alreadyJoined: res.alreadyJoined,
+          });
+        } catch (e) {
+          runSkips.push({
+            partnerId: profile.id,
+            campaignId: m.campaignId,
+            reason: (e as { code?: string }).code ?? "JOIN_FAILED",
+            message: (e as Error).message,
+          });
+        }
+      }
+      summary.skipped.push(...runSkips);
+      await deps.audit({
+        actorType: "SYSTEM",
+        actorId: null,
+        workspaceId: null,
+        partnerId: profile.id,
+        action: "supply_agent.run",
+        targetType: "partner",
+        targetId: profile.id,
+        metadata: {
+          partnerId: profile.id,
+          joined: summary.joined.filter((j) => j.partnerId === profile.id).map((j) => j.campaignId),
+          skipped: runSkips.length,
+          reasons: [...new Set(runSkips.map((s) => s.reason))],
+        },
+      });
+    } catch (e) {
+      summary.failed.push({ partnerId: profile.id, error: (e as Error).message });
+    }
+  }
+  return summary;
+}
+
 async function livePublicMarkets(deps: MarketDeps): Promise<LiveMarketCtx[]> {
   const now = deps.now?.() ?? new Date();
   const out: LiveMarketCtx[] = [];

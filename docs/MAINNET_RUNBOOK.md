@@ -46,6 +46,8 @@ Canonical chain facts: `contracts/deployments/arc-mainnet.json`. Full preflight:
 | `THESMA_EXECUTOR_PRIVATE_KEY` | 32-byte hex | vault payout submission (backend executor) |
 | `VERIFIER_INTERNAL_SECRET` | 16 chars | `POST /internal/checkout/:id/verify` bearer |
 | `PAYOUT_WORKER_SECRET` | 16 chars | `POST /internal/payouts/*` bearer (falls back to verifier secret) |
+| `SUPPLY_AGENT_WORKER_SECRET` | 16 chars | `POST /internal/agents/supply/run` bearer |
+| `CRON_SECRET` | 16 chars | Vercel Cron `GET` bearer for `/internal/payouts/process` (daily 06:00 UTC) + `/internal/agents/supply/run` (daily 06:30 UTC, Hobby-compatible); Vercel injects it automatically |
 | `ATTRIBUTION_SECRET` | 32 chars | referral attribution HMAC |
 
 Missing/short secrets fail closed (503/401) — verified by existing tests.
@@ -83,13 +85,12 @@ client-visible, logged, or API-returned (verified by repo-wide scan each slice).
 
 ## 5. Worker readiness checklist (all runnable without touching live state)
 
-- [ ] All five internal routes require bearer secrets (`requireInternalSecret`, 16-char minimum).
+- [ ] All internal routes require bearer secrets (`requireInternalSecret`, 16-char minimum).
 - [ ] Every chain touch asserts RPC `eth_chainId == 5042` first (`assertChainMatches`).
 - [ ] Vault/executor/verifier addresses resolve from env; EIP-712 domain pins chain 5042 + vault.
 - [ ] Payout path is idempotent across restarts (unique outcome/tx/reservation constraints + reconcile-before-retry; tested).
-- [ ] No scheduler, cron, or startup hook exists — workers run only on explicit
-      authenticated POST (`src/app/internal/*/route.ts`), so nothing begins
-      processing merely because env exists.
+- [ ] Supply worker reuses `joinCampaign` exactly (same gates, audit, idempotency): autoJoin-only Partners, wallet required, live-PUBLIC markets only, expectedMarketVersion staleness guard, per-market isolation, one `supply_agent.run` audit per Partner per run (tested, incl. concurrent runs).
+- [ ] Schedulers are vendor-neutral adapters: Vercel Cron `GET`s the same workers (`/internal/payouts/process` daily 06:00 UTC; `/internal/agents/supply/run` daily 06:30 UTC, both Hobby-compatible) with `CRON_SECRET`; external cron or manual admin POST with the worker secret works identically. The workers support higher-frequency invocation; current Hobby infrastructure does not. Conservative cadence, no per-minute noise.
 
 ## 6. Mainnet DB isolation status
 
@@ -124,8 +125,11 @@ Cumulative campaign funding: **exactly 1.00 USDC** (steps 0–3 move at most 1.0
 
 ## 8. Product/deliverable gate
 
-**PROOF BLOCKED** until the owner names the real $1 product/service the customer
-wallet purchases (self-purchase is rejected by domain rule; nothing may be fabricated).
+Resolved: the deliverable is `docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`
+(the Thesma Mainnet Proof Pack). Run #1 is SETTLED; Run #2 is a real
+production run (0.90 USDC purchase VERIFIED) progressing through payout
+automation. Nothing may be fabricated; self-purchase stays rejected by
+domain rule.
 
 ## 9. Abort rules (live slice)
 
@@ -133,3 +137,22 @@ Wrong chain/vault/signer/amount/recipient, duplicate reservation, ambiguous tx
 without reconciliation, budget-math drift, or any transaction above plan →
 STOP, reconcile first, never blind-retry. Cumulative vault funding must never
 exceed 1.00 USDC.
+
+## 10. Production campaign flow (normal operations — no fake traction)
+
+Run `npm run mainnet:preflight` first; proceed only on zero FAIL. A local shell
+without production secrets reports NOT_CONFIGURED/FAIL for the missing items —
+that is LOCAL environment state, not a production outage. Production truth comes
+only from preflight run where the production env is present.
+
+1. provision production Postgres 2. apply migrations (`npm run db:migrate`)
+3. configure app secrets (§2, incl. `SUPPLY_AGENT_WORKER_SECRET`) 4. obtain Arc RPC
+5. confirm `THESMA_VAULT_ADDRESS` (`0x0fA8…F79`) or deploy + verify a new vault
+6. configure executor/verifier addresses 7. re-run preflight 8. deploy web app
+9. create company normally 10. register company Arc wallet 11. create campaign normally
+12. approve + fund from owner wallet (browser) 13. open public market
+14. Partner configures Supply Agent conversationally (`/app/agent`)
+15. Partner enables autoJoin (or joins manually) — worker handles the rest
+16. real customer follows referral 17. customer purchases with own Arc USDC
+18. outcome verifies 19. payout settles 20. confirm `/markets/[campaignId]` proof
+21. record tx hashes + evidence 22. never label an unconfirmed transaction settled.

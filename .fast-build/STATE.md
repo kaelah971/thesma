@@ -20,7 +20,7 @@
 - [ ] S8: Demo + traction polish
 
 ## Current slice
-- Public market discovery + completed proof + Partner agent onboarding — Shipped (this session)
+- Production autonomy + mainnet readiness (background supply worker, preflight gate, proof hardening) — Shipped (this session)
 
 ## Completed (S7.1 this session)
 - supply_commitments: one ACTIVE unit (price x 1) + one capacity unit per ACCEPT; unique per negotiation; consumed once by first S5 reservation; released on withdraw/revoke
@@ -271,6 +271,16 @@
 - Supply Agent: pure domain parser (free text -> typed PartnerRules, exact micro-USDC, progressive questions, confirmation card) + services (status/matches/run/ask over real state, runAgent reuses joinCampaign inside rules) + 6 authed routes (status/matches/onboard/confirm/run/ask)
 - Honest boundaries: chat never persists (confirm required); autoNegotiate stored-only with explicit "automation not available" answer; no background daemon — auto-join executes on explicit run; no social publishing
 - Tests: 7 public-markets + 8 supply-agent (197 vitest total green); typecheck/lint/build green; forge unavailable in this environment (contracts untouched)
+
+## Completed (production autonomy + mainnet readiness this session)
+- Background supply worker: POST /internal/agents/supply/run (SUPPLY_AGENT_WORKER_SECRET; cron GET via CRON_SECRET) + runSupplyAgentWorker (autoJoin Partners only, wallet/rules revalidated, live-PUBLIC markets only, expectedMarketVersion staleness guard, per-market try/catch, per-Partner supply_agent.run audit); Vercel cron added at daily 06:30 UTC cadence (Hobby-compatible; worker itself supports higher-frequency invocation, current Hobby infra does not); no daemon/Redis, no domain-layer Vercel types
+- Idempotency/concurrency: repeats + concurrent runs cannot duplicate joins (unique (campaign, partner) authoritative; lockPartnerRow serializes per-Partner caps in Drizzle); expired/closed/private never joined by the runner; one Partner failure never aborts others; summary carries partners/markets/joined/skipped/failed + reason codes
+- Mainnet preflight: npm run mainnet:preflight (tsx, read-only, never signs/broadcasts/prints secrets) — DB reachable + 17 tables, 4 worker secrets present, RPC chain match, USDC/vault bytecode, funded-campaign vault cross-check, signer derivation vs configured addresses, app URL + explorer WARNs; exit 0 only when zero FAIL
+- Proof hardening: completed detail now shows purchase txs + settled payout total + SUBMITTED!=SETTLED and VERIFIED!=PAID notes; permanent /markets/[id] URLs unchanged; no fake metrics
+- Smoke: full local flow org->policy->funding->LIVE->discovery->autoJoin->referral->checkout->VERIFIED->payout scan->completed proof (1 test, fixtures only, no mainnet)
+- Tests: 8 supply-worker + 2 preflight + 1 lifecycle (210 vitest total green, 2 Anvil-skipped); typecheck/lint/build green; forge unavailable in this environment (contracts untouched, prior 34 green)
+- PRODUCTION TRUTH (not blockers): Neon/Postgres provisioned and migrated; app live at thesma.vercel.app; Arc Mainnet 5042 live; canonical vault deployed; owner funding UI funded a second real campaign; public checkout completed a real 0.90 USDC purchase (VERIFIED + proof hash + 1h hold); executor previously confirmed gas-ready; deliverable docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md exists; Run #1 SETTLED; Run #2 progressing through payout automation. A LOCAL shell without production secrets reports NOT_CONFIGURED/FAIL — that is local-environment state, never a production-blocked claim.
+- TARGET / NOT YET EXERCISED: lower-latency scheduler/plan if sub-daily payout cadence is ever required
 
 ## Completed (S8.2A this session)
 - Runbook: docs/MAINNET_RUNBOOK.md (DB commands, env template PUBLIC/SECRET, signer plan, worker checklist, isolation proof, 12-step execution manifest, deliverable gate, abort rules)

@@ -163,6 +163,7 @@ The live app gives each workspace:
 - **Automatic payouts** — `processEligiblePayouts()` scans `VERIFIED` outcomes: hold-active outcomes are skipped, expired holds follow reserve → submit once → reconcile `OutcomePaid` → `SETTLED`, settled outcomes are skipped, and submitted/ambiguous payouts reconcile before any resend. No per-payout user approval or manual prompt is required. Vercel Cron invokes the same worker via `GET /internal/payouts/process` (the existing authenticated trigger remains `POST`); the current Hobby deployment runs this cron daily as a production backstop, while the worker itself supports higher-frequency invocation without code changes.
 - **Public market discovery** — `/markets` needs no login: LIVE markets (PUBLIC + LIVE + OPEN + unexpired) plus a completed history that stays visible after close/expiry with factual results only (goal, final state, verified outcomes, spend, verified revenue and realized CAC when computable — never fabricated). `/markets/[campaignId]` shows the judge-proof detail: terms, progress, agent decisions, funding state, and for completed markets payouts, receipts and Arc explorer links where available. PRIVATE campaigns never leak.
 - **Supply Agent onboarding** — `/app/agent` starts from one question ("What kinds of outcome markets should I watch for you?") and progressively gathers minimum bounty, auto-join/auto-negotiate and caps. Answers become typed `PartnerRules` (exact micro-USDC, allow/block lists, caps, toggles) through the existing rules service — chat never writes, and nothing activates until the confirmation card is pressed. The agent dashboard shows real state (watching/matched/joined/skipped-with-reasons/negotiations), answers questions from live market data, and runs eligible auto-joins through the unchanged join policy on explicit invocation. Negotiation automation is not available in this build.
+- **Background supply worker** — `POST /internal/agents/supply/run` (bearer `SUPPLY_AGENT_WORKER_SECRET`; Vercel Cron `GET` daily at 06:30 UTC via `CRON_SECRET`, Hobby-compatible) loads every autoJoin Partner and joins eligible PUBLIC live markets through the unchanged `joinCampaign` path — same deterministic rules, same audit records, no social posts, no faked negotiation. Repeats are idempotent, concurrent runs cannot duplicate joins, one Partner's failure never aborts the rest, and every run emits one `supply_agent.run` audit record so automatic decisions stay inspectable.
 
 ## Technical architecture
 
@@ -211,7 +212,8 @@ Postgres options: local Postgres, Neon, or Supabase — any works, domain code i
 | `ATTRIBUTION_SECRET` | for referrals | HMAC secret for signed attribution tokens (≥32 chars, fails closed). |
 | `VERIFIER_INTERNAL_SECRET` | for workers | Bearer secret for internal verify routes (≥16 chars, fails closed). |
 | `PAYOUT_WORKER_SECRET` | for workers | Bearer secret for payout worker routes (falls back to verifier secret). |
-| `CRON_SECRET` | for workers | Server-only secret Vercel Cron sends as Bearer auth for `GET /internal/payouts/process`. Both the cron `GET` and the authenticated `POST` reuse the same `processEligiblePayouts()` worker. |
+| `CRON_SECRET` | for workers | Server-only secret Vercel Cron sends as Bearer auth for cron `GET` adapters (payouts + supply worker). Cron `GET` and authenticated `POST` reuse the same worker in each case. |
+| `SUPPLY_AGENT_WORKER_SECRET` | for workers | Bearer secret for `POST /internal/agents/supply/run` (≥16 chars, fails closed). |
 | `THESMA_VERIFIER_PRIVATE_KEY` | for settlement | Isolated local verifier key; must derive to `THESMA_VERIFIER_ADDRESS`. |
 | `THESMA_EXECUTOR_PRIVATE_KEY` | for settlement | Isolated local executor key; must derive to `THESMA_EXECUTOR_ADDRESS`. |
 
@@ -222,13 +224,14 @@ No secrets are committed. Server secrets are never exposed via `NEXT_PUBLIC` var
 ```bash
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest run — 182 passing, 2 env-gated (Anvil) skipped
+npm test             # vitest run — 210 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
+npm run mainnet:preflight  # read-only production readiness gate (never signs/broadcasts; exit 1 when BLOCKED)
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **182 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **210 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Security guarantees
 

@@ -386,6 +386,8 @@ export interface CampaignStore {
 export interface MarketStore extends FundingStore {
   getPartnerByUserId(userId: string): Promise<StorePartner | null>;
   getPartnerById(partnerId: string): Promise<StorePartner | null>;
+  /** Partners whose stored rules enable autoJoin. Rules still re-validated per run. */
+  listAutoJoinPartners(): Promise<StorePartner[]>;
   updatePartnerRules(partnerId: string, rulesJson: Record<string, unknown>): Promise<StorePartner>;
   getMarket(campaignId: string): Promise<StoredMarket | null>;
   listMarkets(): Promise<StoredMarket[]>;
@@ -797,6 +799,9 @@ export function createMemoryCampaignStore(seed?: {
     },
     async getPartnerById(partnerId) {
       return partnerRows.get(partnerId) ?? null;
+    },
+    async listAutoJoinPartners() {
+      return [...partnerRows.values()].filter((p) => (p.rulesJson as Record<string, unknown>)?.autoJoin === true);
     },
     async updatePartnerRules(partnerId, rulesJson) {
       const row = partnerRows.get(partnerId);

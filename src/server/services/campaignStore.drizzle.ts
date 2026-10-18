@@ -275,6 +275,16 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         rulesJson: (row.rulesJson ?? {}) as Record<string, unknown>,
       };
     },
+    async listAutoJoinPartners(): Promise<StorePartner[]> {
+      const rows = await db.select().from(partners).where(sql`rules_json->>'autoJoin' = 'true'`);
+      return rows.map((row) => ({
+        id: row.id,
+        userId: row.userId,
+        payoutWallet: row.payoutWallet,
+        categories: [...row.categories],
+        rulesJson: (row.rulesJson ?? {}) as Record<string, unknown>,
+      }));
+    },
     async updatePartnerRules(partnerId, rulesJson): Promise<StorePartner> {
       const [row] = await db
         .update(partners)
