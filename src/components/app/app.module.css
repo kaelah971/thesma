@@ -159,7 +159,7 @@
 
 .unconfigured h1 {
   margin-top: 24px;
-  font-size: 32px;
+  font-size: 26px;
 }
 
 .unconfigured p {
@@ -181,8 +181,7 @@
 }
 
 .pageHeader h1 {
-  font-size: clamp(28px, 3vw, 38px);
-  letter-spacing: -0.03em;
+  font-size: clamp(24px, 2.6vw, 34px);
 }
 
 .pageEyebrow {

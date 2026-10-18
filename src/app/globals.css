@@ -31,8 +31,10 @@
   --shadow-md: 0 10px 30px -14px rgba(19, 20, 23, 0.18), 0 2px 6px rgba(19, 20, 23, 0.04);
   --shadow-lg: 0 50px 90px -40px rgba(19, 20, 23, 0.38), 0 18px 36px -20px rgba(19, 20, 23, 0.16);
 
-  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  /* Product typography: IBM Plex Mono for the operating layer, Silkscreen for display. */
+  --font-sans: var(--font-body), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-mono: var(--font-body), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-pixel: var(--font-display), var(--font-body), ui-monospace, monospace;
 
   --z-base: 1;
   --z-raised: 10;
@@ -71,8 +73,8 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -88,6 +90,24 @@ h4 {
   line-height: 1.08;
   text-wrap: balance;
   letter-spacing: -0.02em;
+}
+
+/* Display layer: page titles everywhere, plus opt-in `.display` for selected headings. */
+h1,
+.display {
+  font-family: var(--font-pixel);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  line-height: 1.08;
+  overflow-wrap: break-word;
+}
+
+h1 .pill,
+.display .pill {
+  font-family: var(--font-sans);
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 p {
@@ -246,6 +266,60 @@ button {
   html[data-reveal-ready] [data-reveal][data-revealed="true"] {
     opacity: 1;
     translate: 0 0;
+  }
+}
+
+/* ---------- Perimeter light ----------
+   Brand light travelling around a light composer's edge, like current in a
+   circuit. Place `<span class="perimeter-light" />` inside a positioned,
+   rounded container. A conic sweep rotates (transform only) in a 2px ring. */
+
+.perimeter-light {
+  position: absolute;
+  inset: -1px;
+  padding: 2px;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.perimeter-light::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(160%, 640px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  rotate: 35deg;
+  background: conic-gradient(
+    transparent 0deg 220deg,
+    #2fbf8f 262deg,
+    #1fb0c4 288deg,
+    #4a7fe8 314deg,
+    #8a6ae8 336deg,
+    transparent 358deg
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .perimeter-light::before {
+    animation: perimeter-orbit 9s linear infinite;
+  }
+  [data-inview="false"] .perimeter-light::before {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes perimeter-orbit {
+  from {
+    rotate: 35deg;
+  }
+  to {
+    rotate: 395deg;
   }
 }
 

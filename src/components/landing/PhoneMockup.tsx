@@ -26,7 +26,7 @@ export function PhoneMockup() {
           <div className={styles.phHeader}>
             <LogoMark size={22} />
             <div className={styles.phTitle}>
-              <span>Growth Campaign</span>
+              <span className="display">Growth Campaign</span>
               <small>Paid customers · Arc USDC</small>
             </div>
             <span className="pill" data-tone="mint">

@@ -205,7 +205,7 @@ export function OperatorShowcase() {
 
             <div className={styles.opChat}>
               <div className={styles.opChatHead}>
-                <h3>Operator</h3>
+                <h3 className="display">Operator</h3>
                 <span className="pill" data-tone="mint">
                   Growth Campaign · LIVE
                 </span>
@@ -258,7 +258,7 @@ export function OperatorShowcase() {
               </div>
 
               <div className={styles.opComposer} aria-hidden="true">
-                <span className={styles.composerLight} />
+                <span className="perimeter-light" />
                 <span className={styles.opPlaceholder}>Ask about campaigns, outcomes or payouts</span>
                 <div className={styles.opComposerRow}>
                   <div className={styles.opChips}>

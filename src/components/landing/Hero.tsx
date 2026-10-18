@@ -102,11 +102,6 @@ export function Hero() {
       <SiteNav />
 
       <div className={styles.heroCopy}>
-        <p className={`${styles.heroEyebrow} ${styles.enter}`} style={enter(0)}>
-          <span className="pill" data-tone="mint">
-            Proof before payout
-          </span>
-        </p>
         <h1 id="hero-title" className={`${styles.heroTitle} ${styles.enter}`} style={enter(1)}>
           Pay for <span className={styles.spectrumText}>proof</span>,<br /> not promises.
         </h1>

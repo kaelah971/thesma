@@ -197,6 +197,7 @@ export function OperatorWorkspace({ snapshot, initials }: { snapshot: WorkspaceS
             ask(input);
           }}
         >
+          <span className="perimeter-light" aria-hidden="true" />
           <label htmlFor="operator-input" className="sr-only">
             Ask Thesma
           </label>

@@ -29,7 +29,6 @@
 
 .chatHead h1 {
   font-size: 22px;
-  letter-spacing: -0.02em;
 }
 
 .chatHead p {
@@ -216,11 +215,13 @@
 }
 
 .composer {
+  position: relative;
   margin: 0 16px 16px;
   padding: 12px 14px;
   border-radius: 20px;
   border: 1px solid var(--line);
-  background: var(--paper);
+  background: var(--surface);
+  box-shadow: 0 10px 28px -18px rgba(53, 80, 200, 0.35);
   transition: border-color 0.15s ease-out;
 }
 

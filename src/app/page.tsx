@@ -1,4 +1,3 @@
-import { landingFonts } from "@/components/landing/fonts";
 import { Hero } from "@/components/landing/Hero";
 import { RevealObserver } from "@/components/landing/RevealObserver";
 import {
@@ -15,7 +14,7 @@ import styles from "@/components/landing/landing.module.css";
 
 export default function Home() {
   return (
-    <div className={`${landingFonts} ${styles.page}`}>
+    <div className={styles.page}>
       <Hero />
       <main>
         <ValueSection />

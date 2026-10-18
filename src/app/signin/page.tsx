@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
-import { landingFonts } from "@/components/landing/fonts";
 import { Rail } from "@/components/ui/Rail";
 import { getSessionUser } from "@/server/auth/guard";
 import { isDbConfigured } from "@/server/db/client";
@@ -22,7 +21,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   if (isDbConfigured() && (await getSessionUser())) redirect(next);
 
   return (
-    <div className={`${landingFonts} ${styles.page}`}>
+    <div className={styles.page}>
       <div className={styles.panel}>
         <span className={styles.shine} aria-hidden="true" />
         <div className={styles.formSide}>
