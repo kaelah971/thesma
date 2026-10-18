@@ -29,7 +29,7 @@
 <img src="https://img.shields.io/badge/settlement-USDC-66F2A2?style=flat-square" alt="Settlement: USDC" />
 <img src="https://img.shields.io/badge/proof-reconciled-66F2A2?style=flat-square" alt="Proof: reconciled" />
 <img src="https://img.shields.io/badge/safety-no_double_pay-66F2A2?style=flat-square" alt="Safety: no double pay" />
-<img src="https://img.shields.io/badge/tests-176_passing-66F2A2?style=flat-square" alt="Tests: 176 passing" />
+<img src="https://img.shields.io/badge/tests-182_passing-66F2A2?style=flat-square" alt="Tests: 182 passing" />
 <img src="https://img.shields.io/badge/next.js-16-111111?style=flat-square" alt="Next.js 16" />
 <img src="https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square" alt="TypeScript strict" />
 </p>
@@ -69,6 +69,30 @@ customer purchase → deterministic verification → legitimate 1-hour safety ho
 This demonstrates both:
 1. a fresh user-operated campaign can be launched through the production product;
 2. the canonical full lifecycle has already settled successfully on Arc Mainnet.
+
+### Proof #2: real customer purchase, VERIFIED in hold
+
+The same production campaign then processed a real public customer checkout through the deployed app — no Thesma account required. The customer connected a wallet, signed the exact USDC transfer in MetaMask, and the backend verified it by independently reading Arc.
+
+- Partner: Jordan Lee (`0007a280-d3fd-4872-ab2e-146c5d045681`), terms `7d253855-19f2-4847-8c99-c29883c756ca`, referral `GQzyC4jPnMAy`
+- Checkout intent: `4779e772-f62a-4926-ae4d-59ecd894f5e0`, order `ord_f4d98886bfe9194d365cb5c4`
+- Purchase tx: `0x0b967b216d8eada977d1fd738425a40bda490a2daaeca335fde0e500ba2c0812` (receipt `success`, block `26548564`)
+- Customer: `0x15b8605e7ce72E114aBeAF1D8b3315C0874B53E7`, merchant: `0x51c63A4bcF8E622D686bF1D7ec5ae5b77D50E677`, amount **0.90 USDC** (900,000 micro-USDC; decoded onchain recipient and amount match exactly)
+- Outcome: `5fb1e592-0a87-4bcf-a502-9cdb98cb295d`, status **VERIFIED**, proof hash `0xdc0f207f682623e0f05165262cfa63d8ea4cd6a3b5884feb7ce82e16018a0fd7`
+- Verified: `2026-10-18T04:50:26.889Z`; safety hold **3600 seconds** until `2026-10-18T05:50:26.889Z` (06:50:26 Nigeria time)
+
+At the time of writing, Proof #2 is VERIFIED and serving its legitimate safety hold. It is NOT settled: no reservation, no payout, and no `OutcomePaid` event exist for this outcome. Run #1 remains the canonical completed SETTLED lifecycle.
+
+### Fresh campaign through the production UI
+
+Screenshots captured immediately before Proof #2 funding — the campaign waiting in FUNDING with zero funded/settled state, not the later LIVE/VERIFIED state.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme/proof2-campaign-pre-funding.jpg" alt="Proof #2 campaign detail before funding" /><br /><sub><strong>Campaign detail (pre-funding)</strong> — approved 0.90 USDC policy, 1h safety hold, and the owner-side "Continue funding" flow before mainnet activation.</sub></td>
+    <td width="50%"><img src="docs/readme/proof2-overview-pre-funding.jpg" alt="Proof #2 workspace overview before funding" /><br /><sub><strong>Overview (pre-funding)</strong> — fresh production workspace with zero funded/settled state; the campaign waiting in FUNDING.</sub></td>
+  </tr>
+</table>
 
 ---
 
@@ -134,6 +158,9 @@ The live app gives each workspace:
 - **Receipts** — human-readable payout receipts with live-recomputed checks (funded, terms match, wallet match, hold) and a truthful `settledMeansReconciled` flag.
 - **Activity** — append-only audit trail of who did what, when.
 - **Operator** — deterministic answers over live workspace state (status, holds, budget, verified outcomes, receipts).
+- **Owner funding** — connect MetaMask → register campaign → approve USDC → fund → independent onchain confirmation → LIVE. Recorded funding steps are never blindly resent; submitted/ambiguous funding state reconciles first.
+- **Public checkout** — `/buy/[attributionHandle]` with no Thesma account required. Wallet safety is enforced before signing (correct Arc chain, payer ≠ merchant, payer ≠ partner payout wallet, balance check) and the backend validates the exact unsigned USDC transfer; the browser only submits the tx hash and the server mints `VERIFIED` from canonical Arc evidence only, with the 1h safety hold shown to the customer. Prepared/submitted checkout state survives refresh with no duplicate intent or payment resend.
+- **Automatic payouts** — `processEligiblePayouts()` scans `VERIFIED` outcomes: hold-active outcomes are skipped, expired holds follow reserve → submit once → reconcile `OutcomePaid` → `SETTLED`, settled outcomes are skipped, and submitted/ambiguous payouts reconcile before any resend. No per-payout user approval or manual prompt is required. Vercel Cron invokes the same worker via `GET /internal/payouts/process` (the existing authenticated trigger remains `POST`); the current Hobby deployment runs this cron daily as a production backstop, while the worker itself supports higher-frequency invocation without code changes.
 
 ## Technical architecture
 
@@ -182,6 +209,7 @@ Postgres options: local Postgres, Neon, or Supabase — any works, domain code i
 | `ATTRIBUTION_SECRET` | for referrals | HMAC secret for signed attribution tokens (≥32 chars, fails closed). |
 | `VERIFIER_INTERNAL_SECRET` | for workers | Bearer secret for internal verify routes (≥16 chars, fails closed). |
 | `PAYOUT_WORKER_SECRET` | for workers | Bearer secret for payout worker routes (falls back to verifier secret). |
+| `CRON_SECRET` | for workers | Server-only secret Vercel Cron sends as Bearer auth for `GET /internal/payouts/process`. Both the cron `GET` and the authenticated `POST` reuse the same `processEligiblePayouts()` worker. |
 | `THESMA_VERIFIER_PRIVATE_KEY` | for settlement | Isolated local verifier key; must derive to `THESMA_VERIFIER_ADDRESS`. |
 | `THESMA_EXECUTOR_PRIVATE_KEY` | for settlement | Isolated local executor key; must derive to `THESMA_EXECUTOR_ADDRESS`. |
 
@@ -192,13 +220,13 @@ No secrets are committed. Server secrets are never exposed via `NEXT_PUBLIC` var
 ```bash
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest run — 176 passing, 2 env-gated (Anvil) skipped
+npm test             # vitest run — 182 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **176 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **182 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Security guarantees
 
@@ -219,6 +247,7 @@ Honest boundaries of the shipped product:
 - Refund protection is the hold timer only; no refund-event detection exists.
 - No Circle Gateway/CCTP/x402, no paymasters, no fiat ramps.
 - No revenue/CAC analytics derived from purchases.
+- Payout scheduling latency: the current Vercel Hobby production schedule runs the payout worker daily, so settlement can wait for the next run after hold expiry; payout safety and idempotency are unchanged, and lower latency needs a higher-frequency scheduler or plan.
 
 ## Engineering history
 
