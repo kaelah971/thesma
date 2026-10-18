@@ -867,6 +867,111 @@ export async function listCreatorLiveCampaigns(
   return { campaigns: items };
 }
 
+/**
+ * Creator discovery: every genuinely live public campaign with this
+ * creator's participation state. Unjoined rows carry joined:false;
+ * joined rows carry the stable referral code + tracked path (`/r/:code`)
+ * created by joinCampaign (idempotent re-join reuses the same referral).
+ * Completed / non-public / expired / target-settled markets are excluded
+ * by the same rules as the public feed — joining them is refused downstream
+ * by joinCampaign itself. Read-only.
+ */
+export interface CreatorDiscoveryItem {
+  campaignId: string;
+  workspaceName: string;
+  category: string | null;
+  objective: string;
+  publicBountyMicroUsdc: string;
+  campaignState: string;
+  marketStatus: string;
+  deadline: string | null;
+  joined: boolean;
+  referralCode: string | null;
+  referralPath: string | null;
+}
+
+export async function listCreatorDiscovery(
+  deps: MarketDeps,
+  params: { userId: string },
+): Promise<{ campaigns: CreatorDiscoveryItem[] }> {
+  const now = deps.now?.() ?? new Date();
+  const profile = await deps.store.getPartnerByUserId(params.userId).catch(() => null);
+  const markets = await deps.store.listMarkets();
+  const items: CreatorDiscoveryItem[] = [];
+  for (const m of markets) {
+    const campaign = await deps.store.getCampaign(m.campaignId);
+    if (!campaign) continue;
+    const version = await deps.store.getVersion(m.campaignId, m.policyVersion);
+    if (!isLivePublicMarket(m, campaign, version, now)) continue;
+    const settled = await evaluateTargetSettled(deps.store, m.campaignId, m.policyVersion);
+    if (settled.complete) continue;
+    let joined = false;
+    let referralCode: string | null = null;
+    if (profile) {
+      const terms = await deps.store.getTerms(m.campaignId, profile.id);
+      if (terms && terms.status === "ACTIVE") {
+        const referral = await deps.store.getReferralByTerms(terms.id);
+        if (referral && referral.status === "ACTIVE") {
+          joined = true;
+          referralCode = referral.code;
+        }
+      }
+    }
+    const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+    items.push({
+      campaignId: campaign.id,
+      workspaceName: workspace?.name ?? "Workspace",
+      category: workspace?.category ?? null,
+      objective: version?.intentText ?? "",
+      publicBountyMicroUsdc: m.publicBountyMicroUsdc.toString(),
+      campaignState: campaign.state,
+      marketStatus: m.status,
+      deadline: version?.deadline?.toISOString() ?? null,
+      joined,
+      referralCode,
+      referralPath: referralCode ? `/r/${referralCode}` : null,
+    });
+  }
+  return { campaigns: items };
+}
+
+/**
+ * Pure funnel math shared by the creator + organization views. Inputs are
+ * raw rows; outputs are display counts. No I/O, no policy — stage truth
+ * stays in the tables (referral_events → checkout_intents/outcomes →
+ * reservations/payouts). CLICKED != CONVERTED != VERIFIED != PAID.
+ */
+export interface FunnelInput {
+  clicks: number;
+  outcomes: { status: string; holdUntil: Date | null }[];
+  settledPayoutMicroUsdc: bigint[];
+}
+
+export interface FunnelSummary {
+  clicks: number;
+  conversions: number;
+  verified: number;
+  inHold: number;
+  settledOutcomes: number;
+  settledPayoutMicroUsdc: string;
+}
+
+export function summarizeFunnel(input: FunnelInput, now: Date = new Date()): FunnelSummary {
+  const verified = input.outcomes.filter((o) => o.status === "VERIFIED").length;
+  const inHold = input.outcomes.filter(
+    (o) => o.status === "VERIFIED" && o.holdUntil !== null && o.holdUntil.getTime() > now.getTime(),
+  ).length;
+  const total = input.settledPayoutMicroUsdc.reduce((s, v) => s + v, 0n);
+  return {
+    clicks: input.clicks,
+    conversions: input.outcomes.length,
+    verified,
+    inHold,
+    settledOutcomes: input.settledPayoutMicroUsdc.length,
+    settledPayoutMicroUsdc: total.toString(),
+  };
+}
+
 /** Owner-issued private-market invite. Raw token is returned once, hash stored. */
 export async function createInvite(
   deps: MarketDeps,

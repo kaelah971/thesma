@@ -21,9 +21,11 @@ import {
 import type { ArcChainReader, ArcConfig, TxReceiptSummary, VaultCampaignState } from "@/server/chain/arc";
 import {
   joinCampaign,
+  listCreatorDiscovery,
   listCreatorLiveCampaigns,
   openMarket,
   resolveReferral,
+  summarizeFunnel,
   type MarketDeps,
 } from "@/server/services/markets";
 
@@ -181,5 +183,83 @@ describe("creator live campaign cards (profile CTA foundation)", () => {
       status: 404,
       code: "PARTNER_NOT_FOUND",
     });
+  });
+});
+
+describe("creator discovery (join once, stable link)", () => {
+  it("lists live campaigns with participation state and stable referral identity", async () => {
+    const ctx = setup();
+    const campaignId = await liveCampaignId(ctx);
+    await openMarket(ctx.marketDeps, {
+      campaignId,
+      userId: "owner-1",
+      expectedPolicyVersion: 1,
+      openingBountyMicroUsdc: "2000000",
+      destinationUrl: DEST,
+    });
+
+    // Before joining: visible, not joined, no link invented.
+    const before = await listCreatorDiscovery(ctx.marketDeps, { userId: "partner-1" });
+    expect(before.campaigns).toHaveLength(1);
+    expect(before.campaigns[0].campaignId).toBe(campaignId);
+    expect(before.campaigns[0].workspaceName).toBe("Acme");
+    expect(before.campaigns[0].joined).toBe(false);
+    expect(before.campaigns[0].referralCode).toBeNull();
+
+    // Join is idempotent: same referral identity twice.
+    const first = await joinCampaign(ctx.marketDeps, { campaignId, userId: "partner-1" });
+    const second = await joinCampaign(ctx.marketDeps, { campaignId, userId: "partner-1" });
+    expect(second.alreadyJoined).toBe(true);
+    expect(second.referral.code).toBe(first.referral.code);
+
+    const after = await listCreatorDiscovery(ctx.marketDeps, { userId: "partner-1" });
+    expect(after.campaigns[0].joined).toBe(true);
+    expect(after.campaigns[0].referralCode).toBe(first.referral.code);
+    expect(after.campaigns[0].referralPath).toBe(`/r/${first.referral.code}`);
+  });
+
+  it("shows unjoined state to creators with no profile instead of failing", async () => {
+    const ctx = setup();
+    const campaignId = await liveCampaignId(ctx);
+    await openMarket(ctx.marketDeps, {
+      campaignId,
+      userId: "owner-1",
+      expectedPolicyVersion: 1,
+      openingBountyMicroUsdc: "2000000",
+      destinationUrl: DEST,
+    });
+    const { campaigns } = await listCreatorDiscovery(ctx.marketDeps, { userId: "stranger" });
+    expect(campaigns).toHaveLength(1);
+    expect(campaigns[0].joined).toBe(false);
+  });
+});
+
+describe("funnel math (clicks are not outcomes)", () => {
+  it("keeps every stage separate", () => {
+    const now = new Date("2026-06-01T12:00:00.000Z");
+    const s = summarizeFunnel(
+      {
+        clicks: 10,
+        outcomes: [
+          { status: "PENDING", holdUntil: null },
+          { status: "VERIFIED", holdUntil: new Date("2026-06-02T12:00:00.000Z") },
+          { status: "VERIFIED", holdUntil: new Date("2026-05-01T12:00:00.000Z") },
+          { status: "REJECTED", holdUntil: null },
+        ],
+        settledPayoutMicroUsdc: [2_000_000n],
+      },
+      now,
+    );
+    expect(s.clicks).toBe(10);
+    expect(s.conversions).toBe(4);
+    expect(s.verified).toBe(2);
+    expect(s.inHold).toBe(1);
+    expect(s.settledOutcomes).toBe(1);
+    expect(s.settledPayoutMicroUsdc).toBe("2000000");
+  });
+
+  it("reports honest zeros on no data", () => {
+    const s = summarizeFunnel({ clicks: 0, outcomes: [], settledPayoutMicroUsdc: [] });
+    expect(s).toEqual({ clicks: 0, conversions: 0, verified: 0, inHold: 0, settledOutcomes: 0, settledPayoutMicroUsdc: "0" });
   });
 });

@@ -3,11 +3,15 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { HomeShell } from "@/components/start/HomeShell";
+import { CreatorCampaignActions } from "@/components/start/CreatorCampaignActions";
 import { getSessionUser } from "@/server/auth/guard";
 import { getDb } from "@/server/db/client";
 import { outcomes, partnerTerms, payouts, referrals } from "@/server/db/schema";
 import { getPartnerByUserId } from "@/server/services/partners";
 import { getPersonaByUserId } from "@/server/services/personas";
+import { createDrizzleCampaignStore } from "@/server/services/campaignStore.drizzle";
+import { listCreatorDiscovery } from "@/server/services/markets";
+import { formatDate, formatUsdc } from "@/lib/format";
 import styles from "@/components/start/start.module.css";
 
 export const metadata: Metadata = { title: "Creator home" };
@@ -41,6 +45,10 @@ export default async function CreatorHomePage() {
 
   const partner = await getPartnerByUserId(user.userId).catch(() => null);
   const stats = await creatorStats(partner?.id ?? null);
+  const discovery = await listCreatorDiscovery(
+    { store: createDrizzleCampaignStore(), audit: async () => ({}) },
+    { userId: user.userId },
+  ).catch(() => ({ campaigns: [] }));
 
   return (
     <HomeShell
@@ -79,9 +87,27 @@ export default async function CreatorHomePage() {
         <section className={styles.panel}>
           <h2>Live for you</h2>
           <p>Public campaigns you can join. Terms are set per creator — nothing is joined silently.</p>
-          {stats.campaigns === 0 && <div className={styles.panelEmpty}>You haven&apos;t joined any campaigns yet.</div>}
+          {discovery.campaigns.length === 0 ? (
+            <div className={styles.panelEmpty}>No live campaigns open right now. Check back soon.</div>
+          ) : (
+            <ul style={{ listStyle: "none", margin: "12px 0 0", padding: 0, display: "grid", gap: 12 }}>
+              {discovery.campaigns.map((c) => (
+                <li key={c.campaignId} className={styles.panelEmpty} style={{ borderStyle: "solid" }}>
+                  <strong style={{ display: "block", fontSize: 14 }}>{c.workspaceName}</strong>
+                  <span style={{ display: "block", fontSize: 13, marginTop: 2 }}>{c.objective || "Outcome campaign"}</span>
+                  <span className="tnum" style={{ display: "block", fontSize: 12.5, marginTop: 6, color: "var(--ink-2)" }}>
+                    {formatUsdc(c.publicBountyMicroUsdc)} USDC per verified outcome
+                    {c.deadline ? ` · ends ${formatDate(c.deadline)}` : ""}
+                  </span>
+                  <div className={styles.panelActions}>
+                    <CreatorCampaignActions campaignId={c.campaignId} initialReferralPath={c.referralPath} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className={styles.panelActions}>
-            <Link href="/markets" className="btn btn-primary btn-sm">
+            <Link href="/markets" className="btn btn-sm">
               Discover live campaigns
             </Link>
           </div>

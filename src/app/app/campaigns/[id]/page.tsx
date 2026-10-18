@@ -8,6 +8,10 @@ import { NoWorkspace } from "@/components/app/NoWorkspace";
 import { Card, EmptyState, Facts, Kpi, PageHeader, Pill } from "@/components/app/ui";
 import styles from "@/components/app/app.module.css";
 import { campaignName, formatDate, formatDateTime, formatHoldSeconds, formatUsdc, shortHash } from "@/lib/format";
+import { summarizeFunnel } from "@/server/services/markets";
+import { getDb } from "@/server/db/client";
+import { partnerTerms, partners, referralEvents, referrals, userPersonas, users } from "@/server/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   CAMPAIGN_STATE_TONE,
   campaignFinancials,
@@ -30,6 +34,66 @@ const REQUIRED: { key: "targetOutcomeCount" | "budgetMicro" | "floorMicro" | "ce
 ];
 
 const usdc = (v: string | null) => (v ? `${formatUsdc(v)} USDC` : "Missing");
+
+/** Real participant rows for one campaign: identity + referral + click count. */
+async function loadParticipants(
+  campaignId: string,
+): Promise<{ partnerId: string; label: string; clicks: number }[]> {
+  const db = getDb();
+  const termRows = await db
+    .select({ partnerId: partnerTerms.partnerId })
+    .from(partnerTerms)
+    .where(eq(partnerTerms.campaignId, campaignId));
+  const partnerIds = [...new Set(termRows.map((t) => t.partnerId))];
+  if (partnerIds.length === 0) return [];
+  const [refRows, partnerRows] = await Promise.all([
+    db.select().from(referrals).where(eq(referrals.campaignId, campaignId)),
+    db.select({ id: partners.id, userId: partners.userId }).from(partners).where(inArray(partners.id, partnerIds)),
+  ]);
+  const clickRows =
+    refRows.length > 0
+      ? await db
+          .select({ referralId: referralEvents.referralId })
+          .from(referralEvents)
+          .where(
+            and(
+              inArray(
+                referralEvents.referralId,
+                refRows.map((r) => r.id),
+              ),
+              eq(referralEvents.eventType, "CLICK"),
+            ),
+          )
+      : [];
+  const clicksByPartner = new Map<string, number>();
+  for (const r of refRows) {
+    const n = clickRows.filter((c) => c.referralId === r.id).length;
+    clicksByPartner.set(r.partnerId, (clicksByPartner.get(r.partnerId) ?? 0) + n);
+  }
+  const userIds = [...new Set(partnerRows.map((p) => p.userId))];
+  const [userRows, personaRows] =
+    userIds.length > 0
+      ? await Promise.all([
+          db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, userIds)),
+          db
+            .select({ userId: userPersonas.userId, handle: userPersonas.handle })
+            .from(userPersonas)
+            .where(inArray(userPersonas.userId, userIds)),
+        ])
+      : [[], []];
+  const nameByUser = new Map(userRows.map((u) => [u.id, u.name]));
+  const handleByUser = new Map(personaRows.map((p) => [p.userId, p.handle]));
+  return partnerIds.map((partnerId) => {
+    const userId = partnerRows.find((p) => p.id === partnerId)?.userId ?? null;
+    const handle = userId ? handleByUser.get(userId) : null;
+    const name = userId ? nameByUser.get(userId) : null;
+    return {
+      partnerId,
+      label: handle ? `@${handle}` : name || "Creator",
+      clicks: clicksByPartner.get(partnerId) ?? 0,
+    };
+  });
+}
 
 export default async function CampaignPage({
   params,
@@ -55,6 +119,28 @@ export default async function CampaignPage({
   const missing = REQUIRED.filter((r) => campaign[r.key] === null);
   const verified = verifiedCount(snapshot, campaign.id);
   const pct = (v: bigint) => (f.funded > 0n ? `${Number((v * 10000n) / f.funded) / 100}%` : "0%");
+
+  // Participant funnel (real rows only): terms → referrals → clicks →
+  // outcomes → payouts, identity from users/personas. Never ranked, never
+  // fabricated — feeds the Organization AI in a later slice.
+  const participants = await loadParticipants(id).catch(() => []);
+  const snapOutcomes = snapshot.outcomes.filter((o) => o.campaignId === campaign.id);
+  const snapPayouts = payouts;
+  const participantRows = participants.map((p) => ({
+    ...p,
+    funnel: summarizeFunnel(
+      {
+        clicks: p.clicks,
+        outcomes: snapOutcomes
+          .filter((o) => o.partnerId === p.partnerId)
+          .map((o) => ({ status: o.status, holdUntil: o.holdUntil ? new Date(o.holdUntil) : null })),
+        settledPayoutMicroUsdc: snapPayouts
+          .filter((q) => q.partnerId === p.partnerId && q.state === "SETTLED")
+          .map((q) => BigInt(q.amountMicro)),
+      },
+      new Date(now),
+    ),
+  }));
 
   return (
     <>
@@ -238,6 +324,26 @@ export default async function CampaignPage({
             <PayoutTable payouts={payouts.slice(0, 12)} campaigns={snapshot.campaigns} showCampaign={false} />
           ) : (
             <EmptyState title="No payouts yet" body="Payouts are created only for verified outcomes whose safety hold has passed." />
+          )}
+        </Card>
+        <Card title="Participants">
+          {participantRows.length ? (
+            <ul className={styles.campaignList}>
+              {participantRows.map((p) => (
+                <li key={p.partnerId} className={styles.campaignRow} style={{ cursor: "default" }}>
+                  <span className={styles.campaignName}>{p.label}</span>
+                  <div className={styles.campaignMeta}>
+                    <span className="tnum">
+                      {p.funnel.clicks} visits · {p.funnel.conversions} actions · {p.funnel.verified} verified ·{" "}
+                      {p.funnel.inHold} in hold · {p.funnel.settledOutcomes} settled ·{" "}
+                      {formatUsdc(p.funnel.settledPayoutMicroUsdc)} USDC settled
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState title="No participants yet" body="Creators who join this campaign appear here with their real funnel." />
           )}
         </Card>
       </div>
