@@ -81,7 +81,8 @@ export default async function MarketsPage() {
                   key={m.campaignId}
                   title={
                     <>
-                      {m.workspaceName} <Pill>{m.finalState}</Pill> <Pill>{m.marketStatus}</Pill>
+                      {m.workspaceName} <Pill>{m.finalState}</Pill> <Pill>{m.marketStatus}</Pill>{" "}
+                      {m.completionReason === "TARGET_SETTLED" && <Pill tone="mint">Target reached · Settled</Pill>}
                     </>
                   }
                   action={

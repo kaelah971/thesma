@@ -80,7 +80,14 @@ export default async function MarketDetailPage({ params }: { params: Promise<{ c
         </Card>
         {!detail.live && detail.kind === "completed" && (
           <>
-            <Card title="Final outcome">
+            <Card
+              title={
+                <>
+                  Final outcome{" "}
+                  {detail.completionReason === "TARGET_SETTLED" && <Pill tone="mint">Target reached · Settled</Pill>}
+                </>
+              }
+            >
               <Facts
                 items={[
                   { label: "Goal reached", value: detail.finalOutcome.reachedTarget ? "Yes" : "Not yet" },
