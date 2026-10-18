@@ -797,6 +797,76 @@ export async function listMyCampaigns(deps: MarketDeps, params: { userId: string
   return { campaigns: items };
 }
 
+/**
+ * Creator campaign cards foundation (public-safe).
+ *
+ * For a creator's partner profile, returns the LIVE campaigns they are
+ * participating in with everything a profile card needs: campaign,
+ * organization/workspace, objective, payout, state — plus the destination
+ * ACTION as a Thesma-tracked referral path (`/r/:code`), never the raw
+ * organization URL. The /r route records a CLICK, mints attribution, then
+ * redirects to the stored `market_states.destination_url`, so the funnel
+ * stays referral → customer action → verification → hold → payout with
+ * each stage recorded separately (a click is never a verified outcome).
+ *
+ * Only genuinely live + public + unexpired + non-target-settled markets
+ * are returned. Read-only: no terms, joins, or financial writes.
+ */
+export interface CreatorLiveCampaignCard {
+  campaignId: string;
+  workspaceId: string;
+  workspaceName: string;
+  category: string | null;
+  objective: string;
+  publicBountyMicroUsdc: string;
+  campaignState: string;
+  marketStatus: string;
+  deadline: string | null;
+  referralCode: string;
+  /** Tracked CTA destination. Resolve via GET /r/:code for attribution. */
+  referralPath: string;
+}
+
+export async function listCreatorLiveCampaigns(
+  deps: MarketDeps,
+  params: { partnerId: string },
+): Promise<{ campaigns: CreatorLiveCampaignCard[] }> {
+  const now = deps.now?.() ?? new Date();
+  const profile = await deps.store.getPartnerById(params.partnerId);
+  if (!profile) fail(404, "PARTNER_NOT_FOUND", "Creator profile not found");
+  const terms = await deps.store.listPartnerTerms(params.partnerId);
+  const items: CreatorLiveCampaignCard[] = [];
+  for (const t of terms) {
+    if (t.status !== "ACTIVE") continue;
+    const [market, campaign] = await Promise.all([
+      deps.store.getMarket(t.campaignId),
+      deps.store.getCampaign(t.campaignId),
+    ]);
+    if (!market || !campaign) continue;
+    const version = await deps.store.getVersion(t.campaignId, market.policyVersion);
+    if (!isLivePublicMarket(market, campaign, version, now)) continue;
+    const settled = await evaluateTargetSettled(deps.store, t.campaignId, market.policyVersion);
+    if (settled.complete) continue;
+    const referral = await deps.store.getReferralByTerms(t.id);
+    if (!referral || referral.status !== "ACTIVE") continue;
+    const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+    items.push({
+      campaignId: campaign.id,
+      workspaceId: campaign.workspaceId,
+      workspaceName: workspace?.name ?? "Workspace",
+      category: workspace?.category ?? null,
+      objective: version?.intentText ?? "",
+      publicBountyMicroUsdc: market.publicBountyMicroUsdc.toString(),
+      campaignState: campaign.state,
+      marketStatus: market.status,
+      deadline: version?.deadline?.toISOString() ?? null,
+      referralCode: referral.code,
+      referralPath: `/r/${referral.code}`,
+    });
+  }
+  return { campaigns: items };
+}
+
 /** Owner-issued private-market invite. Raw token is returned once, hash stored. */
 export async function createInvite(
   deps: MarketDeps,

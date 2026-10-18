@@ -67,11 +67,27 @@ export function isHandleValid(value: unknown): boolean {
   return normalizeHandle(value) !== null;
 }
 
-/** True when the table is missing (migration not yet applied) — not a data error. */
-function isMissingTable(err: unknown): boolean {
-  const code = (err as { code?: string } | null)?.code;
-  const msg = err instanceof Error ? err.message : String(err ?? "");
-  return code === "42P01" || /relation .* does not exist/i.test(msg);
+/**
+ * True when the table is missing (migration not yet applied) — not a data error.
+ *
+ * Drizzle wraps driver failures as `Failed query: ...` with the Postgres
+ * error on `cause`, so walk the chain: checking only the outer error
+ * misses code 42P01 and turns a missing table into a 500 (this crashed
+ * production /welcome + /start before migration 0009 was applied).
+ *
+ * Exported for unit tests; callers should keep using the safe readers.
+ */
+export function isMissingTable(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let i = 0; i < 4 && cur !== null && (typeof cur === "object" || typeof cur === "string") && !seen.has(cur); i++) {
+    seen.add(cur);
+    const code = typeof cur === "object" ? (cur as { code?: unknown }).code : undefined;
+    const msg = cur instanceof Error ? cur.message : String(cur ?? "");
+    if (code === "42P01" || /relation .* does not exist/i.test(msg)) return true;
+    cur = typeof cur === "object" ? (cur as { cause?: unknown }).cause : undefined;
+  }
+  return false;
 }
 
 /** Safe read: returns null when there is no row OR the table is not migrated yet. */

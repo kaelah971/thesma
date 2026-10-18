@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isHandleValid,
+  isMissingTable,
   normalizeHandle,
   onboardingPath,
   parsePersona,
@@ -52,5 +53,17 @@ describe("role gateway persona helpers", () => {
     expect(isHandleValid(undefined)).toBe(true);
     expect(isHandleValid("ok_handle_1")).toBe(true);
     expect(isHandleValid("1k")).toBe(false);
+  });
+
+  it("detects a missing user_personas table through Drizzle's error wrapper", () => {
+    // Production /welcome + /start crashed because Drizzle wraps the pg
+    // 42P01 as `Failed query: ...` with the real error on `cause`.
+    const pgMissing = Object.assign(new Error('relation "user_personas" does not exist'), { code: "42P01" });
+    const wrapped = new Error(`Failed query: select "user_id" from "user_personas" where "user_id" = $1`);
+    (wrapped as { cause?: unknown }).cause = pgMissing;
+    expect(isMissingTable(pgMissing)).toBe(true);
+    expect(isMissingTable(wrapped)).toBe(true);
+    expect(isMissingTable(new Error("connection refused"))).toBe(false);
+    expect(isMissingTable(null)).toBe(false);
   });
 });
