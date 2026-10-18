@@ -43,23 +43,28 @@ describe("referral destination validation (no open redirect)", () => {
 });
 
 describe("security headers baseline", () => {
+  const middlewareSrc = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
   const configSrc = readFileSync(join(process.cwd(), "next.config.ts"), "utf8");
 
-  it("serves CSP + hardening headers on all routes", () => {
+  it("issues a per-request CSP with a fresh nonce (static script-src would freeze streamed routes)", () => {
+    // Next.js streams page data as inline scripts: only a nonce stamped via
+    // x-nonce keeps first-party execution without killing hydration.
+    expect(middlewareSrc).toContain("x-nonce");
+    expect(middlewareSrc).toContain("'nonce-${nonce}'");
+    expect(middlewareSrc).toContain("'strict-dynamic'");
+    expect(middlewareSrc).toContain("frame-ancestors 'none'");
+    expect(middlewareSrc).toContain("object-src 'none'");
+    expect(middlewareSrc).not.toContain("unsafe-eval");
+    // No second static policy in next.config: two policies intersect and break.
+    expect(configSrc).not.toContain('key: "Content-Security-Policy"');
+  });
+
+  it("serves hardening headers on all routes and hides the fingerprint", () => {
     expect(configSrc).toContain('source: "/:path*"');
-    // First-party scripts only: referral links must not look like a loader
-    // for arbitrary third-party code.
-    expect(configSrc).toContain("script-src 'self'");
-    expect(configSrc).not.toContain("unsafe-eval");
-    expect(configSrc).toContain("frame-ancestors 'none'");
-    expect(configSrc).toContain("object-src 'none'");
     expect(configSrc).toContain("X-Content-Type-Options");
     expect(configSrc).toContain("nosniff");
     expect(configSrc).toContain("Referrer-Policy");
     expect(configSrc).toContain("Permissions-Policy");
-  });
-
-  it("hides the framework fingerprint", () => {
     expect(configSrc).toContain("poweredByHeader: false");
   });
 });
