@@ -129,6 +129,10 @@ What Thesma does **not** claim: Circle Gateway, CCTP, x402, Circle Wallets / App
 
 Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) — **How will you use Thesma?** — and the choice shapes onboarding and home. Returning users with finished onboarding skip the gateway.
 
+<p align="center">
+  <img src="docs/readme/02-role-gateway.png" alt="Thesma role gateway with Customer, Creator, Organization and Build with Thesma cards" width="900" />
+</p>
+
 - **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
 - **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (reserved for a future `/@username` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
 - **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
@@ -138,25 +142,45 @@ The persona is onboarding context, not authorization: workspace/partner access s
 
 ## Product
 
-Screenshots from the live production app at [thesma.vercel.app](https://thesma.vercel.app), showing the real Arc Mainnet proof campaign (1.00 USDC funded, one payout settled and reconciled onchain).
+Live production UI at [thesma.vercel.app](https://thesma.vercel.app) — every screenshot below is the real rendered product, captured October 2026.
 
 <p align="center">
-  <img src="docs/readme/landing.png" alt="Thesma landing page" width="900" />
+  <img src="docs/readme/01-landing.png" alt="Thesma landing hero: Pay for proof, not promises" width="900" />
 </p>
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/readme/overview.png" alt="Thesma workspace overview" /><br /><sub><strong>Overview</strong> — funded, available, verified and settled budget at a glance.</sub></td>
-    <td width="50%"><img src="docs/readme/campaign-create.png" alt="Draft a campaign from plain language" /><br /><sub><strong>Campaign creation</strong> — plain-language intent becomes a draft policy; nothing is funded until the owner approves.</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/readme/campaign-detail.png" alt="Campaign detail with policy and funding" /><br /><sub><strong>Campaign detail</strong> — frozen policy, confirmed onchain funding and budget accounting.</sub></td>
-    <td width="50%"><img src="docs/readme/operator.png" alt="Operator answering over live workspace state" /><br /><sub><strong>Operator</strong> — deterministic answers over live workspace state.</sub></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><img src="docs/readme/payout-receipt.png" alt="Settled payout receipt with live checks" width="50%" /><br /><sub><strong>Payout receipt</strong> — marked settled only after reconciliation matched the onchain <code>OutcomePaid</code> event.</sub></td>
-  </tr>
-</table>
+### Creator distribution loop
+
+Join campaign → unique referral link → customer action → attribution → verification → hold → settlement. Creators join live campaigns from their home, copy a stable `/r/[code]` link, and watch a real funnel: clicks, conversions, verified outcomes, holds, settled payouts. No fake metrics — empty stages show 0. (Creator home and campaign workspace require sign-in, so they are described here rather than screenshotted.) Public `/@username` creator profiles and follow are not shipped yet — creator identity appears on onboarding, the creator home, and referral landings.
+
+### Organization operations
+
+Account → workspace → campaign creation, then the `/app` workspace: funded vs committed vs available budget, outcomes truthfully stated, reservation → submission → reconciliation payouts, receipts, activity, and a per-participant funnel on each campaign. (Workspace views require sign-in.)
+
+### Public evidence ledger
+
+<p align="center">
+  <img src="docs/readme/06-public-markets.png" alt="Public markets: Beaconfield live and Aster completed proof" width="900" />
+</p>
+
+ Beaconfield Studio live at 0.9 USDC per verified outcome with the lifecycle stopping truthfully before SETTLED; Aster Media below it as the permanent completed record.
+
+### Live truth — Beaconfield
+
+<p align="center">
+  <img src="docs/readme/07-beaconfield-live-proof.png" alt="Beaconfield live market proof: funded, purchased, verified, held — not settled" width="900" />
+</p>
+
+Campaign `dcec0b71-2a4d-496c-b573-6999d09c8cb2`: LIVE, funded 0.9 USDC CONFIRMED, 1 verified purchase, serving its safety hold — **verified/held is not settled**: "No payouts recorded yet."
+
+### Permanent proof — Aster
+
+<p align="center">
+  <img src="docs/readme/08-aster-settled-proof.png" alt="Aster completed market: full lifecycle funded to settled with 1 USDC reconciled" width="900" />
+</p>
+
+Campaign `5571f328-ceeb-4712-8671-a72be1966ffb`: Target reached · Settled, full lifecycle FUNDED → PURCHASED → VERIFIED → HELD → SETTLED, 1 USDC reconciled against the onchain `OutcomePaid` event.
+
+**VERIFIED != PAID · SUBMITTED != SETTLED** — documented and enforced everywhere above.
 
 ### Public proof
 
