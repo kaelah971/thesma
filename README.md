@@ -29,7 +29,7 @@
 <img src="https://img.shields.io/badge/settlement-USDC-66F2A2?style=flat-square" alt="Settlement: USDC" />
 <img src="https://img.shields.io/badge/proof-reconciled-66F2A2?style=flat-square" alt="Proof: reconciled" />
 <img src="https://img.shields.io/badge/safety-no_double_pay-66F2A2?style=flat-square" alt="Safety: no double pay" />
-<img src="https://img.shields.io/badge/tests-182_passing-66F2A2?style=flat-square" alt="Tests: 182 passing" />
+<img src="https://img.shields.io/badge/tests-246_passing-66F2A2?style=flat-square" alt="Tests: 182 passing" />
 <img src="https://img.shields.io/badge/next.js-16-111111?style=flat-square" alt="Next.js 16" />
 <img src="https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square" alt="TypeScript strict" />
 </p>
@@ -125,6 +125,17 @@ What this guarantees:
 
 What Thesma does **not** claim: Circle Gateway, CCTP, x402, Circle Wallets / App Kit / Agent Stack, paymasters, fiat ramps, or LLM-decided payouts.
 
+## Who Thesma serves
+
+Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) — **How will you use Thesma?** — and the choice shapes onboarding and home. Returning users with finished onboarding skip the gateway.
+
+- **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
+- **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (reserved for a future `/@username` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
+- **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
+- **Build with Thesma** — use Thesma's verification, receipts and payout infrastructure in your own product. Developer onboarding explains connect → send outcomes → verify → receipts → payouts; API keys/webhooks are truthful empty states until the developer preview opens.
+
+The persona is onboarding context, not authorization: workspace/partner access still comes only from membership checks. Public `/markets` never requires login.
+
 ## Product
 
 Screenshots from the live production app at [thesma.vercel.app](https://thesma.vercel.app), showing the real Arc Mainnet proof campaign (1.00 USDC funded, one payout settled and reconciled onchain).
@@ -147,6 +158,12 @@ Screenshots from the live production app at [thesma.vercel.app](https://thesma.v
   </tr>
 </table>
 
+### Public proof
+
+`/markets` needs no login: LIVE markets (PUBLIC + LIVE + OPEN + unexpired) plus a permanent completed history that stays visible after close/expiry with factual results only — goal, final state, verified outcomes, spend, verified revenue and realized CAC when computable. `/markets/[campaignId]` is the judge-proof detail: terms, progress, agent decisions, funding state, and for completed markets payouts, receipts and Arc explorer links where available. PRIVATE campaigns never leak.
+
+Lifecycle: `FUNDED → PURCHASED → VERIFIED → HELD → SETTLED`. Two rules hold everywhere in the product: **VERIFIED != PAID** (evidence passed, money has not moved) and **SUBMITTED != SETTLED** (a payout transaction exists, independent `OutcomePaid` reconciliation has not confirmed it). Only reconciliation settles.
+
 ### Product surfaces
 
 The live app gives each workspace:
@@ -164,6 +181,12 @@ The live app gives each workspace:
 - **Public market discovery** — `/markets` needs no login: LIVE markets (PUBLIC + LIVE + OPEN + unexpired) plus a completed history that stays visible after close/expiry with factual results only (goal, final state, verified outcomes, spend, verified revenue and realized CAC when computable — never fabricated). `/markets/[campaignId]` shows the judge-proof detail: terms, progress, agent decisions, funding state, and for completed markets payouts, receipts and Arc explorer links where available. PRIVATE campaigns never leak.
 - **Supply Agent onboarding** — `/app/agent` starts from one question ("What kinds of outcome markets should I watch for you?") and progressively gathers minimum bounty, auto-join/auto-negotiate and caps. Answers become typed `PartnerRules` (exact micro-USDC, allow/block lists, caps, toggles) through the existing rules service — chat never writes, and nothing activates until the confirmation card is pressed. The agent dashboard shows real state (watching/matched/joined/skipped-with-reasons/negotiations), answers questions from live market data, and runs eligible auto-joins through the unchanged join policy on explicit invocation. Negotiation automation is not available in this build.
 - **Background supply worker** — `POST /internal/agents/supply/run` (bearer `SUPPLY_AGENT_WORKER_SECRET`; Vercel Cron `GET` daily at 06:30 UTC via `CRON_SECRET`, Hobby-compatible) loads every autoJoin Partner and joins eligible PUBLIC live markets through the unchanged `joinCampaign` path — same deterministic rules, same audit records, no social posts, no faked negotiation. Repeats are idempotent, concurrent runs cannot duplicate joins, one Partner's failure never aborts the rest, and every run emits one `supply_agent.run` audit record so automatic decisions stay inspectable.
+
+### RFB 04 — Autonomous Business Operator
+
+Most business agents automate bills. Thesma autonomously buys verified growth: organizations fund outcome campaigns in USDC, creators participate, customer results are verified, and money moves only after proof and policy conditions are satisfied — every settlement leaving durable evidence.
+
+Shipped operator behavior (deterministic kernels + workers, never LLM-decided payouts): track funded vs committed vs available budget per campaign; manage creator payout obligations through the eligible-payout worker; operate strictly inside frozen campaign budgets and limits; settle only hold-cleared, verified outcomes with reserve → submit-once → reconcile; keep decision/evidence logs in the append-only audit trail; fail ambiguous states closed (`AMBIGUOUS`, reconcile-before-resend) instead of escalating blindly. Future: bounty/allocation auto-adjustment stays inside approved bounds (pricing kernel states exist; autonomous execution is not wired in this build), and negotiation automation is explicitly not available yet.
 
 ## Technical architecture
 
@@ -184,6 +207,15 @@ contracts/              # ThesmaMarketVault (Solidity, Foundry-tested, deployed 
 
 Money uses exact integer micro-USDC (`bigint` + decimal strings) — never floating point. Agent models never receive raw private keys and never write directly to chain.
 
+## Arc environments
+
+Thesma settles on **Arc Mainnet** in production and develops against the **Canteen Arc Testnet** — explicitly separated, never silently interchangeable.
+
+- **MAINNET — production (chain ID 5042).** The only network that touches real settlement and proof: the canonical Aster/Beaconfield records, `ThesmaMarketVault` (`0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`), and all explorer/receipt links. `ARC_NETWORK` unset means mainnet; production runs mainnet and never switches.
+- **CANTEEN TESTNET — hackathon/dev (chain ID 5042002).** Personal authenticated Canteen RPC, test USDC, and a separate testnet operator wallet. For hackathon development, autonomous-agent testing, test-USDC workflows, and safe end-to-end demos. No production records route here; no mainnet evidence is replaced by testnet runs.
+
+Selection is explicit: `ARC_NETWORK=mainnet|testnet` (default `mainnet`). Mainnet keeps the existing `ARC_RPC_URL`/`ARC_CHAIN_ID` contract unchanged; testnet reads only `ARC_TESTNET_*` variables and pins chain 5042002. Cross-contamination fails loudly — testnet config can never report 5042, mainnet config can never report 5042002, and a selected-but-unconfigured testnet throws instead of falling back. Every chain read additionally asserts RPC `eth_chainId` equals the configured chain. See `.env.example` (placeholders only — never commit RPC tokens or private keys) and `npm run arc:doctor`.
+
 ## Local setup
 
 ```bash
@@ -196,12 +228,23 @@ npm run dev                 # http://localhost:3000
 
 Postgres options: local Postgres, Neon, or Supabase — any works, domain code is not coupled to a provider.
 
+Mainnet is the default chain config (`ARC_NETWORK` unset → mainnet via `ARC_RPC_URL`/`ARC_CHAIN_ID`). For Canteen testnet work, set `ARC_NETWORK=testnet` plus the `ARC_TESTNET_*` variables from `.env.example` (testnet RPC, chain 5042002, separate operator wallet) — never reuse production keys or point testnet at mainnet contracts. Verify with `npm run arc:doctor` before running anything that touches chain.
+
 ## Env vars
 
 | Var | Required | Purpose |
 | --- | -------- | ------- |
 | `DATABASE_URL` | yes (runtime) | Provider-neutral Postgres connection. Build + unit tests pass without it; API routes return `503 UNCONFIGURED` until set. |
 | `SESSION_COOKIE_NAME` | no | Defaults to `thesma_session`. |
+| `ARC_NETWORK` | no (defaults `mainnet`) | Explicit Arc environment: `mainnet` (production, chain 5042) or `testnet` (Canteen, chain 5042002). Anything else fails closed. |
+| `ARC_TESTNET_RPC_URL` | for testnet | Canteen testnet RPC endpoint (authenticated personal RPC). Required when `ARC_NETWORK=testnet`; no fallback to mainnet. |
+| `ARC_TESTNET_CHAIN_ID` | no | Must be `5042002` when set; defaults to it. Any other value fails closed. |
+| `ARC_TESTNET_USDC_ADDRESS` | no | Test USDC token address (defaults to the shared Arc USDC address when unset). |
+| `ARC_TESTNET_VAULT_ADDRESS` | for testnet funding | Testnet `ThesmaMarketVault` deployment, when one exists. |
+| `ARC_TESTNET_OPERATOR_ADDRESS` | for testnet ops | Separate testnet operator wallet address. Never a production key. |
+| `ARC_TESTNET_OPERATOR_PRIVATE_KEY` | for testnet ops | Separate testnet operator key. Never committed, never a production key. |
+| `ARC_TESTNET_VERIFIER_ADDRESS` | for testnet ops | Separate testnet verifier identity, when used. |
+| `ARC_TESTNET_EXPLORER_BASE_URL` | no | Optional testnet explorer base for receipt links (never inherits mainnet's). |
 | `ARC_CHAIN_ID` | for funding | Expected chain ID; RPC `eth_chainId` must match or every chain op fails closed. |
 | `ARC_RPC_URL` | for funding | Arc RPC endpoint. Absent → funding APIs report unconfigured, `arc:doctor` reports NOT_CONFIGURED. |
 | `ARC_USDC_ADDRESS` | no | Defaults to `0x3600000000000000000000000000000000000000` (Arc USDC). |
@@ -224,14 +267,14 @@ No secrets are committed. Server secrets are never exposed via `NEXT_PUBLIC` var
 ```bash
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest run — 210 passing, 2 env-gated (Anvil) skipped
+npm test             # vitest run — 246 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 npm run mainnet:preflight  # read-only production readiness gate (never signs/broadcasts; exit 1 when BLOCKED)
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **210 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **246 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Security guarantees
 

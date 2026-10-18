@@ -19,6 +19,13 @@ import {
 
 export const ARC_USDC_DEFAULT = "0x3600000000000000000000000000000000000000" as const;
 
+/** Arc Mainnet: production settlement/proof. Always the default. */
+export const ARC_MAINNET_CHAIN_ID = 5042;
+/** Canteen Arc Testnet: hackathon development/demo/testing only. */
+export const ARC_TESTNET_CHAIN_ID = 5042002;
+
+export type ArcNetwork = "mainnet" | "testnet";
+
 export interface ArcConfig {
   chainId: number;
   rpcUrl: string;
@@ -27,6 +34,13 @@ export interface ArcConfig {
   executorAddress: Address | null;
   verifierAddress: Address | null;
   explorerBaseUrl: string | null;
+  /**
+   * Selected Arc environment. Always populated by arcConfigFromEnv;
+   * hand-built fixtures (tests, scripts) may omit it.
+   */
+  network?: ArcNetwork;
+  /** Human label: "Arc Mainnet" or "Canteen Arc Testnet". */
+  environmentLabel?: string;
 }
 
 function optionalAddress(raw: string | undefined, name: string): Address | null {
@@ -38,13 +52,62 @@ function optionalAddress(raw: string | undefined, name: string): Address | null 
   }
 }
 
-/** Null when chain config is absent (doctor reports NOT CONFIGURED). */
+/**
+ * Null when chain config is absent (doctor reports NOT CONFIGURED).
+ *
+ * Dual-environment resolution:
+ * - `ARC_NETWORK` unset/"mainnet" → production path, unchanged:
+ *   `ARC_RPC_URL` + `ARC_CHAIN_ID` (chain 5042 in production).
+ * - `ARC_NETWORK=testnet` → Canteen testnet path: requires
+ *   `ARC_TESTNET_RPC_URL`, pins chain to 5042002, and NEVER falls back
+ *   to mainnet variables.
+ *
+ * Cross-contamination fails loudly: testnet config can never report 5042,
+ * mainnet config can never report 5042002.
+ */
 export function arcConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArcConfig | null {
+  const networkRaw = (env.ARC_NETWORK ?? "mainnet").trim().toLowerCase();
+  if (networkRaw !== "mainnet" && networkRaw !== "testnet") {
+    throw new Error('ARC_NETWORK must be "mainnet" or "testnet"');
+  }
+  if (networkRaw === "testnet") return arcTestnetConfigFromEnv(env);
+  return arcMainnetConfigFromEnv(env);
+}
+
+/** Canteen Arc Testnet (chain 5042002). Hackathon/dev only — never production. */
+function arcTestnetConfigFromEnv(env: NodeJS.ProcessEnv): ArcConfig | null {
+  const rpcUrl = env.ARC_TESTNET_RPC_URL;
+  if (!rpcUrl) {
+    throw new Error("ARC_NETWORK=testnet requires ARC_TESTNET_RPC_URL (refusing to fall back to mainnet)");
+  }
+  const chainRaw = env.ARC_TESTNET_CHAIN_ID;
+  const chainId = chainRaw ? Number.parseInt(chainRaw, 10) : ARC_TESTNET_CHAIN_ID;
+  if (chainId !== ARC_TESTNET_CHAIN_ID) {
+    throw new Error(`Canteen testnet chain must be ${ARC_TESTNET_CHAIN_ID}, got ${chainRaw}`);
+  }
+  return {
+    chainId,
+    rpcUrl,
+    usdcAddress: optionalAddress(env.ARC_TESTNET_USDC_ADDRESS, "ARC_TESTNET_USDC_ADDRESS") ?? getAddress(ARC_USDC_DEFAULT),
+    vaultAddress: optionalAddress(env.ARC_TESTNET_VAULT_ADDRESS, "ARC_TESTNET_VAULT_ADDRESS"),
+    executorAddress: optionalAddress(env.ARC_TESTNET_OPERATOR_ADDRESS, "ARC_TESTNET_OPERATOR_ADDRESS"),
+    verifierAddress: optionalAddress(env.ARC_TESTNET_VERIFIER_ADDRESS, "ARC_TESTNET_VERIFIER_ADDRESS"),
+    explorerBaseUrl: env.ARC_TESTNET_EXPLORER_BASE_URL ?? null,
+    network: "testnet",
+    environmentLabel: "Canteen Arc Testnet",
+  };
+}
+
+/** Arc Mainnet (production default). Existing ARC_RPC_URL/ARC_CHAIN_ID contract, unchanged. */
+function arcMainnetConfigFromEnv(env: NodeJS.ProcessEnv): ArcConfig | null {
   const rpcUrl = env.ARC_RPC_URL;
   const chainRaw = env.ARC_CHAIN_ID;
   if (!rpcUrl || !chainRaw) return null;
   const chainId = Number.parseInt(chainRaw, 10);
   if (!Number.isInteger(chainId) || chainId <= 0) throw new Error("ARC_CHAIN_ID must be a positive integer");
+  if (chainId === ARC_TESTNET_CHAIN_ID) {
+    throw new Error("ARC_CHAIN_ID is the Canteen testnet chain; use ARC_NETWORK=testnet with ARC_TESTNET_* instead (refusing to run testnet chain as mainnet)");
+  }
   return {
     chainId,
     rpcUrl,
@@ -53,6 +116,8 @@ export function arcConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArcConfi
     executorAddress: optionalAddress(env.THESMA_EXECUTOR_ADDRESS, "THESMA_EXECUTOR_ADDRESS"),
     verifierAddress: optionalAddress(env.THESMA_VERIFIER_ADDRESS, "THESMA_VERIFIER_ADDRESS"),
     explorerBaseUrl: env.ARC_EXPLORER_BASE_URL ?? null,
+    network: "mainnet",
+    environmentLabel: "Arc Mainnet",
   };
 }
 

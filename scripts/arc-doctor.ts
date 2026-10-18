@@ -33,6 +33,8 @@ async function main() {
 
   const report: Record<string, unknown> = {
     status: "OK",
+    network: config.network ?? "mainnet",
+    environment: config.environmentLabel ?? "Arc Mainnet",
     rpc: redactRpc(config.rpcUrl),
     configuredChainId: config.chainId,
     usdcAddress: config.usdcAddress,
