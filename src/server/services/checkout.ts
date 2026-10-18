@@ -12,6 +12,7 @@ import { customerKeyFor, outcomeProofFor, serializeCheckoutIntent, serializeOutc
 import { newId } from "../auth/session";
 import type { AuditSink, MarketStore, StoredCheckoutIntent, StoredOutcome } from "./campaignStore";
 import { isUniqueViolation } from "./campaignStore";
+import { evaluateTargetSettled } from "./markets";
 
 export interface CheckoutDeps {
   store: MarketStore;
@@ -91,6 +92,11 @@ export async function createCheckoutIntent(
 
     const campaign = await ms.getCampaign(session.campaignId);
     if (!campaign || campaign.state !== "LIVE") fail(400, "CAMPAIGN_NOT_LIVE", "Campaign is not live");
+    const openMarket = await ms.getMarket(session.campaignId);
+    if (openMarket) {
+      const settled = await evaluateTargetSettled(ms, session.campaignId, openMarket.policyVersion);
+      if (settled.complete) fail(403, "TARGET_REACHED", "Market objective is complete and settled; no new purchases");
+    }
     const terms = await ms.getTerms(session.campaignId, session.partnerId);
     if (!terms || terms.id !== session.partnerTermsId || terms.status !== "ACTIVE") {
       fail(400, "TERMS_INVALID", "Partner terms are no longer applicable");

@@ -1,6 +1,6 @@
 import { NEGOTIATION_AUTOMATION_UNAVAILABLE, rankMarketFit } from "../domain/supplyAgent";
 import { parsePartnerRules, type PartnerRules } from "../domain/market";
-import { joinCampaign, type MarketDeps } from "./markets";
+import { evaluateTargetSettled, joinCampaign, type MarketDeps } from "./markets";
 import type { StoredMarket } from "./campaignStore";
 
 function fail(status: number, code: string, message: string, details?: unknown): never {
@@ -168,6 +168,7 @@ async function livePublicMarkets(deps: MarketDeps): Promise<LiveMarketCtx[]> {
     if (!version || version.status !== "APPROVED") continue;
     if (version.marketVisibility !== "PUBLIC") continue;
     if (!version.deadline || version.deadline <= now) continue;
+    if ((await evaluateTargetSettled(deps.store, m.campaignId, m.policyVersion)).complete) continue;
     const workspace = await deps.store.getWorkspace(campaign.workspaceId);
     out.push({
       market: m,

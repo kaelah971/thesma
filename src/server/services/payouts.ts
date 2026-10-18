@@ -2,6 +2,7 @@ import type { Address, Hex } from "viem";
 import { assertChainMatches, normalizeAddress, type ArcConfig, type PayoutChainReader } from "../chain/arc";
 import { outcomeId32For, PROOF_TTL_MS, serializePayout, serializeReservation } from "../domain/payout";
 import type { OutcomeProofSigner, PayoutExecutor } from "../chain/signers";
+import { finalizeMarketIfTargetSettled } from "./markets";
 import { newId } from "../auth/session";
 import type { AuditSink, MarketStore, StoredOutcome, StoredPayout, StoredReservation } from "./campaignStore";
 
@@ -373,6 +374,9 @@ export async function reconcilePayout(deps: PayoutDeps, params: { payoutId: stri
     const reservation = await ms.getReservation(payout.reservationId);
     if (!reservation) fail(500, "INTERNAL", "Payout has no reservation");
     if (payout.state === "SETTLED") {
+      // Legacy healing: a payout settled before market-finalization existed
+      // still closes its market. Idempotent, never resends.
+      await finalizeMarketIfTargetSettled(ms, audit, { campaignId: payout.campaignId });
       return { settled: true as const, already: true as const, reservation: serializeReservation(reservation), payout: serializePayout(payout) };
     }
     if (payout.state === "FAILED") {
@@ -455,6 +459,9 @@ export async function reconcilePayout(deps: PayoutDeps, params: { payoutId: stri
       recipient: payout.recipient, amountMicroUsdc: payout.amountMicroUsdc.toString(), proofHash: payout.proofHash,
     };
     await audit({ actorType: "SYSTEM", actorId: null, workspaceId, partnerId: payout.partnerId, action: "payout.settled", targetType: "payout", targetId: payout.id, metadata: base });
+    // Strongest trigger: the moment a payout is genuinely SETTLED, the market
+    // may have completed its objective. Never runs before reconciliation.
+    await finalizeMarketIfTargetSettled(ms, audit, { campaignId: payout.campaignId });
     return { settled: true as const, already: false as const, reservation: serializeReservation(nextReservation), payout: serializePayout(nextPayout) };
   });
 }
@@ -540,6 +547,8 @@ export async function processEligiblePayouts(deps: PayoutDeps, opts?: { limit?: 
       }
       const existing = await deps.store.getPayoutByOutcome(outcome.id);
       if (existing?.state === "SETTLED") {
+        // Healing path: an already-settled outcome still finalizes its market.
+        await finalizeMarketIfTargetSettled(deps.store, deps.audit, { campaignId: outcome.campaignId });
         summary.skipped.push({ outcomeId: outcome.id, reason: "ALREADY_SETTLED" });
         continue;
       }

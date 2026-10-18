@@ -153,6 +153,96 @@ export async function openMarket(
   });
 }
 
+/* ---------------- Target-settled completion (canonical) ---------------- */
+
+export interface TargetSettledEvaluation {
+  target: number | null;
+  verified: number;
+  settledPayouts: number;
+  complete: boolean;
+}
+
+/**
+ * Canonical completion rule. A market is target-settled only when the policy
+ * target exists, enough outcomes are VERIFIED, and at least that many payouts
+ * for THIS campaign are genuinely SETTLED. VERIFIED != PAID;
+ * SUBMITTED/PREPARED/AMBIGUOUS never count. No chain reads, no broadcasts.
+ */
+export async function evaluateTargetSettled(
+  store: MarketStore,
+  campaignId: string,
+  policyVersion: number,
+): Promise<TargetSettledEvaluation> {
+  const version = await store.getVersion(campaignId, policyVersion);
+  const target = version?.targetOutcomeCount ?? null;
+  if (target === null) return { target, verified: 0, settledPayouts: 0, complete: false };
+  const verified = await store.countVerifiedOutcomes(campaignId);
+  let settledPayouts = 0;
+  if (verified >= target) {
+    const reservations = await store.listReservationsByCampaign(campaignId);
+    for (const r of reservations) {
+      if (r.campaignId !== campaignId) continue;
+      const payout = await store.getPayoutByReservation(r.id);
+      if (payout && payout.campaignId === campaignId && payout.state === "SETTLED") {
+        settledPayouts += 1;
+      }
+    }
+  }
+  return { target, verified, settledPayouts, complete: verified >= target && settledPayouts >= target };
+}
+
+export type FinalizeResult =
+  | { finalized: true; marketVersion: number; target: number; verified: number; settledPayouts: number }
+  | { finalized: false; reason: string; target: number | null; verified: number; settledPayouts: number };
+
+/**
+ * Idempotent market finalization. Closes participation (market CLOSED +
+ * version bump, ONE market.completed audit) once the objective is genuinely
+ * target-settled. Never touches campaign/vault state, never broadcasts.
+ */
+export async function finalizeMarketIfTargetSettled(
+  store: MarketStore,
+  audit: AuditSink,
+  params: { campaignId: string },
+): Promise<FinalizeResult> {
+  const market = await store.getMarket(params.campaignId);
+  if (!market) return { finalized: false, reason: "NO_MARKET", target: null, verified: 0, settledPayouts: 0 };
+  if (market.status === "CLOSED") {
+    return { finalized: false, reason: "ALREADY_CLOSED", target: null, verified: 0, settledPayouts: 0 };
+  }
+  const ev = await evaluateTargetSettled(store, params.campaignId, market.policyVersion);
+  if (!ev.complete || ev.target === null) {
+    return { finalized: false, reason: "NOT_COMPLETE", target: ev.target, verified: ev.verified, settledPayouts: ev.settledPayouts };
+  }
+  let next;
+  try {
+    next = await store.updateMarket(params.campaignId, market.version, { status: "CLOSED", version: market.version + 1 });
+  } catch (e) {
+    if ((e as { code?: string }).code === "STALE_MARKET") {
+      return { finalized: false, reason: "STALE_VERSION", target: ev.target, verified: ev.verified, settledPayouts: ev.settledPayouts };
+    }
+    throw e;
+  }
+  await audit({
+    actorType: "SYSTEM",
+    actorId: null,
+    workspaceId: null,
+    partnerId: null,
+    action: "market.completed",
+    targetType: "market",
+    targetId: params.campaignId,
+    metadata: {
+      campaignId: params.campaignId,
+      marketVersion: next.version,
+      targetOutcomeCount: ev.target,
+      verifiedOutcomes: ev.verified,
+      settledPayoutCount: ev.settledPayouts,
+      reason: "TARGET_SETTLED",
+    },
+  });
+  return { finalized: true, marketVersion: next.version, target: ev.target, verified: ev.verified, settledPayouts: ev.settledPayouts };
+}
+
 /** Public feed: LIVE + OPEN + unexpired + PUBLIC visibility only. */
 export async function listPublicMarkets(deps: MarketDeps) {
   const now = deps.now?.() ?? new Date();
@@ -166,6 +256,10 @@ export async function listPublicMarkets(deps: MarketDeps) {
     if (!version || version.status !== "APPROVED") continue;
     if (version.marketVisibility !== "PUBLIC") continue;
     if (!version.deadline || version.deadline <= now) continue;
+    // A provably target-settled market is never advertised as live,
+    // even if its row has not been finalized to CLOSED yet.
+    const settled = await evaluateTargetSettled(deps.store, m.campaignId, m.policyVersion);
+    if (settled.complete) continue;
     const workspace = await deps.store.getWorkspace(campaign.workspaceId);
     items.push({
       campaignId: campaign.id,
@@ -252,7 +346,8 @@ export async function listCompletedMarkets(deps: MarketDeps) {
     const version = await deps.store.getVersion(m.campaignId, m.policyVersion);
     if (!version || version.status !== "APPROVED") continue;
     if (version.marketVisibility !== "PUBLIC") continue;
-    if (isLivePublicMarket(m, campaign, version, now)) continue;
+    const settled = await evaluateTargetSettled(deps.store, m.campaignId, m.policyVersion);
+    if (isLivePublicMarket(m, campaign, version, now) && !settled.complete) continue;
     const workspace = await deps.store.getWorkspace(campaign.workspaceId);
     const metrics = await completedMetrics(deps, m.campaignId, version.budgetMicroUsdc);
     items.push({
@@ -262,6 +357,7 @@ export async function listCompletedMarkets(deps: MarketDeps) {
       goal: version.targetOutcomeCount,
       finalState: campaign.state,
       marketStatus: m.status,
+      completionReason: settled.complete ? "TARGET_SETTLED" : "ENDED",
       finalBountyMicroUsdc: m.publicBountyMicroUsdc.toString(),
       deadline: version.deadline?.toISOString() ?? null,
       startedAt: campaign.createdAt.toISOString(),
@@ -336,7 +432,8 @@ export async function getPublicMarketDetail(
   }
   const funding = await deps.store.getFunding(params.campaignId, market.policyVersion);
   const latestDecision = await deps.store.getLatestPricingDecision(params.campaignId);
-  const live = isLivePublicMarket(market, campaign, version, now);
+  const targetSettled = await evaluateTargetSettled(deps.store, params.campaignId, market.policyVersion);
+  const live = isLivePublicMarket(market, campaign, version, now) && !targetSettled.complete;
   const core = {
     campaignId: campaign.id,
     workspaceName: workspace?.name ?? "Workspace",
@@ -390,6 +487,7 @@ export async function getPublicMarketDetail(
   return {
     ...core,
     kind: "completed" as const,
+    completionReason: targetSettled.complete ? "TARGET_SETTLED" : "ENDED",
     settledSpendMicroUsdc: spend.toString(),
     finalOutcome: {
       reachedTarget: version.targetOutcomeCount !== null && verifiedCount >= version.targetOutcomeCount,
@@ -486,6 +584,10 @@ export async function joinCampaign(
     if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
     const market = await ms.getMarket(params.campaignId);
     if (!market) fail(404, "MARKET_NOT_OPEN", "No open market for this campaign");
+    // Target-settled markets are closed to new participation even before the
+    // row flips to CLOSED: the objective is complete and fully paid.
+    const settled = await evaluateTargetSettled(ms, params.campaignId, market.policyVersion);
+    if (settled.complete) fail(403, "TARGET_REACHED", "Market objective is complete and settled; participation is closed");
     if (params.expectedMarketVersion !== undefined && params.expectedMarketVersion !== market.version) {
       fail(409, "STALE_MARKET", "Market version changed; re-read before joining", {
         expected: params.expectedMarketVersion,
@@ -733,9 +835,11 @@ export async function resolveReferral(
   const campaign = await deps.store.getCampaign(referral.campaignId);
   if (!market || !campaign) fail(404, "NOT_FOUND", "Referral is no longer active");
   const version = await deps.store.getVersion(referral.campaignId, terms.policyVersion);
+  const targetSettled = await evaluateTargetSettled(deps.store, referral.campaignId, market.policyVersion);
   const attributable =
     market.status === "OPEN" &&
     campaign.state === "LIVE" &&
+    !targetSettled.complete &&
     !!version?.deadline &&
     (version.deadline as Date) > now;
   return {
