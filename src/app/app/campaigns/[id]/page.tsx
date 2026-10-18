@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CampaignActions } from "@/components/app/CampaignActions";
+import { CampaignFunding } from "@/components/app/CampaignFunding";
 import { HoldList, OutcomeTable, PayoutTable, Pipeline } from "@/components/app/DataViews";
 import { NoWorkspace } from "@/components/app/NoWorkspace";
 import { Card, EmptyState, Facts, Kpi, PageHeader, Pill } from "@/components/app/ui";
@@ -45,6 +46,7 @@ export default async function CampaignPage({
   if (!campaign) notFound();
 
   const now = Date.parse(snapshot.generatedAt);
+  const arcChainId = Number.parseInt(process.env.ARC_CHAIN_ID ?? "5042", 10);
   const f = campaignFinancials(campaign.id, snapshot);
   const rows = outcomeRows(snapshot, now, campaign.id);
   const counts = stageCounts(rows);
@@ -141,21 +143,46 @@ export default async function CampaignPage({
         <div className={styles.stack}>
           <Card title="Funding">
             {campaign.funding ? (
-              <Facts
-                columns={1}
-                items={[
-                  { label: "Status", value: <Pill tone={FUNDING_STATE_TONE[campaign.funding.status]}>{campaign.funding.status}</Pill> },
-                  { label: "Amount", value: `${formatUsdc(campaign.funding.observedMicro ?? campaign.funding.expectedMicro)} USDC` },
-                  { label: "Funding transaction", value: <span className="mono">{shortHash(campaign.funding.fundingTxHash, 10, 6)}</span> },
-                  { label: "Confirmed", value: formatDateTime(campaign.funding.confirmedAt) },
-                  ...(campaign.funding.failureCode ? [{ label: "Failure", value: <span className="mono">{campaign.funding.failureCode}</span> }] : []),
-                ]}
+              <>
+                <Facts
+                  columns={1}
+                  items={[
+                    { label: "Status", value: <Pill tone={FUNDING_STATE_TONE[campaign.funding.status]}>{campaign.funding.status}</Pill> },
+                    { label: "Amount", value: `${formatUsdc(campaign.funding.observedMicro ?? campaign.funding.expectedMicro)} USDC` },
+                    { label: "Funding transaction", value: <span className="mono">{shortHash(campaign.funding.fundingTxHash, 10, 6)}</span> },
+                    { label: "Confirmed", value: formatDateTime(campaign.funding.confirmedAt) },
+                    ...(campaign.funding.failureCode ? [{ label: "Failure", value: <span className="mono">{campaign.funding.failureCode}</span> }] : []),
+                  ]}
+                />
+                {campaign.version !== null && (
+                  <div style={{ marginTop: 12 }}>
+                    <CampaignFunding
+                      campaignId={campaign.id}
+                      version={campaign.version}
+                      state={campaign.state}
+                      isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"}
+                      fundingStatus={campaign.funding.status}
+                      expectedAmountMicro={campaign.funding.expectedMicro}
+                      expectedSender={snapshot.workspace.companyWallet}
+                      chainId={arcChainId}
+                    />
+                  </div>
+                )}
+              </>
+            ) : campaign.state === "APPROVED" && campaign.version !== null ? (
+              <CampaignFunding
+                campaignId={campaign.id}
+                version={campaign.version}
+                state={campaign.state}
+                isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"}
+                fundingStatus={null}
+                expectedAmountMicro={campaign.budgetMicro}
+                expectedSender={snapshot.workspace.companyWallet}
+                chainId={arcChainId}
               />
             ) : (
               <p className={styles.muted} style={{ fontSize: 14 }}>
-                {campaign.state === "APPROVED"
-                  ? "Approved and ready to fund. The owner signs the funding transaction from their own wallet; Thesma then confirms it onchain before the campaign goes live."
-                  : "Funding opens once the policy is approved by the organization owner."}
+                Funding opens once the policy is approved by the organization owner.
               </p>
             )}
           </Card>

@@ -6,6 +6,12 @@ export async function apiError(res: Response | null, fallback: string): Promise<
   return body?.error?.message ?? fallback;
 }
 
+export async function getJson<T>(url: string): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const res = await fetch(url).catch(() => null);
+  if (!res || !res.ok) return { ok: false, error: await apiError(res, "Request failed.") };
+  return { ok: true, data: (await res.json()) as T };
+}
+
 export async function postJson<T>(url: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   const res = await fetch(url, {
     method: "POST",

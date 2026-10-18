@@ -6,6 +6,7 @@ import {
   normalizeAddress,
   type ArcChainReader,
   type ArcConfig,
+  type TxReceiptSummary,
   type UnsignedAction,
 } from "../chain/arc";
 import { campaignKeyFor, policyHashFor, type Hex32 } from "../chain/keys";
@@ -247,6 +248,151 @@ export async function prepareFundingIntent(
     actions,
     campaignKey,
     policyHash,
+  };
+}
+
+export interface ResumeFundingResult {
+  campaign: { id: string; state: string };
+  funding: ReturnType<typeof serializeFunding>;
+  actions: UnsignedAction[];
+  campaignKey: Hex32;
+  policyHash: Hex32;
+  completed: Array<"create-campaign" | "approve-usdc" | "fund-campaign">;
+  /** A successful fund-campaign receipt is already recorded: do not resend, reconcile instead. */
+  confirmReady: boolean;
+}
+
+/**
+ * Resume an in-flight funding flow WITHOUT mutating anything.
+ *
+ * Read-only: never creates a funding row, never changes bindings, never clears
+ * recorded hashes. Rebuilds the canonical remaining unsigned actions from the
+ * stored funding record + current approved policy + live onchain state.
+ *
+ * Already-completed steps are omitted (never blindly resent). Any recorded
+ * transaction without a success receipt fails closed (TX_AMBIGUOUS or
+ * TX_REVERTED) so the UI surfaces it instead of guessing.
+ */
+export async function resumeFundingIntent(
+  deps: FundingDeps,
+  params: { campaignId: string; userId: string; expectedVersion: number },
+): Promise<ResumeFundingResult> {
+  const { campaign, version } = await campaignInScope(deps, params.campaignId, params.userId);
+  await ownerOrFail(deps, campaign.workspaceId, params.userId);
+  if (version.version !== params.expectedVersion) {
+    fail(409, "CONFLICT", "Stale policy version", { expected: params.expectedVersion, current: version.version });
+  }
+  const funding = await deps.store.getFunding(campaign.id, version.version);
+  if (!funding) fail(404, "NOT_FOUND", "No funding flow exists for this policy version; prepare one first");
+  if (funding.status === "CONFIRMED") fail(409, "ALREADY_FUNDED", "This policy version is already funded");
+  if (funding.status === "FAILED") fail(400, "BAD_REQUEST", "Funding failed: prepare a fresh intent first");
+  if (campaign.state !== "APPROVED" && campaign.state !== "FUNDING") {
+    fail(400, "BAD_REQUEST", "Only an APPROVED or FUNDING campaign can resume funding");
+  }
+  const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+  if (!workspace?.companyWallet) fail(400, "COMPANY_WALLET_REQUIRED", "Register the company Arc address first");
+  if (!deps.config) fail(503, "ARC_UNCONFIGURED", "Arc chain configuration is absent");
+  if (!deps.config.vaultAddress) fail(400, "VAULT_UNCONFIGURED", "THESMA_VAULT_ADDRESS is not configured");
+
+  const complete = requireCompletePolicy(version);
+  const { campaignKey, policyHash } = bindingsFor(campaign.id, version, complete, workspace.companyWallet);
+  if (
+    funding.campaignKey.toLowerCase() !== campaignKey.toLowerCase() ||
+    funding.policyHash.toLowerCase() !== policyHash.toLowerCase()
+  ) {
+    fail(409, "BINDING_MISMATCH", "Stored funding bindings differ from the approved policy; refusing to resume");
+  }
+
+  let onchainExists = false;
+  if (deps.reader && deps.config.vaultAddress) {
+    try {
+      const onchain = await deps.reader.readVaultCampaign(deps.config.vaultAddress, campaignKey);
+      onchainExists = onchain.exists && onchain.policyHash?.toLowerCase() === policyHash.toLowerCase();
+    } catch {
+      onchainExists = false;
+    }
+  }
+
+  const receiptFor = async (txHash: string, purpose: string): Promise<TxReceiptSummary> => {
+    if (!deps.reader) fail(503, "CHAIN_UNAVAILABLE", "Cannot verify recorded transactions without a chain reader");
+    let receipt: TxReceiptSummary | null;
+    try {
+      receipt = await deps.reader.getReceipt(txHash as `0x${string}`);
+    } catch {
+      fail(503, "CHAIN_UNAVAILABLE", "Chain read failed while verifying a recorded transaction", { purpose, txHash });
+    }
+    if (!receipt) {
+      fail(409, "TX_AMBIGUOUS", "Recorded transaction has no receipt yet; refusing to continue blindly", {
+        purpose,
+        txHash,
+      });
+    }
+    return receipt;
+  };
+
+  let createDone = onchainExists;
+  if (funding.createTxHash) {
+    const rc = await receiptFor(funding.createTxHash, "create-campaign");
+    if (rc.status !== "success") {
+      fail(409, "TX_REVERTED", "Recorded create-campaign transaction reverted onchain", {
+        txHash: funding.createTxHash,
+      });
+    }
+    if (!onchainExists) {
+      fail(409, "TX_AMBIGUOUS", "Create succeeded but the campaign is not registered onchain under these bindings", {
+        txHash: funding.createTxHash,
+      });
+    }
+    createDone = true;
+  }
+  let approveDone = false;
+  if (funding.approveTxHash) {
+    const rc = await receiptFor(funding.approveTxHash, "approve-usdc");
+    if (rc.status !== "success") {
+      fail(409, "TX_REVERTED", "Recorded approve transaction reverted onchain", {
+        txHash: funding.approveTxHash,
+      });
+    }
+    approveDone = true;
+  }
+  let fundDone = false;
+  if (funding.fundingTxHash) {
+    const rc = await receiptFor(funding.fundingTxHash, "fund-campaign");
+    if (rc.status !== "success") {
+      fail(409, "TX_REVERTED", "Recorded fund transaction reverted onchain", {
+        txHash: funding.fundingTxHash,
+      });
+    }
+    fundDone = true;
+  }
+
+  const actions = buildFundingIntent({
+    config: deps.config,
+    ownerAddress: normalizeAddress(workspace.companyWallet!),
+    campaignKey,
+    policyHash,
+    budgetMicroUsdc: complete.budgetMicroUsdc,
+    bountyCeilingMicroUsdc: complete.bountyCeilingMicroUsdc,
+    deadlineUnix: BigInt(Math.floor(complete.deadline.getTime() / 1000)),
+    executorAddress: deps.config.executorAddress,
+    verifierAddress: deps.config.verifierAddress,
+    campaignExistsOnchain: createDone,
+  }).filter((a) =>
+    a.purpose === "create-campaign" ? !createDone : a.purpose === "approve-usdc" ? !approveDone : !fundDone,
+  );
+
+  const completed: ResumeFundingResult["completed"] = [];
+  if (createDone) completed.push("create-campaign");
+  if (approveDone) completed.push("approve-usdc");
+  if (fundDone) completed.push("fund-campaign");
+  return {
+    campaign: { id: campaign.id, state: campaign.state },
+    funding: serializeFunding(funding),
+    actions,
+    campaignKey,
+    policyHash,
+    completed,
+    confirmReady: fundDone,
   };
 }
 
