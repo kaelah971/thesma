@@ -267,7 +267,13 @@ export async function listPublicMarkets(deps: MarketDeps) {
     // even if its row has not been finalized to CLOSED yet.
     const settled = await evaluateTargetSettled(deps.store, m.campaignId, m.policyVersion);
     if (settled.complete) continue;
-    const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+    // Lifecycle strip inputs for live cards: funding + verified + settled counts.
+    const [funding, verifiedOutcomes, settledPayouts, workspace] = await Promise.all([
+      deps.store.getFunding(m.campaignId, m.policyVersion),
+      deps.store.countVerifiedOutcomes(m.campaignId),
+      countSettledPayouts(deps.store, m.campaignId),
+      deps.store.getWorkspace(campaign.workspaceId),
+    ]);
     items.push({
       campaignId: campaign.id,
       workspaceId: campaign.workspaceId,
@@ -279,6 +285,10 @@ export async function listPublicMarkets(deps: MarketDeps) {
       deadline: version.deadline.toISOString(),
       targetOutcomeCount: version.targetOutcomeCount,
       minQualifyingPurchaseMicroUsdc: version.minQualifyingPurchaseMicroUsdc?.toString() ?? null,
+      marketStatus: m.status,
+      fundingStatus: funding?.status ?? null,
+      verifiedOutcomes,
+      settledPayouts,
     });
   }
   return { markets: items };
@@ -302,6 +312,7 @@ function isLivePublicMarket(
 
 export interface CompletedMarketMetrics {
   verifiedOutcomes: number;
+  settledPayouts: number;
   settledSpendMicroUsdc: string;
   verifiedRevenueMicroUsdc: string | null;
   realizedCacMicroUsdc: string | null;
@@ -315,22 +326,30 @@ async function completedMetrics(
   budgetMicroUsdc: bigint | null,
 ): Promise<CompletedMarketMetrics> {
   const reservations = await deps.store.listReservationsByCampaign(campaignId);
+  const [payoutRows, verifiedCount] = await Promise.all([
+    Promise.all(reservations.map((r) => deps.store.getPayoutByReservation(r.id))),
+    deps.store.countVerifiedOutcomes(campaignId),
+  ]);
   let spend = 0n;
   let revenue = 0n;
   let verified = 0;
+  let settledPayouts = 0;
   const partners = new Set<string>();
-  for (const r of reservations) {
+  for (let i = 0; i < reservations.length; i++) {
+    const r = reservations[i];
+    const payout = payoutRows[i];
     partners.add(r.partnerId);
     if (r.state === "SETTLED") spend += r.amountMicroUsdc;
+    if (payout && payout.campaignId === campaignId && payout.state === "SETTLED") settledPayouts += 1;
     const outcome = await deps.store.getOutcome(r.outcomeId);
     if (outcome && outcome.status === "VERIFIED") {
       verified += 1;
       revenue += outcome.purchaseAmountMicroUsdc;
     }
   }
-  const verifiedCount = await deps.store.countVerifiedOutcomes(campaignId);
   return {
     verifiedOutcomes: Math.max(verified, verifiedCount),
+    settledPayouts,
     settledSpendMicroUsdc: spend.toString(),
     verifiedRevenueMicroUsdc: verified > 0 ? revenue.toString() : null,
     realizedCacMicroUsdc: verified > 0 && spend > 0n ? (spend / BigInt(verified)).toString() : null,
@@ -355,11 +374,15 @@ export async function listCompletedMarkets(deps: MarketDeps) {
     if (version.marketVisibility !== "PUBLIC") continue;
     const settled = await evaluateTargetSettled(deps.store, m.campaignId, m.policyVersion);
     if (isLivePublicMarket(m, campaign, version, now) && !settled.complete) continue;
-    const workspace = await deps.store.getWorkspace(campaign.workspaceId);
-    const metrics = await completedMetrics(deps, m.campaignId, version.budgetMicroUsdc);
+    const [workspace, metrics, funding] = await Promise.all([
+      deps.store.getWorkspace(campaign.workspaceId),
+      completedMetrics(deps, m.campaignId, version.budgetMicroUsdc),
+      deps.store.getFunding(m.campaignId, m.policyVersion),
+    ]);
     items.push({
       campaignId: campaign.id,
       workspaceName: workspace?.name ?? "Workspace",
+      fundingStatus: funding?.status ?? null,
       category: workspace?.category ?? null,
       goal: version.targetOutcomeCount,
       finalState: campaign.state,
