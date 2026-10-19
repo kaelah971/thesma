@@ -16,6 +16,7 @@ import {
   partners,
   partnerTerms,
   payouts,
+  campaignCreatorInvitations,
   privateInvites,
   referralEvents,
   referrals,
@@ -29,15 +30,18 @@ import type {
   AuditSink,
   CampaignStore,
   FundingStore,
+  InvitationStatus,
   MarketStore,
   NewCampaign,
   NewFunding,
   StoredFunding,
+  StoredInvitation,
   StoredPolicyVersion,
   StoreMembership,
   StorePartner,
   StoreWorkspace,
 } from "./campaignStore";
+import type { DbCreatorInvitation } from "../db/schema";
 import { isUniqueViolation, uniqueViolation } from "./campaignStore";
 import type { CampaignState } from "../domain/enums";
 
@@ -56,6 +60,31 @@ type DbLike = Db | DbTx;
 
 function toFunding(row: DbFunding): StoredFunding {
   return row;
+}
+
+/** Drizzle infers the status enum + jsonb loosely; the domain contract is strict. */
+function toStoredInvitation(row: DbCreatorInvitation): StoredInvitation {
+  return {
+    id: row.id,
+    campaignId: row.campaignId,
+    organizationUserId: row.organizationUserId,
+    creatorUserId: row.creatorUserId,
+    status: row.status as InvitationStatus,
+    offeredOutcomeKind: row.offeredOutcomeKind,
+    offeredBountyMicroUsdc: row.offeredBountyMicroUsdc,
+    offeredMinQualifyingMicroUsdc: row.offeredMinQualifyingMicroUsdc,
+    offeredHoldSeconds: row.offeredHoldSeconds,
+    offeredPolicyVersion: row.offeredPolicyVersion,
+    offeredMarketVersion: row.offeredMarketVersion,
+    offeredBonusJson: (row.offeredBonusJson ?? {}) as Record<string, unknown>,
+    matchScore: row.matchScore,
+    matchConfidence: row.matchConfidence,
+    matchAction: row.matchAction,
+    matchReasons: (row.matchReasons ?? []) as string[],
+    respondedAt: row.respondedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 async function insertAuditEvent(db: DbLike, input: Parameters<AuditSink>[0]) {
@@ -405,6 +434,75 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         .returning();
       if (!row) throw new Error("Invite not found");
       return row;
+    },
+    async insertInvitation(i) {
+      const [row] = await db.insert(campaignCreatorInvitations).values({
+        id: i.id,
+        campaignId: i.campaignId,
+        organizationUserId: i.organizationUserId,
+        creatorUserId: i.creatorUserId,
+        offeredOutcomeKind: i.offeredOutcomeKind,
+        offeredBountyMicroUsdc: i.offeredBountyMicroUsdc,
+        offeredMinQualifyingMicroUsdc: i.offeredMinQualifyingMicroUsdc,
+        offeredHoldSeconds: i.offeredHoldSeconds,
+        offeredPolicyVersion: i.offeredPolicyVersion,
+        offeredMarketVersion: i.offeredMarketVersion,
+        offeredBonusJson: i.offeredBonusJson ?? {},
+        matchScore: i.matchScore,
+        matchConfidence: i.matchConfidence,
+        matchAction: i.matchAction,
+        matchReasons: i.matchReasons,
+      }).returning();
+      return toStoredInvitation(row);
+    },
+    async getInvitation(id) {
+      const [row] = await db.select().from(campaignCreatorInvitations).where(eq(campaignCreatorInvitations.id, id)).limit(1);
+      return row ? toStoredInvitation(row) : null;
+    },
+    async findActiveInvitation(campaignId, creatorUserId) {
+      const [row] = await db
+        .select()
+        .from(campaignCreatorInvitations)
+        .where(
+          and(
+            eq(campaignCreatorInvitations.campaignId, campaignId),
+            eq(campaignCreatorInvitations.creatorUserId, creatorUserId),
+            eq(campaignCreatorInvitations.status, "INVITED"),
+          ),
+        )
+        .limit(1);
+      return row ? toStoredInvitation(row) : null;
+    },
+    async listInvitationsByCampaign(campaignId) {
+      const rows = await db
+        .select()
+        .from(campaignCreatorInvitations)
+        .where(eq(campaignCreatorInvitations.campaignId, campaignId))
+        .orderBy(desc(campaignCreatorInvitations.createdAt));
+      return rows.map(toStoredInvitation);
+    },
+    async listInvitationsByCreator(creatorUserId) {
+      const rows = await db
+        .select()
+        .from(campaignCreatorInvitations)
+        .where(eq(campaignCreatorInvitations.creatorUserId, creatorUserId))
+        .orderBy(desc(campaignCreatorInvitations.createdAt));
+      return rows.map(toStoredInvitation);
+    },
+    async updateInvitationStatus(id, status) {
+      const now = new Date();
+      const current = await db.select().from(campaignCreatorInvitations).where(eq(campaignCreatorInvitations.id, id)).limit(1);
+      const [row] = await db
+        .update(campaignCreatorInvitations)
+        .set({
+          status: status as "CANCELLED" | "ACCEPTED" | "DECLINED",
+          respondedAt: current[0]?.respondedAt ?? now,
+          updatedAt: now,
+        })
+        .where(eq(campaignCreatorInvitations.id, id))
+        .returning();
+      if (!row) throw new Error("Invitation not found");
+      return toStoredInvitation(row);
     },
     async updateMarket(campaignId, expectedVersion, patch) {
       const [row] = await db

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CampaignActions } from "@/components/app/CampaignActions";
 import { CampaignFunding } from "@/components/app/CampaignFunding";
+import { CreatorMatchesPanel } from "@/components/app/CreatorMatches";
 import { HoldList, OutcomeTable, PayoutTable, Pipeline } from "@/components/app/DataViews";
 import { NoWorkspace } from "@/components/app/NoWorkspace";
 import { Card, EmptyState, Facts, Kpi, PageHeader, Pill } from "@/components/app/ui";
@@ -325,6 +326,12 @@ export default async function CampaignPage({
           ) : (
             <EmptyState title="No payouts yet" body="Payouts are created only for verified outcomes whose safety hold has passed." />
           )}
+        </Card>
+        <Card title="Creator matches">
+          <p className={styles.muted} style={{ fontSize: 13, marginTop: 0 }}>
+            Ranked registered creators for this campaign with the reason behind each match. Inviting is not participation — no referral, payout, or notification is created.
+          </p>
+          <CreatorMatchesPanel campaignId={campaign.id} />
         </Card>
         <Card title="Participants">
           {participantRows.length ? (

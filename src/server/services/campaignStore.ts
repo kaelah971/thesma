@@ -97,6 +97,48 @@ export interface StoredInvite {
   createdAt: Date;
 }
 
+export type InvitationStatus = "INVITED" | "ACCEPTED" | "DECLINED" | "CANCELLED";
+
+export interface StoredInvitation {
+  id: string;
+  campaignId: string;
+  organizationUserId: string;
+  creatorUserId: string;
+  status: InvitationStatus;
+  offeredOutcomeKind: string;
+  offeredBountyMicroUsdc: bigint;
+  offeredMinQualifyingMicroUsdc: bigint | null;
+  offeredHoldSeconds: number | null;
+  offeredPolicyVersion: number;
+  offeredMarketVersion: number;
+  offeredBonusJson: Record<string, unknown>;
+  matchScore: number;
+  matchConfidence: string;
+  matchAction: string;
+  matchReasons: string[];
+  respondedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewInvitation {
+  id: string;
+  campaignId: string;
+  organizationUserId: string;
+  creatorUserId: string;
+  offeredOutcomeKind: string;
+  offeredBountyMicroUsdc: bigint;
+  offeredMinQualifyingMicroUsdc: bigint | null;
+  offeredHoldSeconds: number | null;
+  offeredPolicyVersion: number;
+  offeredMarketVersion: number;
+  offeredBonusJson?: Record<string, unknown>;
+  matchScore: number;
+  matchConfidence: string;
+  matchAction: string;
+  matchReasons: string[];
+}
+
 export interface StoredNegotiation {
   id: string;
   campaignId: string;
@@ -404,6 +446,12 @@ export interface MarketStore extends FundingStore {
   insertInvite(i: { id: string; campaignId: string; tokenHash: string; expiresAt: Date; maxUses: number | null; createdByUserId: string }): Promise<StoredInvite>;
   getInviteByHash(tokenHash: string): Promise<StoredInvite | null>;
   useInvite(tokenHash: string): Promise<StoredInvite>;
+  insertInvitation(i: NewInvitation): Promise<StoredInvitation>;
+  getInvitation(id: string): Promise<StoredInvitation | null>;
+  findActiveInvitation(campaignId: string, creatorUserId: string): Promise<StoredInvitation | null>;
+  listInvitationsByCampaign(campaignId: string): Promise<StoredInvitation[]>;
+  listInvitationsByCreator(creatorUserId: string): Promise<StoredInvitation[]>;
+  updateInvitationStatus(id: string, status: "CANCELLED" | "ACCEPTED" | "DECLINED"): Promise<StoredInvitation>;
   /** Optimistic market mutation; throws STALE (409) on version mismatch. */
   updateMarket(
     campaignId: string,
@@ -540,6 +588,7 @@ export function createMemoryCampaignStore(seed?: {
   const referralsByCode = new Map<string, string>();
   const referralEvents: Array<NewReferralEvent & { occurredAt: Date }> = [];
   const invites = new Map<string, StoredInvite>();
+  const invitations = new Map<string, StoredInvitation>();
   const decisions: StoredPricingDecision[] = [];
   const decisionKeys = new Set<string>();
   const negotiations = new Map<string, StoredNegotiation>();
@@ -880,6 +929,56 @@ export function createMemoryCampaignStore(seed?: {
       if (!row) throw new Error("Invite not found");
       const next = { ...row, uses: row.uses + 1 };
       invites.set(tokenHash, next);
+      return next;
+    },
+    async insertInvitation(i) {
+      for (const row of invitations.values()) {
+        if (row.campaignId === i.campaignId && row.creatorUserId === i.creatorUserId && row.status === "INVITED") {
+          throw uniqueViolation("Active invitation already exists");
+        }
+      }
+      const row: StoredInvitation = {
+        ...i,
+        status: "INVITED",
+        offeredBonusJson: i.offeredBonusJson ?? {},
+        respondedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      invitations.set(i.id, row);
+      return row;
+    },
+    async getInvitation(id) {
+      return invitations.get(id) ?? null;
+    },
+    async findActiveInvitation(campaignId, creatorUserId) {
+      for (const row of invitations.values()) {
+        if (row.campaignId === campaignId && row.creatorUserId === creatorUserId && row.status === "INVITED") {
+          return row;
+        }
+      }
+      return null;
+    },
+    async listInvitationsByCampaign(campaignId) {
+      return [...invitations.values()]
+        .filter((r) => r.campaignId === campaignId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    },
+    async listInvitationsByCreator(creatorUserId) {
+      return [...invitations.values()]
+        .filter((r) => r.creatorUserId === creatorUserId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    },
+    async updateInvitationStatus(id, status) {
+      const row = invitations.get(id);
+      if (!row) throw new Error("Invitation not found");
+      const next = {
+        ...row,
+        status,
+        respondedAt: row.respondedAt ?? now,
+        updatedAt: now,
+      };
+      invitations.set(id, next);
       return next;
     },
     async updateMarket(campaignId, expectedVersion, patch) {

@@ -185,6 +185,8 @@ export interface OrganizationCreatorMatch {
 export interface MatchEngineReport {
   campaignId: string;
   workspaceName: string;
+  /** Live public bounty (string micro-USDC) so the org can quote the offer. */
+  publicBountyMicroUsdc: string;
   evaluated: number;
   invite: OrganizationCreatorMatch[];
   review: OrganizationCreatorMatch[];
@@ -220,6 +222,106 @@ export interface MatchEngineDeps {
   store: MarketStore;
   audit: AuditSink;
   now?: () => Date;
+}
+
+export interface CampaignMatchContext {
+  campaign: { id: string; workspaceId: string; state: string };
+  workspace: { id: string; name: string; category: string | null } | null;
+  market: { campaignId: string; publicBountyMicroUsdc: bigint; status: string; version: number; policyVersion: number };
+  version: {
+    deadline: Date | null;
+    minQualifyingPurchaseMicroUsdc: bigint | null;
+    refundHoldSeconds: number | null;
+  };
+  kinds: string[];
+}
+
+/** Shared campaign context loader: market truth + observable outcome kinds. */
+export async function loadCampaignMatchContext(
+  store: MarketStore,
+  campaignId: string,
+): Promise<CampaignMatchContext> {
+  const campaign = await store.getCampaign(campaignId);
+  if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
+  const workspace = await store.getWorkspace(campaign.workspaceId);
+  const market = await store.getMarket(campaignId);
+  if (!market) fail(404, "MARKET_NOT_OPEN", "No open market for this campaign");
+  const version = await store.getVersion(campaignId, market.policyVersion);
+  if (!version) fail(500, "INTERNAL", "Market policy version is missing");
+  const kinds = ["referral"];
+  if (version.minQualifyingPurchaseMicroUsdc !== null && version.minQualifyingPurchaseMicroUsdc !== undefined) {
+    kinds.push("purchase");
+  }
+  return { campaign, workspace, market, version, kinds };
+}
+
+/**
+ * Single-creator evaluation through the SAME kernel + eligibility gates as
+ * the ranked run. Invitations reuse this — never a parallel ranking.
+ */
+export async function evaluateCreatorForCampaign(
+  store: MarketStore,
+  ctx: CampaignMatchContext,
+  candidate: CapabilitySeed,
+  history: HistorySeed | null,
+  now: Date,
+): Promise<CreatorMatch> {
+  const profile = await store.getPartnerByUserId(candidate.userId).catch(() => null);
+  const parsed = parsePartnerRules(profile?.rulesJson ?? {});
+  let eligibility: MatchEligibility = "UNKNOWN";
+  let eligibilityReason = "Creator profile incomplete — cannot prove eligibility yet.";
+  let activeTermsCount = history?.activeTermsCount ?? 0;
+  let rules: PartnerRules | null = null;
+  if (!candidate.onboardingCompleted) {
+    eligibilityReason = "Creator has not finished onboarding.";
+  } else if (!profile) {
+    eligibilityReason = "No creator participation profile yet.";
+  } else if (!parsed.ok) {
+    eligibilityReason = "Stored creator rules are invalid.";
+  } else {
+    rules = (parsed as { ok: true; rules: PartnerRules }).rules;
+    const terms = await store.listPartnerTerms(profile.id).catch(() => []);
+    if (history?.activeTermsCount === undefined) {
+      activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+    }
+    const check = checkJoinEligibility({
+      marketStatus: ctx.market.status as "OPEN",
+      campaignLive: ctx.campaign.state === "LIVE",
+      deadline: ctx.version.deadline,
+      publicBountyMicroUsdc: ctx.market.publicBountyMicroUsdc,
+      rules,
+      campaignCategory: ctx.workspace?.category ?? null,
+      activeTermsCount,
+      requestedAllocation: 1,
+      payoutWallet: profile.payoutWallet,
+      now,
+    });
+    if (check.ok) {
+      eligibility = "ELIGIBLE";
+      eligibilityReason = "Eligible under current campaign and creator rules.";
+    } else {
+      eligibility = "NOT_ELIGIBLE";
+      eligibilityReason = check.message;
+    }
+  }
+  return scoreCreatorMatch({
+    creatorUserId: candidate.userId,
+    handle: candidate.handle,
+    creatorType: candidate.creatorType,
+    interests: candidate.interests,
+    preferences: candidate.preferences,
+    profileCategory: candidate.profileCategory,
+    campaignCategory: ctx.workspace?.category ?? null,
+    campaignKinds: ctx.kinds,
+    bountyMicroUsdc: ctx.market.publicBountyMicroUsdc,
+    minBountyMicroUsdc: rules ? rules.minimumBountyMicroUsdc : null,
+    verifiedTotal: history?.verifiedTotal ?? 0,
+    settledCollaborations: history?.settledCollaborations ?? 0,
+    activeTermsCount,
+    maxActiveCampaigns: rules ? rules.maxActiveCampaigns : null,
+    eligibility,
+    eligibilityReason,
+  });
 }
 
 export interface CapabilitySeed {
@@ -263,6 +365,25 @@ async function defaultCapabilities(): Promise<CapabilitySeed[]> {
   }
 }
 
+export async function loadCandidateSeed(userId: string): Promise<CapabilitySeed | null> {
+  try {
+    const db = getDb();
+    const [row] = await db.select().from(userPersonas).where(eq(userPersonas.userId, userId)).limit(1);
+    if (!row) return null;
+    return {
+      userId: row.userId,
+      handle: row.handle,
+      creatorType: (row.creatorType as CreatorType | null) ?? null,
+      interests: [...(row.interests ?? [])],
+      preferences: [...(row.preferences ?? [])],
+      profileCategory: row.category,
+      onboardingCompleted: Boolean(row.onboardingCompletedAt),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function defaultHistory(store: MarketStore, partnerId: string | null): Promise<HistorySeed> {
   const zero = { verifiedTotal: 0, settledCollaborations: 0, activeTermsCount: 0 };
   if (!partnerId) return zero;
@@ -301,88 +422,19 @@ export async function findCreatorMatches(
   },
 ): Promise<MatchEngineReport> {
   const now = deps.now?.() ?? new Date();
-  const campaign = await deps.store.getCampaign(params.campaignId);
-  if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
-  const workspace = await deps.store.getWorkspace(campaign.workspaceId);
+  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId);
+  const { campaign, workspace } = ctx;
   const membership = workspace ? await deps.store.getMembership(workspace.id, params.callerUserId) : null;
   if (!membership || (membership.role !== "ORGANIZATION_OWNER" && membership.role !== "ORGANIZATION_MEMBER")) {
     fail(403, "FORBIDDEN", "Organization membership required");
-  }
-  const market = await deps.store.getMarket(params.campaignId);
-  if (!market) fail(404, "MARKET_NOT_OPEN", "No open market for this campaign");
-  const version = await deps.store.getVersion(params.campaignId, market.policyVersion);
-  if (!version) fail(500, "INTERNAL", "Market policy version is missing");
-
-  const kinds = ["referral"];
-  if (version.minQualifyingPurchaseMicroUsdc !== null && version.minQualifyingPurchaseMicroUsdc !== undefined) {
-    kinds.push("purchase");
   }
   const candidates = opts?.candidates ?? (await defaultCapabilities());
   const matches: CreatorMatch[] = [];
   for (const c of candidates) {
     if (!c.onboardingCompleted) continue;
     const profile = await deps.store.getPartnerByUserId(c.userId).catch(() => null);
-    const parsed = parsePartnerRules(profile?.rulesJson ?? {});
-    let eligibility: MatchEligibility = "UNKNOWN";
-    let eligibilityReason = "Creator profile incomplete — cannot prove eligibility yet.";
-    let activeTermsCount = opts?.histories?.[c.userId]?.activeTermsCount ?? 0;
-    let rules: PartnerRules | null = null;
-    if (profile && parsed.ok) {
-      rules = (parsed as { ok: true; rules: PartnerRules }).rules;
-      const terms = await deps.store.listPartnerTerms(profile.id).catch(() => []);
-      if (opts?.histories?.[c.userId]?.activeTermsCount === undefined) {
-        activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
-      }
-      const check = checkJoinEligibility({
-        marketStatus: market.status as "OPEN",
-        campaignLive: campaign.state === "LIVE",
-        deadline: version.deadline,
-        publicBountyMicroUsdc: market.publicBountyMicroUsdc,
-        rules,
-        campaignCategory: workspace?.category ?? null,
-        activeTermsCount,
-        requestedAllocation: 1,
-        payoutWallet: profile.payoutWallet,
-        now,
-      });
-      if (check.ok) {
-        eligibility = "ELIGIBLE";
-        eligibilityReason = "Eligible under current campaign and creator rules.";
-      } else {
-        eligibility = "NOT_ELIGIBLE";
-        eligibilityReason = check.message;
-      }
-    } else if (!profile) {
-      eligibilityReason = "No creator participation profile yet.";
-    } else {
-      eligibilityReason = "Stored creator rules are invalid.";
-    }
-    const history = opts?.histories?.[c.userId] ??
-      (await defaultHistory(deps.store, profile?.id ?? null).catch(() => ({
-        verifiedTotal: 0,
-        settledCollaborations: 0,
-        activeTermsCount,
-      } as HistorySeed)));
-    matches.push(
-      scoreCreatorMatch({
-        creatorUserId: c.userId,
-        handle: c.handle,
-        creatorType: c.creatorType,
-        interests: c.interests,
-        preferences: c.preferences,
-        profileCategory: c.profileCategory,
-        campaignCategory: workspace?.category ?? null,
-        campaignKinds: kinds,
-        bountyMicroUsdc: market.publicBountyMicroUsdc,
-        minBountyMicroUsdc: rules ? rules.minimumBountyMicroUsdc : null,
-        verifiedTotal: history.verifiedTotal,
-        settledCollaborations: history.settledCollaborations,
-        activeTermsCount,
-        maxActiveCampaigns: rules ? rules.maxActiveCampaigns : null,
-        eligibility,
-        eligibilityReason,
-      }),
-    );
+    const history = opts?.histories?.[c.userId] ?? (await defaultHistory(deps.store, profile?.id ?? null));
+    matches.push(await evaluateCreatorForCampaign(deps.store, ctx, c, history, now));
   }
   // Deterministic order: score desc, handle asc (nulls last), userId asc.
   matches.sort((a, b) => {
@@ -395,6 +447,7 @@ export async function findCreatorMatches(
   const report: MatchEngineReport = {
     campaignId: campaign.id,
     workspaceName: workspace?.name ?? "Workspace",
+    publicBountyMicroUsdc: ctx.market.publicBountyMicroUsdc.toString(),
     evaluated: matches.length,
     invite: matches.filter((m) => m.recommendedAction === "INVITE").map(toOrganizationDto),
     review: matches.filter((m) => m.recommendedAction === "REVIEW").map(toOrganizationDto),

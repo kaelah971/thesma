@@ -132,6 +132,13 @@ export const commitmentStateEnum = pgEnum("commitment_state", [
   "EXPIRED",
 ]);
 
+export const invitationStatusEnum = pgEnum("invitation_status", [
+  "INVITED",
+  "ACCEPTED",
+  "DECLINED",
+  "CANCELLED",
+]);
+
 export const users = pgTable(
   "users",
   {
@@ -465,6 +472,52 @@ export const partnerTerms = pgTable(
     uniqueIndex("partner_terms_campaign_partner_unique").on(t.campaignId, t.partnerId),
     index("partner_terms_campaign_idx").on(t.campaignId),
     index("partner_terms_partner_idx").on(t.partnerId),
+  ],
+);
+
+/**
+ * Organization → creator invitations (Slice 2). An invitation is NOT
+ * participation: INVITED != ACCEPTED, and nothing here creates terms,
+ * referrals, payouts or reservations. Offered economics are frozen at
+ * invite time so later repricing can never silently mutate the offer;
+ * the match snapshot preserves the immutable "why invited" context.
+ * One active invitation per (campaign, creator) via partial unique index.
+ */
+export const campaignCreatorInvitations = pgTable(
+  "campaign_creator_invitations",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    organizationUserId: text("organization_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    creatorUserId: text("creator_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: invitationStatusEnum("status").notNull().default("INVITED"),
+    offeredOutcomeKind: text("offered_outcome_kind").notNull(),
+    offeredBountyMicroUsdc: bigint("offered_bounty_micro_usdc", { mode: "bigint" }).notNull(),
+    offeredMinQualifyingMicroUsdc: bigint("offered_min_qualifying_micro_usdc", { mode: "bigint" }),
+    offeredHoldSeconds: integer("offered_hold_seconds"),
+    offeredPolicyVersion: integer("offered_policy_version").notNull(),
+    offeredMarketVersion: integer("offered_market_version").notNull(),
+    offeredBonusJson: jsonb("offered_bonus_json").notNull().default({}),
+    matchScore: integer("match_score").notNull(),
+    matchConfidence: text("match_confidence").notNull(),
+    matchAction: text("match_action").notNull(),
+    matchReasons: jsonb("match_reasons").notNull().default([]),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("creator_invitations_active_unique")
+      .on(t.campaignId, t.creatorUserId)
+      .where(sql`status = 'INVITED'`),
+    index("creator_invitations_campaign_idx").on(t.campaignId),
+    index("creator_invitations_creator_idx").on(t.creatorUserId),
   ],
 );
 
@@ -892,3 +945,4 @@ export type DbPartner = typeof partners.$inferSelect;
 export type DbSession = typeof sessions.$inferSelect;
 export type DbAuditEvent = typeof auditEvents.$inferSelect;
 export type DbCreatorNotification = typeof creatorNotifications.$inferSelect;
+export type DbCreatorInvitation = typeof campaignCreatorInvitations.$inferSelect;
