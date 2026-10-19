@@ -11,6 +11,7 @@ import { createDrizzleCampaignStore } from "@/server/services/campaignStore.driz
 import { getPartnerByUserId } from "@/server/services/partners";
 import { getPersonaByUserId } from "@/server/services/personas";
 import { summarizeFunnel } from "@/server/services/markets";
+import { diagnoseFunnel } from "@/server/services/scout";
 import { formatUsdc } from "@/lib/format";
 import styles from "@/components/start/start.module.css";
 
@@ -113,6 +114,15 @@ export default async function CreatorCampaignPage({ params }: { params: Promise<
           <p>
             {funnel.clicks} visits · {funnel.conversions} recorded actions · {funnel.verified} verified ·{" "}
             {funnel.settledOutcomes} settled payouts.
+          </p>
+          <p style={{ fontSize: 13 }}>
+            {diagnoseFunnel({
+              clicks: funnel.clicks,
+              actions: funnel.conversions,
+              verified: funnel.verified,
+              inHold: funnel.inHold,
+              settled: funnel.settledOutcomes,
+            }).sentence}
           </p>
           {funnel.conversions === 0 && (
             <div className={styles.panelEmpty}>No customer actions attributed yet. Share your link to start.</div>
