@@ -84,7 +84,13 @@ Decision/ledger mechanics for PAY_NOW / ESCALATE / approve / replay are
 covered by `tests/operator.test.ts` (mocked chain) — see below for what is
 still needed to run them live.
 
-## What is NOT yet proven live (exact unblock list)
+## What was NOT yet proven live (exact unblock list) — RESOLVED below
+
+Owner top-up arrived (~20 native + ~20 ERC-20). Fresh executor / verifier
+/ customer keys were generated correctly (`generatePrivateKey` hex
+persisted first — the `account.privateKey` footgun is now documented
+repo lore). A second campaign was created in the SAME vault (no
+redeploy). Items 1–4 below are now done live.
 
 1. **Owner native gas is empty** (~0.0007 USDC; contract calls need ~10×
    that). Top up `0xa45e…91Bce` via https://faucet.circle.com (manual)
@@ -103,6 +109,75 @@ still needed to run them live.
    over-cap obligation → `ESCALATE` + onchain revert → owner
    `approveObligation` → `payoutApproved` → replay rejection →
    reconciliation + ledger.
+
+## Round 2 — full live proof (same vault, new campaign)
+
+- Campaign key:
+  `0xcc1c3a709a9f41275883e18f69f5e46298cba5ce67c2fdcae386e380257bdaaa`
+- Policy hash: `0xb4b420365d5275578b5a9f9e9d168443cbf6d93cec68c3dee64c900d2e93d439`
+- `createCampaign` (budget 2.0, ceiling 2.0, fresh executor/verifier)
+- `fundCampaign` 2.0 USDC:
+  `0x4c1932cbc1095dd56306425ceddac144b64d8e7e402e4c3ce6dc6e004dc211b8`
+- `setOperatorPolicy` (reserve 0.2, maxPay 0.5, periodCap 2.0, 24h)
+- Scratch fixtures in local Postgres (production untouched); creator 1
+  joined via the REAL `joinCampaign` (terms 0.3); creator 2 terms 1.4 as
+  documented fixture (inside the 2.0 ceiling).
+- Real S4 both cases: attribution → intent → REAL signed transfers →
+  REAL `verifyCheckoutIntent` chain evidence:
+  - A: purchase `0x0146b30520c43afcfd4ff5301fd0f0d5bd7e7455b9e8cc7504b64073ceeef816`
+    → outcome `5b8101d8-1103-4de3-9b1f-b5becc1b3568` VERIFIED (0.08
+    purchase, 0.3 obligation)
+  - B: purchase `0x476ab60de1a5bfe53a84321bed11a32c72b3a827f2abb5133238870419a8ecd8`
+    → outcome `5fe2225a-37cd-41d7-b12c-27937fcace0c` VERIFIED (0.11
+    purchase, 1.4 obligation)
+
+### Autonomous case (live)
+
+- Snapshot: funded 2000000, available 1800000, planner nominates A.
+- Decision PAY_NOW, rule WITHIN_AUTHORITY, autonomous=true, liquidity
+  1800000 → 1500000.
+- `payoutAutonomous` tx:
+  `0x447b03f68aecaff24d5d6ebebd2f586f33ff4a45198268030a7a9a48ba2a90ac`
+  → re-reconciled SETTLED (`OutcomePaid` matched).
+- Explorer: https://testnet.arcscan.app/tx/0x447b03f68aecaff24d5d6ebebd2f586f33ff4a45198268030a7a9a48ba2a90ac
+
+### Refusal case (live)
+
+- Decision ESCALATE_APPROVAL, rule MAX_AUTONOMOUS_PAYMENT (1.4 > 0.5
+  cap), autonomous=false. Operator broadcast nothing.
+- Exact `payoutAutonomous` via `eth_call` → **reverts**, zero state
+  change (the Canteen node strips custom-error data; exact selectors
+  proven in Foundry against the same bytecode).
+
+### Human approval case (live)
+
+- `approveObligation` (exact campaign/outcome/recipient/amount/proof):
+  `0x812d3b6ea403c4a28721e8f055aec7f6b7bc5bb1dc9f1f9ee649a787222f8e9d`
+  (`success`, `isApproved=true` read back).
+- NOTE: a first approval bound a stale recipient from the prior session
+  and the contract correctly REFUSED the resulting payout — exact-tuple
+  matching caught it before any movement. Genuine field evidence that
+  approvals bind the recipient.
+- `payoutApproved` tx:
+  `0xc1ff3f79f4fd60272892c760c64fe3d02cb8b93a09bc3af082a0ecc578b79cde`
+  → reconciled SETTLED. Vault spent now 1700000 (0.3 + 1.4 exactly).
+- Replay of the consumed approval via `eth_call` → **reverts**
+  (`isApproved=false` read back).
+- Explorer: https://testnet.arcscan.app/tx/0xc1ff3f79f4fd60272892c760c64fe3d02cb8b93a09bc3af082a0ecc578b79cde
+
+### Ledger (real audit rows, scratch DB)
+
+`PAY_NOW/WITHIN_AUTHORITY/autonomous/EXECUTED/0x447b…` →
+`escalation/1.4` → `ESCALATE_APPROVAL/MAX_AUTONOMOUS_PAYMENT` →
+USER `escalation.decision/approved` →
+`PAY_NOW/HUMAN_APPROVED/non-autonomous/EXECUTED/0xc1ff…`.
+Original AGENT reasoning never edited.
+
+### Remaining gap
+
+None for the RFB demo mechanics — all three workflows are proven live
+above. Left as deliberately manual: owner faucet top-ups and any future
+campaign funding (human treasury actions, not agent authority).
 
 ## Safety notes
 
