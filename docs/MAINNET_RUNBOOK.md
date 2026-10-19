@@ -48,7 +48,7 @@ Canonical chain facts: `contracts/deployments/arc-mainnet.json`. Full preflight:
 | `PAYOUT_WORKER_SECRET` | 16 chars | `POST /internal/payouts/*` bearer (falls back to verifier secret) |
 | `SUPPLY_AGENT_WORKER_SECRET` | 16 chars | `POST /internal/agents/supply/run` bearer |
 | `SCOUT_WORKER_SECRET` | 16 chars | `POST /internal/agents/scout/run` bearer |
-| `CRON_SECRET` | 16 chars | Vercel Cron `GET` bearer for `/internal/payouts/process` (daily 06:00 UTC) + `/internal/agents/supply/run` (daily 06:30 UTC, Hobby-compatible) + `/internal/agents/scout/run` (hourly); Vercel injects it automatically |
+| `CRON_SECRET` | 16 chars | Vercel Cron `GET` bearer for `/internal/payouts/process` (daily 06:00 UTC) + `/internal/agents/supply/run` (daily 06:30 UTC) + `/internal/agents/scout/run` (daily 08:20 UTC, all Hobby-compatible); Vercel injects it automatically |
 | `ATTRIBUTION_SECRET` | 32 chars | referral attribution HMAC |
 
 Missing/short secrets fail closed (503/401) — verified by existing tests.
@@ -91,7 +91,7 @@ client-visible, logged, or API-returned (verified by repo-wide scan each slice).
 - [ ] Vault/executor/verifier addresses resolve from env; EIP-712 domain pins chain 5042 + vault.
 - [ ] Payout path is idempotent across restarts (unique outcome/tx/reservation constraints + reconcile-before-retry; tested).
 - [ ] Supply worker reuses `joinCampaign` exactly (same gates, audit, idempotency): autoJoin-only Partners, wallet required, live-PUBLIC markets only, expectedMarketVersion staleness guard, per-market isolation, one `supply_agent.run` audit per Partner per run (tested, incl. concurrent runs).
-- [ ] Schedulers are vendor-neutral adapters: Vercel Cron `GET`s the same workers (`/internal/payouts/process` daily 06:00 UTC; `/internal/agents/supply/run` daily 06:30 UTC, both Hobby-compatible; `/internal/agents/scout/run` hourly) with `CRON_SECRET`; external cron or manual admin POST with the worker secret works identically. The workers support higher-frequency invocation; current Hobby infrastructure does not. Conservative cadence, no per-minute noise.
+- [ ] Schedulers are vendor-neutral adapters: Vercel Cron `GET`s the same workers (`/internal/payouts/process` daily 06:00 UTC; `/internal/agents/supply/run` daily 06:30 UTC; `/internal/agents/scout/run` daily 08:20 UTC, all Hobby-compatible) with `CRON_SECRET`; external cron or manual admin POST with the worker secret works identically. The project is on the Vercel Hobby plan (verified via deploy validation: sub-daily crons are rejected), so all schedules are once-daily. Conservative cadence, no per-minute noise.
 
 ## 6. Mainnet DB isolation status
 

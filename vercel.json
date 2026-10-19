@@ -10,7 +10,7 @@
     },
     {
       "path": "/internal/agents/scout/run",
-      "schedule": "20 * * * *"
+      "schedule": "20 8 * * *"
     }
   ]
 }
