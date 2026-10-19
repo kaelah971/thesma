@@ -9,6 +9,7 @@ import { postJson } from "@/lib/api";
 import { campaignName, formatDuration, formatUsdc } from "@/lib/format";
 import { answerOperator, SUGGESTED_PROMPTS, type OperatorBlock, type OperatorReply } from "@/lib/operator";
 import { OperatorAutonomy } from "@/components/app/OperatorAutonomy";
+import { GrowthPanel } from "@/components/app/GrowthPanel";
 import { campaignFinancials, outcomeRows, RAIL, railIndex, verifiedCount, type WorkspaceSnapshot } from "@/lib/readmodel";
 import styles from "./operator.module.css";
 
@@ -234,6 +235,11 @@ export function OperatorWorkspace({ snapshot, initials }: { snapshot: WorkspaceS
 
       <aside className={styles.side} aria-label="Context">
         <OperatorAutonomy workspaceId={snapshot.workspace.id} isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"} />
+        <GrowthPanel
+          workspaceId={snapshot.workspace.id}
+          campaignId={focus ? focus.id : null}
+          isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"}
+        />
         {focus && focusFin && (
           <div className={styles.card}>
             <h2>Context</h2>

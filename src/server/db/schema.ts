@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   index,
   integer,
   jsonb,
@@ -171,6 +172,25 @@ export const operatorPolicies = pgTable("operator_policies", {
   minReserveMicroUsdc: text("min_reserve_micro_usdc").notNull().default("0"),
   maxAutonomousPaymentMicroUsdc: text("max_autonomous_payment_micro_usdc").notNull().default("10000000"),
   maxAutonomousSpendPerPeriodMicroUsdc: text("max_autonomous_spend_per_period_micro_usdc"),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Human-controlled growth-optimization authority per workspace (RFB 04
+ * intelligence layer). Bounty floor/ceiling stay in the campaign policy
+ * version (authoritative, incl. the onchain ceiling); this table only gates
+ * whether the agent may act and how far a single autonomous move may go.
+ * Disabled by default: the organization opts in. The AI can never write it.
+ */
+export const growthPolicies = pgTable("growth_policies", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  optimizationEnabled: boolean("optimization_enabled").notNull().default(false),
+  maxBountyChangePct: integer("max_bounty_change_pct").notNull().default(25),
+  minimumEvidence: integer("minimum_evidence").notNull().default(5),
+  evaluationWindowDays: integer("evaluation_window_days").notNull().default(7),
   updatedByUserId: text("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
