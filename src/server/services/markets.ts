@@ -593,7 +593,8 @@ export async function updatePartnerRules(
   if (!profile) fail(404, "PARTNER_PROFILE_REQUIRED", "Create a Partner profile first");
   const parsed = parsePartnerRules(params.rules);
   if (!parsed.ok) fail(400, "BAD_REQUEST", "Invalid Partner rules", parsed.issues);
-  // autoJoin/autoNegotiate are STORED ONLY in S3 — no autonomous action reads them.
+  // autoJoin/autoNegotiate/minScoutConfidence/maxAutoJoinsPerDay are STORED
+  // in S3; autonomous action reads them as hard gates (see scout authority).
   const updated = await deps.store.atomic(deps.audit, async ({ store, audit }) => {
     const next = await (store as MarketStore).updatePartnerRules(profile.id, params.rules);
     await audit({

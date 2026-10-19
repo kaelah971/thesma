@@ -1,7 +1,7 @@
 import { requireUser } from "@/server/auth/guard";
 import { createDrizzleCampaignStore } from "@/server/services/campaignStore.drizzle";
 import { toApiError } from "@/server/api/errors";
-import { loadScoutSnapshot } from "@/server/services/scout";
+import { loadScoutAuthority, loadScoutSnapshot } from "@/server/services/scout";
 
 /**
  * GET /api/creator/scout — the caller's own campaign scout snapshot.
@@ -13,8 +13,10 @@ export async function GET() {
     const user = await requireUser();
     const store = createDrizzleCampaignStore();
     const snapshot = await loadScoutSnapshot(store, user.userId).catch(() => null);
-    if (!snapshot) return Response.json({ candidates: [], plan: null });
+    if (!snapshot) return Response.json({ candidates: [], plan: null, authority: null });
+    const authority = await loadScoutAuthority(store, user.userId, snapshot.candidates).catch(() => null);
     return Response.json({
+      authority,
       candidates: snapshot.candidates.map((c) => ({
         ...c,
         facts: { ...c.facts, deadline: c.facts.deadline?.toISOString() ?? null },

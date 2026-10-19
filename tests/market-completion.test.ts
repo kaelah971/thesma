@@ -148,6 +148,8 @@ const OPEN_RULES = {
   autoJoin: true,
   autoNegotiate: false,
   maxAllocationCount: 1,
+  minScoutConfidence: "MEDIUM" as const,
+  maxAutoJoinsPerDay: null,
 };
 
 let tagCounter = 1000;

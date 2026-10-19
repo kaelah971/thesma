@@ -12,8 +12,8 @@ import {
 import { checkJoinEligibility, parsePartnerRules, type PartnerRules } from "../domain/market";
 import { buildPaceSnapshot, type PaceStatus } from "./growth";
 import { committedForCampaign } from "./payouts";
-import { evaluateTargetSettled } from "./markets";
-import type { MarketStore } from "./campaignStore";
+import { evaluateTargetSettled, joinCampaign } from "./markets";
+import type { AuditSink, MarketStore } from "./campaignStore";
 
 /**
  * Creator Campaign Scout v1 (creator-side intelligence).
@@ -316,7 +316,7 @@ export function diagnoseFunnel(params: {
 
 /* ---------------- Alert candidates (pure, no delivery) ---------------- */
 
-export type ScoutAlertKind = "NEW_MATCH" | "BOUNTY_CHANGED" | "CAMPAIGN_CLOSING_SOON" | "VERIFICATION_DROP" | "PAYOUT_SETTLED";
+export type ScoutAlertKind = "NEW_MATCH" | "BOUNTY_CHANGED" | "CAMPAIGN_CLOSING_SOON" | "VERIFICATION_DROP" | "PAYOUT_SETTLED" | "AUTO_JOINED" | "AUTO_JOIN_REFUSED" | "NEW_MATCH_REQUIRES_REVIEW";
 
 export interface ScoutAlert {
   kind: ScoutAlertKind;
@@ -357,6 +357,306 @@ export function detectScoutAlerts(params: {
     alerts.push({ kind: "PAYOUT_SETTLED", campaignId: s.campaignId, reason: `Payout ${s.payoutId.slice(0, 8)} settled.` });
   }
   return alerts;
+}
+
+/* ---------------- Bounded auto-join authority ---------------- */
+
+export type AutoJoinVerdict = "AUTO_JOIN" | "RECOMMEND_ONLY" | "REFUSE";
+
+export interface AutoJoinAuthorityInput {
+  autoJoinEnabled: boolean;
+  scoutDecision: ScoutDecision;
+  eligibility: ScoutEligibility;
+  confidence: ScoutConfidence;
+  confidenceThreshold: ScoutConfidence;
+  bountyMicroUsdc: bigint;
+  minBountyMicroUsdc: bigint;
+  categoryBlocked: boolean;
+  categoryAllowed: boolean;
+  activeTermsCount: number;
+  maxActiveCampaigns: number | null;
+  campaignLive: boolean;
+  visibilityPublic: boolean;
+  deadlineOk: boolean;
+  targetSettled: boolean;
+  alreadyJoined: boolean;
+  joinsToday: number;
+  maxJoinsPerDay: number | null;
+}
+
+const CONFIDENCE_RANK: Record<ScoutConfidence, number> = { LOW: 1, MEDIUM: 2, HIGH: 3 };
+
+/** Confidence gate: actual must meet the creator's threshold. Pure. */
+export function meetsConfidence(actual: ScoutConfidence, threshold: ScoutConfidence): boolean {
+  return CONFIDENCE_RANK[actual] >= CONFIDENCE_RANK[threshold];
+}
+
+/**
+ * Deterministic creator-authority validator — the FINAL word on auto-join.
+ * Scout scores never reach past it: every requirement must hold, unknown
+ * data fails closed to RECOMMEND_ONLY or REFUSE, never AUTO_JOIN.
+ */
+export function evaluateAutoJoinAuthority(input: AutoJoinAuthorityInput): {
+  verdict: AutoJoinVerdict;
+  rule: string;
+  reason: string;
+} {
+  const refuse = (rule: string, reason: string) => ({ verdict: "REFUSE" as const, rule, reason });
+  const recommend = (rule: string, reason: string) => ({ verdict: "RECOMMEND_ONLY" as const, rule, reason });
+  if (input.alreadyJoined) return refuse("ALREADY_JOINED", "Already participating — the existing referral stands.");
+  if (input.targetSettled) return refuse("TARGET_SETTLED", "Objective complete and settled; participation closed.");
+  if (!input.campaignLive) return refuse("CAMPAIGN_NOT_LIVE", "Campaign is not live.");
+  if (!input.visibilityPublic) return refuse("NOT_PUBLIC", "Private campaign — an owner invite is required.");
+  if (!input.deadlineOk) return refuse("EXPIRED", "Campaign deadline has passed.");
+  if (input.eligibility !== "ELIGIBLE") return refuse("INELIGIBLE", "Join eligibility not proven under current rules.");
+  if (input.categoryBlocked) return refuse("CATEGORY_BLOCKED", "Blocked by the creator's category rules — score is irrelevant.");
+  if (!input.categoryAllowed) return refuse("CATEGORY_NOT_ALLOWED", "Outside the creator's allowed categories.");
+  if (input.bountyMicroUsdc < input.minBountyMicroUsdc) {
+    return refuse("MIN_BOUNTY", "Bounty is below the creator's minimum — no bounty outranks policy.");
+  }
+  if (input.maxActiveCampaigns !== null && input.activeTermsCount >= input.maxActiveCampaigns) {
+    return refuse("MAX_ACTIVE", "Creator active-campaign limit reached.");
+  }
+  if (input.maxJoinsPerDay !== null && input.joinsToday >= input.maxJoinsPerDay) {
+    return refuse("RATE_LIMITED", "Creator daily join limit reached.");
+  }
+  if (!input.autoJoinEnabled) {
+    return recommend("AUTOJOIN_DISABLED", "Recommended, but auto-join is disabled — join manually.");
+  }
+  if (input.scoutDecision !== "RECOMMEND") {
+    return recommend("NOT_RECOMMENDED", "Scout did not recommend — human review first.");
+  }
+  if (!meetsConfidence(input.confidence, input.confidenceThreshold)) {
+    return recommend("CONFIDENCE_BELOW_THRESHOLD", `Confidence ${input.confidence} is below the ${input.confidenceThreshold} threshold.`);
+  }
+  return {
+    verdict: "AUTO_JOIN",
+    rule: "WITHIN_CREATOR_AUTHORITY",
+    reason: "Eligible, recommended, and inside every creator rule.",
+  };
+}
+
+/* ---------------- Manual Run Scout (no scheduler in v1) ---------------- */
+
+export interface ScoutRunSummary {
+  evaluated: number;
+  joined: { campaignId: string; referralCode: string; alreadyJoined: boolean }[];
+  refused: { campaignId: string; rule: string; reason: string }[];
+  recommendedOnly: { campaignId: string; rule: string; reason: string }[];
+}
+
+/**
+ * Creator-triggered Scout run: evaluates live candidates through Scout +
+ * creator authority, joining ONLY permitted ones via the existing
+ * idempotent joinCampaign path (same referral reused on repeats).
+ */
+export async function runScoutAutoJoin(
+  deps: { store: MarketStore; audit: AuditSink; now?: () => Date },
+  userId: string,
+  opts?: {
+    joinsTodayByPartner?: (partnerId: string) => Promise<number>;
+    /** Test seam: skip live loading and dispose this snapshot instead. */
+    snapshot?: ScoutSnapshot;
+  },
+): Promise<ScoutRunSummary> {
+  const now = deps.now?.() ?? new Date();
+  const profile = await deps.store.getPartnerByUserId(userId);
+  if (!profile) {
+    throw Object.assign(new Error("Create a Partner profile first"), { status: 404, code: "PARTNER_PROFILE_REQUIRED" });
+  }
+  const parsed = parsePartnerRules(profile.rulesJson);
+  if (!parsed.ok) {
+    throw Object.assign(new Error("Stored Partner rules are invalid"), { status: 500, code: "INTERNAL" });
+  }
+  const rules = (parsed as { ok: true; rules: import("../domain/market").PartnerRules }).rules;
+  const snapshot = opts?.snapshot ?? (await loadScoutSnapshot(deps.store, userId, now));
+  const terms = await deps.store.listPartnerTerms(profile.id).catch(() => []);
+  const activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+  let joinsToday = 0;
+  if (rules.maxAutoJoinsPerDay !== null) {
+    if (opts?.joinsTodayByPartner) {
+      joinsToday = await opts.joinsTodayByPartner(profile.id);
+    } else {
+      try {
+        const db = getDb();
+        const dayStart = new Date(now);
+        dayStart.setUTCHours(0, 0, 0, 0);
+        const rows = await db.select().from(referrals).where(eq(referrals.partnerId, profile.id));
+        joinsToday = rows.filter((r) => r.createdAt >= dayStart).length;
+      } catch {
+        joinsToday = Number.MAX_SAFE_INTEGER;
+      }
+    }
+  }
+  const summary: ScoutRunSummary = { evaluated: 0, joined: [], refused: [], recommendedOnly: [] };
+  const categoryOf = (category: string | null) => (category ?? "").trim().toLowerCase();
+  for (const c of snapshot.candidates) {
+    if (c.eligibility === "ALREADY_JOINED") continue;
+    if (c.eligibility !== "ELIGIBLE") {
+      summary.refused.push({ campaignId: c.facts.campaignId, rule: "INELIGIBLE", reason: c.eligibilityReason });
+      continue;
+    }
+    summary.evaluated += 1;
+    const allowed = rules.allowedCategories.map((x) => x.toLowerCase());
+    const authority = evaluateAutoJoinAuthority({
+      autoJoinEnabled: rules.autoJoin,
+      scoutDecision: c.decision,
+      eligibility: c.eligibility,
+      confidence: c.confidence,
+      confidenceThreshold: rules.minScoutConfidence,
+      bountyMicroUsdc: BigInt(c.facts.bountyMicroUsdc),
+      minBountyMicroUsdc: rules.minimumBountyMicroUsdc,
+      categoryBlocked: categoryOf(c.facts.category) !== "" && rules.blockedCategories.map((x) => x.toLowerCase()).includes(categoryOf(c.facts.category)),
+      categoryAllowed: allowed.length === 0 || (categoryOf(c.facts.category) !== "" && allowed.includes(categoryOf(c.facts.category))),
+      activeTermsCount: activeTermsCount + summary.joined.length,
+      maxActiveCampaigns: rules.maxActiveCampaigns,
+      campaignLive: c.facts.campaignState === "LIVE",
+      visibilityPublic: true,
+      deadlineOk: c.facts.deadline ? new Date(c.facts.deadline) > now : true,
+      targetSettled: false,
+      alreadyJoined: false,
+      joinsToday,
+      maxJoinsPerDay: rules.maxAutoJoinsPerDay,
+    });
+    if (authority.verdict === "AUTO_JOIN") {
+      try {
+        const res = await joinCampaign(
+          { store: deps.store, audit: deps.audit, now: () => now } as never,
+          { campaignId: c.facts.campaignId, userId },
+        );
+        summary.joined.push({ campaignId: c.facts.campaignId, referralCode: res.referral.code, alreadyJoined: res.alreadyJoined });
+        joinsToday += res.alreadyJoined ? 0 : 1;
+        await deps.audit({
+          actorType: "USER",
+          actorId: userId,
+          partnerId: profile.id,
+          action: "creator.autojoin.executed",
+          targetType: "campaign",
+          targetId: c.facts.campaignId,
+          metadata: { campaignId: c.facts.campaignId, referralCode: res.referral.code, rule: authority.rule, score: c.score, confidence: c.confidence },
+        });
+      } catch (e) {
+        summary.refused.push({ campaignId: c.facts.campaignId, rule: (e as { code?: string }).code ?? "JOIN_FAILED", reason: (e as Error).message });
+      }
+    } else if (authority.verdict === "RECOMMEND_ONLY") {
+      summary.recommendedOnly.push({ campaignId: c.facts.campaignId, rule: authority.rule, reason: authority.reason });
+    } else {
+      summary.refused.push({ campaignId: c.facts.campaignId, rule: authority.rule, reason: authority.reason });
+    }
+  }
+  await deps.audit({
+    actorType: "USER",
+    actorId: userId,
+    partnerId: profile.id,
+    action: "creator.autojoin.evaluated",
+    targetType: "partner",
+    targetId: profile.id,
+    metadata: {
+      evaluated: summary.evaluated,
+      joined: summary.joined.map((j) => j.campaignId),
+      refused: summary.refused,
+      recommendedOnly: summary.recommendedOnly,
+    },
+  });
+  return summary;
+}
+
+/** Alert candidates for one manual Run Scout pass. Pure — no delivery. */
+export function alertsForAutoJoinRun(summary: ScoutRunSummary): ScoutAlert[] {
+  const alerts: ScoutAlert[] = [];
+  for (const j of summary.joined) {
+    alerts.push({ kind: "AUTO_JOINED", campaignId: j.campaignId, reason: `Auto-joined inside creator rules (referral ${j.referralCode}).` });
+  }
+  for (const r of summary.refused) {
+    alerts.push({ kind: "AUTO_JOIN_REFUSED", campaignId: r.campaignId, reason: `${r.rule}: ${r.reason}` });
+  }
+  for (const r of summary.recommendedOnly) {
+    alerts.push({ kind: "NEW_MATCH_REQUIRES_REVIEW", campaignId: r.campaignId, reason: `${r.rule}: ${r.reason}` });
+  }
+  return alerts;
+}
+
+export interface AuthorityMap {
+  rules: {
+    autoJoin: boolean;
+    minBountyMicroUsdc: string;
+    allowedCategories: string[];
+    blockedCategories: string[];
+    minScoutConfidence: string;
+    maxActiveCampaigns: number | null;
+    maxAutoJoinsPerDay: number | null;
+  } | null;
+  byCampaign: Record<string, { verdict: AutoJoinVerdict; rule: string; reason: string }>;
+}
+
+/**
+ * Authority state for rendered Scout cards (page + API share this).
+ * Rules come from the creator's stored profile; unknown data fails
+ * closed — never AUTO_JOIN.
+ */
+export async function loadScoutAuthority(
+  store: MarketStore,
+  userId: string,
+  candidates: ScoredCandidate[],
+  now: Date = new Date(),
+): Promise<AuthorityMap> {
+  const profile = await store.getPartnerByUserId(userId).catch(() => null);
+  if (!profile) return { rules: null, byCampaign: {} };
+  const parsed = parsePartnerRules(profile.rulesJson);
+  if (!parsed.ok) return { rules: null, byCampaign: {} };
+  const rules = (parsed as { ok: true; rules: import("../domain/market").PartnerRules }).rules;
+  const terms = await store.listPartnerTerms(profile.id).catch(() => []);
+  const activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+  let joinsToday = 0;
+  if (rules.maxAutoJoinsPerDay !== null) {
+    try {
+      const db = getDb();
+      const dayStart = new Date(now);
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const rows = await db.select().from(referrals).where(eq(referrals.partnerId, profile.id));
+      joinsToday = rows.filter((r) => r.createdAt >= dayStart).length;
+    } catch {
+      joinsToday = Number.MAX_SAFE_INTEGER;
+    }
+  }
+  const byCampaign: AuthorityMap["byCampaign"] = {};
+  const norm = (v: string | null) => (v ?? "").trim().toLowerCase();
+  const allowed = rules.allowedCategories.map((x) => x.toLowerCase());
+  for (const c of candidates) {
+    const authority = evaluateAutoJoinAuthority({
+      autoJoinEnabled: rules.autoJoin,
+      scoutDecision: c.decision,
+      eligibility: c.eligibility,
+      confidence: c.confidence,
+      confidenceThreshold: rules.minScoutConfidence,
+      bountyMicroUsdc: BigInt(c.facts.bountyMicroUsdc),
+      minBountyMicroUsdc: rules.minimumBountyMicroUsdc,
+      categoryBlocked: norm(c.facts.category) !== "" && rules.blockedCategories.map((x) => x.toLowerCase()).includes(norm(c.facts.category)),
+      categoryAllowed: allowed.length === 0 || (norm(c.facts.category) !== "" && allowed.includes(norm(c.facts.category))),
+      activeTermsCount,
+      maxActiveCampaigns: rules.maxActiveCampaigns,
+      campaignLive: c.facts.campaignState === "LIVE",
+      visibilityPublic: true,
+      deadlineOk: c.facts.deadline ? new Date(c.facts.deadline) > now : true,
+      targetSettled: false,
+      alreadyJoined: c.facts.alreadyJoined,
+      joinsToday,
+      maxJoinsPerDay: rules.maxAutoJoinsPerDay,
+    });
+    byCampaign[c.facts.campaignId] = authority;
+  }
+  return {
+    rules: {
+      autoJoin: rules.autoJoin,
+      minBountyMicroUsdc: rules.minimumBountyMicroUsdc.toString(),
+      allowedCategories: rules.allowedCategories,
+      blockedCategories: rules.blockedCategories,
+      minScoutConfidence: rules.minScoutConfidence,
+      maxActiveCampaigns: rules.maxActiveCampaigns,
+      maxAutoJoinsPerDay: rules.maxAutoJoinsPerDay,
+    },
+    byCampaign,
+  };
 }
 
 /* ---------------- Loader (reads existing truth; no new tables) ---------------- */

@@ -30,6 +30,10 @@ export interface PartnerRules {
   autoJoin: boolean;
   autoNegotiate: boolean;
   maxAllocationCount: number | null;
+  /** Minimum Scout confidence that may trigger auto-join. */
+  minScoutConfidence: "HIGH" | "MEDIUM" | "LOW";
+  /** Max auto-joins per UTC day; null = unbounded. */
+  maxAutoJoinsPerDay: number | null;
 }
 
 export const DEFAULT_PARTNER_RULES: PartnerRules = {
@@ -40,6 +44,8 @@ export const DEFAULT_PARTNER_RULES: PartnerRules = {
   autoJoin: false,
   autoNegotiate: false,
   maxAllocationCount: null,
+  minScoutConfidence: "MEDIUM",
+  maxAutoJoinsPerDay: null,
 };
 
 export const partnerRulesWireSchema = z.object({
@@ -50,6 +56,8 @@ export const partnerRulesWireSchema = z.object({
   autoJoin: z.boolean().default(false),
   autoNegotiate: z.boolean().default(false),
   maxAllocationCount: z.number().int().min(1).max(100_000).nullish(),
+  minScoutConfidence: z.enum(["HIGH", "MEDIUM", "LOW"]).default("MEDIUM"),
+  maxAutoJoinsPerDay: z.number().int().min(1).max(100).nullish(),
 });
 
 /**
@@ -81,6 +89,8 @@ export function parsePartnerRules(raw: unknown): { ok: true; rules: PartnerRules
       autoJoin: r.autoJoin,
       autoNegotiate: r.autoNegotiate,
       maxAllocationCount: r.maxAllocationCount ?? null,
+      minScoutConfidence: r.minScoutConfidence,
+      maxAutoJoinsPerDay: r.maxAutoJoinsPerDay ?? null,
     },
   };
 }
@@ -94,6 +104,8 @@ export function serializePartnerRules(r: PartnerRules) {
     autoJoin: r.autoJoin,
     autoNegotiate: r.autoNegotiate,
     maxAllocationCount: r.maxAllocationCount,
+    minScoutConfidence: r.minScoutConfidence,
+    maxAutoJoinsPerDay: r.maxAutoJoinsPerDay,
   };
 }
 

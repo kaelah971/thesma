@@ -4,13 +4,15 @@ import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { HomeShell } from "@/components/start/HomeShell";
 import { CreatorCampaignActions } from "@/components/start/CreatorCampaignActions";
+import { CreatorPreferencesForm, RunScoutButton } from "@/components/start/CreatorPreferencesForm";
 import { getSessionUser } from "@/server/auth/guard";
 import { getDb } from "@/server/db/client";
 import { outcomes, partnerTerms, payouts, referrals } from "@/server/db/schema";
 import { getPartnerByUserId } from "@/server/services/partners";
 import { getPersonaByUserId } from "@/server/services/personas";
 import { createDrizzleCampaignStore } from "@/server/services/campaignStore.drizzle";
-import { loadScoutSnapshot } from "@/server/services/scout";
+import { loadScoutAuthority, loadScoutSnapshot, type AutoJoinVerdict } from "@/server/services/scout";
+import { getPartnerRules } from "@/server/services/markets";
 import { formatDate, formatUsdc } from "@/lib/format";
 import styles from "@/components/start/start.module.css";
 
@@ -45,8 +47,18 @@ export default async function CreatorHomePage() {
 
   const partner = await getPartnerByUserId(user.userId).catch(() => null);
   const stats = await creatorStats(partner?.id ?? null);
-  const scout = await loadScoutSnapshot(createDrizzleCampaignStore(), user.userId).catch(() => null);
+  const store = createDrizzleCampaignStore();
+  const scout = await loadScoutSnapshot(store, user.userId).catch(() => null);
   const scoutCards = scout ? [...scout.plan.topOpportunities.slice(0, 3), ...scout.plan.watchlist.slice(0, 2)] : [];
+  const authority = scout
+    ? await loadScoutAuthority(store, user.userId, scout.candidates).catch(() => null)
+    : null;
+  const rules = partner
+    ? await getPartnerRules({ store, audit: async () => ({}) }, { userId: user.userId }).then((r) => r.rules).catch(() => null)
+    : null;
+
+  const authorityFor = (campaignId: string): { verdict: AutoJoinVerdict; rule: string; reason: string } | null =>
+    authority?.byCampaign[campaignId] ?? null;
 
   return (
     <HomeShell
@@ -112,6 +124,21 @@ export default async function CreatorHomePage() {
                   ) : (
                     <span style={{ display: "block", fontSize: 12, marginTop: 2, color: "var(--ink-2)" }}>{c.earningsNote}</span>
                   )}
+                  {(() => {
+                    const auth = authorityFor(c.facts.campaignId);
+                    if (!auth) return null;
+                    const label =
+                      auth.verdict === "AUTO_JOIN"
+                        ? "Auto-join eligible"
+                        : auth.verdict === "RECOMMEND_ONLY"
+                          ? "Recommend only"
+                          : "Blocked by your rules";
+                    return (
+                      <span style={{ display: "block", fontSize: 12, marginTop: 2, color: "var(--ink-2)" }}>
+                        {label} — {auth.reason}
+                      </span>
+                    );
+                  })()}
                   <div className={styles.panelActions}>
                     <CreatorCampaignActions campaignId={c.facts.campaignId} initialReferralPath={c.facts.referralPath} />
                   </div>
@@ -123,6 +150,7 @@ export default async function CreatorHomePage() {
             <Link href="/markets" className="btn btn-sm">
               Discover live campaigns
             </Link>
+            <RunScoutButton />
           </div>
           {scout && scout.plan.joined.length > 0 && (
             <div style={{ marginTop: 12 }}>
@@ -148,6 +176,31 @@ export default async function CreatorHomePage() {
           )}
         </section>
       </div>
+      {rules && (
+        <div className={styles.homeGrid} style={{ marginTop: 16 }}>
+          <section className={styles.panel}>
+            <h2>Scout rules</h2>
+            <p>Thesma can only join campaigns inside these rules.</p>
+            <p className="tnum" style={{ fontSize: 13 }}>
+              Auto-join: {rules.autoJoin ? "ON" : "OFF"} · Minimum bounty: {formatUsdc(rules.minimumBountyMicroUsdc)} USDC ·
+              Confidence: {rules.minScoutConfidence} · Max active: {rules.maxActiveCampaigns ?? "—"} ·
+              Max joins/day: {rules.maxAutoJoinsPerDay ?? "—"}
+              {rules.allowedCategories.length > 0 ? ` · Categories: ${rules.allowedCategories.join(", ")}` : ""}
+            </p>
+            <CreatorPreferencesForm
+              initial={{
+                autoJoin: rules.autoJoin,
+                minimumBountyMicroUsdc: rules.minimumBountyMicroUsdc,
+                allowedCategories: rules.allowedCategories,
+                blockedCategories: rules.blockedCategories,
+                minScoutConfidence: rules.minScoutConfidence as "HIGH" | "MEDIUM" | "LOW",
+                maxActiveCampaigns: rules.maxActiveCampaigns,
+                maxAutoJoinsPerDay: rules.maxAutoJoinsPerDay,
+              }}
+            />
+          </section>
+        </div>
+      )}
     </HomeShell>
   );
 }

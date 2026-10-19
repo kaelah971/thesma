@@ -66,7 +66,7 @@ describe("eligibility first", () => {
   const base = {
     alreadyJoined: false, marketStatus: "OPEN", campaignLive: true,
     deadline: new Date(NOW.getTime() + 10 * DAY), visibility: "PUBLIC", targetSettled: false,
-    rules: { minimumBountyMicroUsdc: 0n, allowedCategories: [], blockedCategories: [], maxActiveCampaigns: null, maxAllocationCount: null, autoJoin: false, autoNegotiate: false },
+    rules: { minimumBountyMicroUsdc: 0n, allowedCategories: [], blockedCategories: [], maxActiveCampaigns: null, maxAllocationCount: null, autoJoin: false, autoNegotiate: false, minScoutConfidence: "MEDIUM" as const, maxAutoJoinsPerDay: null },
     campaignCategory: "media", activeTermsCount: 0, payoutWallet: "0x0000000000000000000000000000000000000001",
     bountyMicroUsdc: 2_000_000n, now: NOW,
   };

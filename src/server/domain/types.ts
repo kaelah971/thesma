@@ -57,6 +57,8 @@ export interface PartnerRules {
   autoJoin?: boolean;
   autoNegotiate?: boolean;
   maxAllocation?: number | null;
+  minScoutConfidence?: "HIGH" | "MEDIUM" | "LOW";
+  maxAutoJoinsPerDay?: number | null;
 }
 
 export interface Partner {

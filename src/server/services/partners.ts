@@ -20,6 +20,8 @@ function normalizeRules(rules: PartnerRules | undefined): PartnerRules {
     autoJoin: rules?.autoJoin ?? false,
     autoNegotiate: rules?.autoNegotiate ?? false,
     maxAllocation: rules?.maxAllocation ?? null,
+    minScoutConfidence: rules?.minScoutConfidence ?? "MEDIUM",
+    maxAutoJoinsPerDay: rules?.maxAutoJoinsPerDay ?? null,
   };
 }
 
