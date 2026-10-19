@@ -186,8 +186,10 @@ campaign funding (human treasury actions, not agent authority).
 ## Safety notes
 
 - Scratch Postgres + scratch fixtures only; production DB untouched
-  (migration 0010 still unapplied in prod — operator API falls back to
-  defaults there).
+  (migrations 0010 `operator_policies` and 0011 `growth_policies` have
+  since been applied to production additively — both tables verified
+  present with correct columns/defaults/constraints, zero rows
+  rewritten, no backfill; reads return defaults on empty tables).
 - No RPC tokens, private keys, or wallet files are committed anywhere in
   this slice (`.env.local`, forge broadcast/cache artifacts stay ignored).
 - Native gas uses 18 decimals, ERC-20 USDC 6 — confirmed against chain.
