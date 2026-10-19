@@ -63,6 +63,21 @@
 
 ---
 
+## Build in public
+
+Concise social proof — official accounts and representative posts:
+
+- Builder: Kaelah — [x.com/_kaaelaa_](https://x.com/_kaaelaa_)
+- Builder update #1 — [View post](https://x.com/_kaaelaa_/status/2111955196238803027)
+- Builder update #2 — [View post](https://x.com/_kaaelaa_/status/2112081428515315777)
+- Thesma official — [x.com/usethesma](https://x.com/usethesma)
+- Thesma update #1 — [View post](https://x.com/usethesma/status/2112083441479250314)
+- Thesma update #2 — [View post](https://x.com/usethesma/status/2111837615213400366)
+- Thesma update #3 — [View post](https://x.com/usethesma/status/2111584169046503553)
+- Thesma update #4 — [View post](https://x.com/usethesma/status/2111559308387156072)
+
+---
+
 ## Live production usage
 
 On October 18, 2026, a user-operated production run took a fresh Thesma campaign from approved policy to LIVE on Arc Mainnet through the deployed web app and MetaMask — not a script-only chain call.
@@ -354,19 +369,6 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 - **S7 — Supply agent + negotiation:** solvency-capped kernel (`ACCEPT`/`COUNTER`/`REJECT`/`HOLD`), frozen negotiated terms, deterministic evaluation worker.
 - **S7.1 — Accepted negotiation commitment safety:** atomic supply-unit + capacity-unit commit on ACCEPT, consumed exactly once by the first reservation.
 - **S8 — Arc Mainnet proof:** deployment verification, funding, purchase, verification, hold, payout, reconciliation, and the live no-double-pay second run — all on Arc Mainnet (chain 5042).
-
-## Build in public
-
-Concise social proof — official accounts and representative posts:
-
-- Builder: Kaelah — [x.com/_kaaelaa_](https://x.com/_kaaelaa_)
-- Builder update #1 — [View post](https://x.com/_kaaelaa_/status/2111955196238803027)
-- Builder update #2 — [View post](https://x.com/_kaaelaa_/status/2112081428515315777)
-- Thesma official — [x.com/usethesma](https://x.com/usethesma)
-- Thesma update #1 — [View post](https://x.com/usethesma/status/2112083441479250314)
-- Thesma update #2 — [View post](https://x.com/usethesma/status/2111837615213400366)
-- Thesma update #3 — [View post](https://x.com/usethesma/status/2111584169046503553)
-- Thesma update #4 — [View post](https://x.com/usethesma/status/2111559308387156072)
 
 ## Docs
 
