@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatUsdc } from "@/lib/format";
+import { serverErrorMessage } from "@/lib/api";
 
 export interface CreatorRulesInput {
   autoJoin: boolean;
@@ -135,13 +136,14 @@ export function RunScoutButton() {
             joined?: unknown[];
             refused?: unknown[];
             recommendedOnly?: unknown[];
-            error?: string;
+            error?: { message?: string } | string;
           }>,
       )
       .catch(() => null);
     setPending(false);
     if (!res || typeof res.evaluated !== "number") {
-      setError(res?.error ?? "Couldn't run Scout. Try again.");
+      // Never render res.error directly: the API envelope carries an object.
+      setError(serverErrorMessage(res, "Scout couldn't run right now. Try again."));
       return;
     }
     setResult(

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { serverErrorMessage } from "@/lib/api";
 
 /** Follow/unfollow by handle (server resolves identity). Logged-out visitors route through signin and return. */
 export function FollowButton({
@@ -30,11 +31,11 @@ export function FollowButton({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ handle: creatorHandle }),
     })
-      .then((r) => r.json() as Promise<{ following?: boolean; error?: string }>)
+      .then((r) => r.json() as Promise<{ following?: boolean; error?: { message?: string } | string }>)
       .catch(() => null);
     setPending(false);
     if (!res || typeof res.following !== "boolean") {
-      setError(res?.error ?? "Couldn't update follow. Try again.");
+      setError(serverErrorMessage(res, "Couldn't update follow. Try again."));
       return;
     }
     setFollowing(res.following);

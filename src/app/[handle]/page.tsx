@@ -44,6 +44,7 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
     viewerUserId: user?.userId ?? null,
   }).catch(() => null);
   if (!profile) notFound();
+  const isSelf = Boolean(user && user.userId === profile.creatorUserId);
 
   return (
     <HomeShell
@@ -57,7 +58,13 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
         <span style={{ fontSize: 13, color: "var(--ink-2)" }}>
           {profile.followerCount} follower{profile.followerCount === 1 ? "" : "s"}
         </span>
-        <FollowButton creatorHandle={profile.handle} initialFollowing={profile.isFollowing} signedIn={Boolean(user)} />
+        {isSelf ? (
+          <span style={{ fontSize: 13, color: "var(--ink-2)" }}>
+            This is your public profile · <Link href="/creator">Back to creator home</Link>
+          </span>
+        ) : (
+          <FollowButton creatorHandle={profile.handle} initialFollowing={profile.isFollowing} signedIn={Boolean(user)} />
+        )}
       </div>
 
       <div className={styles.kpis} style={{ marginTop: 18 }}>

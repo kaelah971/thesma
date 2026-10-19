@@ -68,6 +68,24 @@ export const partnerRulesWireSchema = z.object({
 export function parsePartnerRules(raw: unknown): { ok: true; rules: PartnerRules } | { ok: false; issues: string[] } {
   const obj = (raw ?? {}) as Record<string, unknown>;
   const mapped: Record<string, unknown> = { ...obj };
+  // Stored legacy rows may carry explicit nulls (e.g. minBountyMicroUSDC:
+  // null from the S0 normalizer). Null means "absent" for every defaulted
+  // field — it must fall back to schema defaults, never 500 a live creator.
+  for (const key of [
+    "minimumBountyMicroUsdc",
+    "minBountyMicroUSDC",
+    "allowedCategories",
+    "blockedCategories",
+    "maxActiveCampaigns",
+    "maxAllocationCount",
+    "maxAllocation",
+    "minScoutConfidence",
+    "maxAutoJoinsPerDay",
+    "autoJoin",
+    "autoNegotiate",
+  ]) {
+    if (mapped[key] === null) delete mapped[key];
+  }
   if (mapped.minimumBountyMicroUsdc === undefined && mapped.minBountyMicroUSDC !== undefined) {
     mapped.minimumBountyMicroUsdc = mapped.minBountyMicroUSDC;
   }

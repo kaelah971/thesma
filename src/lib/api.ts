@@ -1,3 +1,12 @@
+/** Extracts a render-safe string from a JSON error envelope. Never returns an object (React cannot render one). */
+export function serverErrorMessage(res: { error?: { message?: string } | string } | null, fallback: string): string {
+  if (!res) return fallback;
+  const err = res.error;
+  if (typeof err === "string" && err) return err;
+  if (err && typeof err === "object" && typeof err.message === "string" && err.message) return err.message;
+  return fallback;
+}
+
 /** Reads the backend's typed error envelope ({ error: { message } }) for inline display. */
 export async function apiError(res: Response | null, fallback: string): Promise<string> {
   if (!res) return "Network error — check your connection and try again.";

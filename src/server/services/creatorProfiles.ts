@@ -77,6 +77,7 @@ export interface CompletedCollaboration {
 export interface PublicCreatorProfile {
   displayName: string;
   handle: string;
+  creatorUserId: string;
   bio: string | null;
   category: string | null;
   joinedAt: string;
@@ -291,6 +292,7 @@ export async function getPublicCreatorProfile(
   return {
     displayName: user.name ?? `@${handle}`,
     handle,
+    creatorUserId: user.id,
     bio: row!.bio,
     category: row!.category,
     joinedAt: user.createdAt.toISOString(),

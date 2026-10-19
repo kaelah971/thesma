@@ -102,7 +102,7 @@ export function CreatorNotificationsPanel() {
       {!loaded ? (
         <div className={styles.panelEmpty}>Loading Scout activity…</div>
       ) : items.length === 0 ? (
-        <div className={styles.panelEmpty}>No Scout alerts yet. Enable auto-join and check back after the next hourly run.</div>
+        <div className={styles.panelEmpty}>No Scout alerts yet. Scout checks automatically each day (08:20 UTC) — you can also run it anytime.</div>
       ) : (
         <>
           <p style={{ fontSize: 13 }}>

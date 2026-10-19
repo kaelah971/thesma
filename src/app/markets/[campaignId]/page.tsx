@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { getPublicMarketDetail } from "@/server/services/markets";
+import { getSessionUser } from "@/server/auth/guard";
+import { CreatorCampaignActions } from "@/components/start/CreatorCampaignActions";
 import { LogoMark } from "@/components/brand/Logo";
 import { EvidenceHash } from "@/components/proof/EvidenceHash";
 import { LifecycleStrip } from "@/components/proof/LifecycleStrip";
@@ -187,6 +189,8 @@ export default async function MarketDetailPage({ params }: { params: Promise<{ c
           </div>
         </section>
 
+        {detail.live && <CreatorJoinSection campaignId={detail.campaignId} />}
+
         <div aria-label="Proof ledger">
           <h2 style={{ fontSize: 18, margin: "0 0 4px" }}>Proof ledger</h2>
           <LedgerBlock
@@ -351,5 +355,67 @@ export default async function MarketDetailPage({ params }: { params: Promise<{ c
         </details>
       </div>
     </main>
+  );
+}
+
+/**
+ * Creator join affordance on the public detail page. Read-only until a join:
+ * signed-in creators see Join (idempotent) or View + Copy referral link;
+ * everyone else gets a signin return link. Completed markets never render
+ * this section.
+ */
+async function CreatorJoinSection({ campaignId }: { campaignId: string }) {
+  const user = await getSessionUser().catch(() => null);
+  if (!user) {
+    return (
+      <section
+        aria-label="Creator join"
+        style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 18, background: "var(--surface, #fff)", padding: "20px" }}
+      >
+        <h2 style={{ fontSize: 17, margin: "0 0 8px" }}>Join as a creator</h2>
+        <p style={{ margin: "0 0 12px", fontSize: 13.5, opacity: 0.75 }}>
+          Creators join with one click and share a tracked referral link.
+        </p>
+        <Link href={`/signin?next=/markets/${campaignId}`} className="btn btn-primary btn-sm">
+          Sign in to join
+        </Link>
+      </section>
+    );
+  }
+  const wired = marketDepsOr503();
+  if ("response" in wired) return null;
+  const profile = await wired.deps.store.getPartnerByUserId(user.userId).catch(() => null);
+  if (!profile) {
+    return (
+      <section
+        aria-label="Creator join"
+        style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 18, background: "var(--surface, #fff)", padding: "20px" }}
+      >
+        <h2 style={{ fontSize: 17, margin: "0 0 8px" }}>Join as a creator</h2>
+        <p style={{ margin: "0 0 12px", fontSize: 13.5, opacity: 0.75 }}>
+          Finish creator onboarding first — then this campaign is one click away.
+        </p>
+        <Link href="/onboarding/creator" className="btn btn-primary btn-sm">
+          Complete creator onboarding
+        </Link>
+      </section>
+    );
+  }
+  const terms = await wired.deps.store.getTerms(campaignId, profile.id).catch(() => null);
+  const referral = terms ? await wired.deps.store.getReferralByTerms(terms.id).catch(() => null) : null;
+  const referralPath = referral && referral.status === "ACTIVE" ? `/r/${referral.code}` : null;
+  return (
+    <section
+      aria-label="Creator join"
+      style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 18, background: "var(--surface, #fff)", padding: "20px" }}
+    >
+      <h2 style={{ fontSize: 17, margin: "0 0 8px" }}>{referralPath ? "You're in — share your link" : "Join as a creator"}</h2>
+      <p style={{ margin: "0 0 12px", fontSize: 13.5, opacity: 0.75 }}>
+        {referralPath
+          ? "Earn per verified outcome when customers buy through your link."
+          : "One click, idempotent — re-joining reuses the same referral link."}
+      </p>
+      <CreatorCampaignActions campaignId={campaignId} initialReferralPath={referralPath} />
+    </section>
   );
 }
