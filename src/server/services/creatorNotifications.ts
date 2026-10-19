@@ -18,7 +18,8 @@ export type CreatorAlertType =
   | "BOUNTY_CHANGED"
   | "CAMPAIGN_CLOSING_SOON"
   | "VERIFICATION_DROP"
-  | "PAYOUT_SETTLED";
+  | "PAYOUT_SETTLED"
+  | "CAMPAIGN_INVITED";
 
 export interface NewCreatorNotification {
   type: CreatorAlertType;

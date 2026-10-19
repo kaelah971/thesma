@@ -7,6 +7,7 @@ import { CreatorCampaignActions } from "@/components/start/CreatorCampaignAction
 import { CreatorPreferencesForm, RunScoutButton } from "@/components/start/CreatorPreferencesForm";
 import { AutoJoinToggle } from "@/components/start/AutoJoinToggle";
 import { CreatorNotificationsPanel } from "@/components/start/CreatorNotificationsPanel";
+import { OpportunityInbox } from "@/components/start/OpportunityInbox";
 import { getSessionUser } from "@/server/auth/guard";
 import { getDb } from "@/server/db/client";
 import { outcomes, partnerTerms, payouts, referrals } from "@/server/db/schema";
@@ -228,6 +229,13 @@ export default async function CreatorHomePage() {
             />
           </section>
         )}
+      </div>
+      <div className={styles.homeGrid} style={{ marginTop: 16 }}>
+        <section className={styles.panel} id="opportunities">
+          <h2>Opportunities</h2>
+          <p>Direct invitations from organizations — frozen offers, decided by you. Accepting creates participation; declining changes nothing.</p>
+          <OpportunityInbox />
+        </section>
       </div>
       <div className={styles.homeGrid} style={{ marginTop: 16 }}>
         <section className={styles.panel}>

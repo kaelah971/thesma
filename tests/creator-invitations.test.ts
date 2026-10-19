@@ -14,6 +14,7 @@ import {
 } from "@/server/services/invitations";
 import { joinCampaign } from "@/server/services/markets";
 import type { CapabilitySeed, HistorySeed } from "@/server/services/matching";
+import { createMemoryNotificationStore, type NotificationStore } from "@/server/services/creatorNotifications";
 
 vi.mock("@/server/auth/guard", () => ({ getSessionUser: vi.fn(), requireUser: vi.fn() }));
 vi.mock("@/server/api/campaignDeps", () => ({ marketDepsOr503: vi.fn() }));
@@ -229,14 +230,197 @@ describe("invitation lifecycle", () => {
     expect(await listCreatorInvitations({ store, audit: sink }, { creatorUserId: "someone-else" })).toHaveLength(0);
   });
 
-  it("accept/decline are Slice 3 stubs, not silent no-ops", async () => {
+  it("unknown invitation ids fail closed with 404", async () => {
     const { store, sink } = await liveSetup();
     await expect(
       acceptInvitation({ store, audit: sink }, { creatorUserId: "creator-good", invitationId: "x" }),
-    ).rejects.toMatchObject({ status: 501 });
+    ).rejects.toMatchObject({ status: 404 });
     await expect(
       declineInvitation({ store, audit: sink }, { creatorUserId: "creator-good", invitationId: "x" }),
-    ).rejects.toMatchObject({ status: 501 });
+    ).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("creator accept / decline", () => {
+  async function invited(ctx: Awaited<ReturnType<typeof liveSetup>>, notifications?: NotificationStore) {
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW, ...(notifications ? { notifications } : {}) };
+    const res = await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, {
+      candidate: seed("creator-good", "bgirl"), history: HIST["creator-good"],
+    });
+    return { deps, invitationId: res.invitation.id };
+  }
+
+  it("accept creates one participation + referral at the frozen bounty", async () => {
+    const ctx = await liveSetup();
+    const { store, sink } = ctx;
+    const { deps, invitationId } = await invited(ctx);
+    await store.updateMarket("c-1", 1, { publicBountyMicroUsdc: 3_000_000n, version: 2 });
+    const res = await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    expect(res.invitation.status).toBe("ACCEPTED");
+    expect(res.alreadyJoined).toBe(false);
+    expect(res.participation.priceMicroUsdc).toBe("2000000");
+    expect(res.participation.policyVersion).toBe(1);
+    expect(res.participation.marketVersion).toBe(1);
+    expect(res.referral.path).toMatch(/^\/r\//);
+    const terms = await store.listPartnerTerms("p-good");
+    expect(terms).toHaveLength(1);
+    expect(terms[0].priceMicroUsdc).toBe(2_000_000n);
+    expect(terms[0].source).toBe("INVITED");
+  });
+
+  it("accept retry creates no duplicate participation or referral", async () => {
+    const ctx = await liveSetup();
+    const { store } = ctx;
+    const { deps, invitationId } = await invited(ctx);
+    const first = await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    const second = await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    expect(second.alreadyJoined).toBe(true);
+    expect(second.participation.termsId).toBe(first.participation.termsId);
+    expect(second.referral.code).toBe(first.referral.code);
+    expect(await store.listPartnerTerms("p-good")).toHaveLength(1);
+  });
+
+  it("accept creates no payout or reservation", async () => {
+    const ctx = await liveSetup();
+    const { store } = ctx;
+    const { deps, invitationId } = await invited(ctx);
+    const res = await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    expect(await store.getPayoutByOutcome("anything")).toBeNull();
+    expect(await store.listReservationsByCampaign("c-1")).toHaveLength(0);
+    expect(res.invitation.status).toBe("ACCEPTED");
+  });
+
+  it("decline creates nothing and is idempotent", async () => {
+    const ctx = await liveSetup();
+    const { store } = ctx;
+    const { deps, invitationId } = await invited(ctx);
+    const res = await declineInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    expect(res.status).toBe("DECLINED");
+    expect(await store.listPartnerTerms("p-good")).toHaveLength(0);
+    expect(await store.getReferralByCode("anything")).toBeNull();
+    const again = await declineInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    expect(again.status).toBe("DECLINED");
+  });
+
+  it("terminal states lock: accepted cannot decline, declined/cancelled cannot accept", async () => {
+    const ctx = await liveSetup();
+    const { store } = ctx;
+    const { deps, invitationId } = await invited(ctx);
+    await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    await expect(declineInvitation(deps, { creatorUserId: "creator-good", invitationId })).rejects.toMatchObject({
+      status: 409, code: "INVITATION_LOCKED",
+    });
+    const { invitationId: id2 } = await invited(ctx);
+    await declineInvitation(deps, { creatorUserId: "creator-good", invitationId: id2 });
+    await expect(acceptInvitation(deps, { creatorUserId: "creator-good", invitationId: id2 })).rejects.toMatchObject({
+      status: 409, code: "ALREADY_DECLINED",
+    });
+  });
+
+  it("outsiders cannot respond to another creator's invitation", async () => {
+    const ctx = await liveSetup();
+    const { deps, invitationId } = await invited(ctx);
+    await expect(acceptInvitation(deps, { creatorUserId: "stranger", invitationId })).rejects.toMatchObject({ status: 403 });
+    await expect(declineInvitation(deps, { creatorUserId: "stranger", invitationId })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("closed campaigns cannot be accepted", async () => {
+    const ctx = await liveSetup();
+    const { store } = ctx;
+    const { deps, invitationId } = await invited(ctx);
+    await store.updateMarket("c-1", 1, { status: "CLOSED", version: 2 });
+    await expect(acceptInvitation(deps, { creatorUserId: "creator-good", invitationId })).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("conflicting pre-existing participation is never rewritten", async () => {
+    const ctx = await liveSetup();
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW };
+    // Invite frozen at 2M, then the market reprices and the creator joins openly at 3M.
+    const { invitationId } = await invited(ctx);
+    await store.updateMarket("c-1", 1, { publicBountyMicroUsdc: 3_000_000n, version: 2 });
+    await joinCampaign({ store, audit: sink, now: () => NOW } as never, { campaignId: "c-1", userId: "creator-good" });
+    await expect(acceptInvitation(deps, { creatorUserId: "creator-good", invitationId })).rejects.toMatchObject({
+      status: 409,
+      code: "PARTICIPATION_CONFLICT",
+    });
+    const terms = await store.listPartnerTerms("p-good");
+    expect(terms).toHaveLength(1);
+    expect(terms[0].priceMicroUsdc).toBe(3_000_000n);
+    // Compatible history resolves idempotently instead (same 2M economics).
+    const ctx2 = await liveSetup();
+    const deps2 = { store: ctx2.store, audit: ctx2.sink, now: () => NOW };
+    const r2 = await createInvitation(deps2, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, {
+      candidate: seed("creator-good"), history: HIST["creator-good"],
+    });
+    await joinCampaign({ store: ctx2.store, audit: ctx2.sink, now: () => NOW } as never, {
+      campaignId: "c-1", userId: "creator-good",
+      frozenOffer: { bountyMicroUsdc: 2_000_000n, policyVersion: 1, marketVersion: 1 },
+    });
+    const ok = await acceptInvitation(deps2, { creatorUserId: "creator-good", invitationId: r2.invitation.id });
+    expect(ok.alreadyJoined).toBe(true);
+    expect((await ctx2.store.listPartnerTerms("p-good"))).toHaveLength(1);
+  });
+
+  it("invitation notification is created once and marked read on response", async () => {
+    const notifications = createMemoryNotificationStore();
+    const ctx = await liveSetup();
+    const { deps, invitationId } = await invited(ctx, notifications);
+    // Retry the invite: still exactly one alert.
+    await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, {
+      candidate: seed("creator-good"), history: HIST["creator-good"],
+    });
+    const items = await notifications.listForCreator("creator-good");
+    expect(items.filter((n) => n.type === "CAMPAIGN_INVITED")).toHaveLength(1);
+    const alert = items.find((n) => n.type === "CAMPAIGN_INVITED")!;
+    expect(alert.dedupeKey).toBe(`invite:${invitationId}`);
+    expect(alert.metadataJson).toMatchObject({ invitationId });
+    expect(alert.message).toMatch(/2 USDC per verified purchase/);
+    await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId });
+    const after = await notifications.listForCreator("creator-good");
+    expect(after.find((n) => n.id === alert.id)?.readAt).not.toBeNull();
+  });
+
+  it("org sees ACCEPTED/DECLINED and DTOs leak nothing private", async () => {
+    const ctx = await liveSetup();
+    const { store, sink, events } = ctx;
+    const deps = { store, audit: sink, now: () => NOW };
+    const a = await invited(ctx);
+    await acceptInvitation(a.deps, { creatorUserId: "creator-good", invitationId: a.invitationId });
+    const b = await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-full" }, {
+      candidate: seed("creator-full"), history: { verifiedTotal: 20, settledCollaborations: 5, activeTermsCount: 0 },
+    });
+    await declineInvitation(deps, { creatorUserId: "creator-full", invitationId: b.invitation.id });
+    const rows = await listInvitations(deps, { callerUserId: "owner-1", campaignId: "c-1" });
+    expect(rows.map((r) => r.status).sort()).toEqual(["ACCEPTED", "DECLINED"]);
+    const serialized = JSON.stringify(rows);
+    expect(serialized).not.toMatch(/wallet|email|rulesJson|secret|token|session|password/i);
+    const actions = events.map((e) => (e as { action?: string }).action);
+    expect(actions).toContain("creator.invitation.accepted");
+    expect(actions).toContain("creator.invitation.declined");
+  });
+
+  it("creator lists only own opportunities with frozen economics", async () => {
+    const ctx = await liveSetup();
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW };
+    await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, {
+      candidate: seed("creator-good", "bgirl"), history: HIST["creator-good"],
+    });
+    const { listCreatorOpportunities } = await import("@/server/services/invitations");
+    const mine = await listCreatorOpportunities(deps, { creatorUserId: "creator-good" });
+    expect(mine).toHaveLength(1);
+    expect(mine[0].offered.bountyMicroUsdc).toBe("2000000");
+    expect(mine[0].offered.outcomeKind).toBe("purchase");
+    expect(mine[0].campaign.workspaceName).toBe("Acme");
+    expect(mine[0].campaign.objective).toMatch(/paying customers/);
+    await store.updateMarket("c-1", 1, { publicBountyMicroUsdc: 9_000_000n, version: 2 });
+    const after = await listCreatorOpportunities(deps, { creatorUserId: "creator-good" });
+    expect(after[0].offered.bountyMicroUsdc).toBe("2000000");
+    expect(await listCreatorOpportunities(deps, { creatorUserId: "stranger" })).toHaveLength(0);
   });
 });
 

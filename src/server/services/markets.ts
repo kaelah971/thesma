@@ -7,6 +7,7 @@ import {
   newReferralCode,
   parsePartnerRules,
   serializePartnerRules,
+  TERMS_SOURCE_INVITED,
   TERMS_SOURCE_PUBLIC,
   type PartnerRules,
 } from "../domain/market";
@@ -619,7 +620,20 @@ export async function updatePartnerRules(
  */
 export async function joinCampaign(
   deps: MarketDeps,
-  params: { campaignId: string; userId: string; allocationCount?: number; expectedMarketVersion?: number; inviteToken?: string },
+  params: {
+    campaignId: string;
+    userId: string;
+    allocationCount?: number;
+    expectedMarketVersion?: number;
+    inviteToken?: string;
+    /**
+     * Frozen invitation offer: participation is priced + versioned from the
+     * invitation, never from the current market. Countersigned markets skip
+     * the staleness gate and the private-market token gate (the org
+     * invitation is the authorization). Everything else is identical.
+     */
+    frozenOffer?: { bountyMicroUsdc: bigint; policyVersion: number; marketVersion: number };
+  },
 ) {
   const now = deps.now?.() ?? new Date();
   return deps.store.atomic(deps.audit, async ({ store, audit }) => {
@@ -636,7 +650,7 @@ export async function joinCampaign(
     // row flips to CLOSED: the objective is complete and fully paid.
     const settled = await evaluateTargetSettled(ms, params.campaignId, market.policyVersion);
     if (settled.complete) fail(403, "TARGET_REACHED", "Market objective is complete and settled; participation is closed");
-    if (params.expectedMarketVersion !== undefined && params.expectedMarketVersion !== market.version) {
+    if (!params.frozenOffer && params.expectedMarketVersion !== undefined && params.expectedMarketVersion !== market.version) {
       fail(409, "STALE_MARKET", "Market version changed; re-read before joining", {
         expected: params.expectedMarketVersion,
         current: market.version,
@@ -658,8 +672,9 @@ export async function joinCampaign(
       };
     }
 
-    // Private campaigns require a valid owner-issued invite.
-    if (version.marketVisibility === "PRIVATE") {
+    // Private campaigns require a valid owner-issued invite — unless the
+    // join countersigns a frozen org invitation (which is the authorization).
+    if (version.marketVisibility === "PRIVATE" && !params.frozenOffer) {
       if (!params.inviteToken) fail(403, "INVITE_REQUIRED", "This is a private market: a valid invite is required");
       const invite = await ms.getInviteByHash(hashInviteToken(params.inviteToken));
       if (!invite || invite.campaignId !== params.campaignId) fail(403, "INVITE_INVALID", "Invite is invalid");
@@ -676,11 +691,12 @@ export async function joinCampaign(
     const workspace = await ms.getWorkspace(campaign.workspaceId);
     const activeCount = (await ms.listPartnerTerms(profile.id)).filter((t) => t.status === "ACTIVE").length;
     const requested = params.allocationCount ?? rules.maxAllocationCount ?? 1;
+    const priceMicroUsdc = params.frozenOffer?.bountyMicroUsdc ?? market.publicBountyMicroUsdc;
     const eligibility = checkJoinEligibility({
       marketStatus: market.status,
       campaignLive: campaign.state === "LIVE",
       deadline: version.deadline,
-      publicBountyMicroUsdc: market.publicBountyMicroUsdc,
+      publicBountyMicroUsdc: priceMicroUsdc,
       rules,
       campaignCategory: workspace?.category ?? null,
       activeTermsCount: activeCount,
@@ -700,12 +716,12 @@ export async function joinCampaign(
         id: termsId,
         campaignId: params.campaignId,
         partnerId: profile.id,
-        priceMicroUsdc: market.publicBountyMicroUsdc,
+        priceMicroUsdc: priceMicroUsdc,
         allocationCount: requested,
-        source: TERMS_SOURCE_PUBLIC,
+        source: params.frozenOffer ? TERMS_SOURCE_INVITED : TERMS_SOURCE_PUBLIC,
         expiresAt: version.deadline,
-        policyVersion: market.policyVersion,
-        marketVersion: market.version,
+        policyVersion: params.frozenOffer?.policyVersion ?? market.policyVersion,
+        marketVersion: params.frozenOffer?.marketVersion ?? market.version,
       });
     } catch (e) {
       // Lost the insert race: return the winner's snapshot (idempotent).

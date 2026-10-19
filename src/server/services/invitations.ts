@@ -1,6 +1,9 @@
 import { newId } from "../auth/session";
+import { formatUsdc } from "@/lib/format";
 import { isUniqueViolation } from "./campaignStore";
 import type { AuditSink, InvitationStatus, MarketStore, StoredInvitation } from "./campaignStore";
+import { createDrizzleNotificationStore, type NotificationStore } from "./creatorNotifications";
+import { evaluateTargetSettled, joinCampaign, serializeTerms } from "./markets";
 import {
   evaluateCreatorForCampaign,
   loadCandidateSeed,
@@ -24,6 +27,14 @@ export interface InvitationDeps {
   store: MarketStore;
   audit: AuditSink;
   now?: () => Date;
+  notifications?: NotificationStore;
+}
+
+/** Human-readable frozen offer line. Shared by notifications and the inbox UI. */
+export function describeOffer(outcomeKind: string, bountyMicroUsdc: string): string {
+  const unit =
+    outcomeKind === "purchase" ? "verified purchase" : outcomeKind === "signup" ? "verified signup" : "verified referral";
+  return `${formatUsdc(bountyMicroUsdc)} USDC per ${unit}`;
 }
 
 export interface InvitationOffer {
@@ -41,7 +52,7 @@ export interface InvitationDto {
   creatorUserId: string;
   creatorHandle: string | null;
   status: InvitationStatus;
-  offered: InvitationOffer;
+  offered: InvitationOffer & { bonus: Record<string, unknown> };
   match: { score: number; confidence: string; action: string; reasons: string[] };
   createdAt: string;
   respondedAt: string | null;
@@ -81,6 +92,7 @@ function toDto(row: StoredInvitation, handle: string | null): InvitationDto {
       holdSeconds: row.offeredHoldSeconds,
       policyVersion: row.offeredPolicyVersion,
       marketVersion: row.offeredMarketVersion,
+      bonus: (row.offeredBonusJson ?? {}) as Record<string, unknown>,
     },
     match: {
       score: row.matchScore,
@@ -216,7 +228,69 @@ export async function createInvitation(
       },
     })
     .catch(() => {});
+  // Slice 3 delivery: durable inbox alert, deduped on the invitation.
+  // No email/push — dashboard only.
+  try {
+    const store = deps.notifications ?? createDrizzleNotificationStore();
+    await store.insertIfAbsent(params.creatorUserId, {
+      type: "CAMPAIGN_INVITED",
+      campaignId: params.campaignId,
+      title: `${ctx.workspace?.name ?? "An organization"} invited you to a campaign`,
+      message: `${describeOffer(outcomeKind, row.offeredBountyMicroUsdc.toString())} — review the frozen offer before you decide.`,
+      dedupeKey: `invite:${row.id}`,
+      metadataJson: {
+        invitationId: row.id,
+        campaignId: params.campaignId,
+        bountyMicroUsdc: row.offeredBountyMicroUsdc.toString(),
+        outcomeKind,
+      },
+    });
+  } catch {
+    // Notification state never blocks the invitation.
+  }
   return { invitation: toDto(row, candidate.handle), alreadyInvited: false };
+}
+
+/* ---------------- Creator opportunity inbox (enriched, display-safe) ---------------- */
+
+export interface CreatorOpportunity extends InvitationDto {
+  campaign: {
+    workspaceName: string;
+    objective: string;
+    category: string | null;
+    deadline: string | null;
+    visibility: string | null;
+  };
+}
+
+/**
+ * The creator's own opportunities with frozen economics + current campaign
+ * context (objective/deadline are display truth; the offer never moves).
+ */
+export async function listCreatorOpportunities(
+  deps: InvitationDeps,
+  params: { creatorUserId: string },
+): Promise<CreatorOpportunity[]> {
+  const rows = await deps.store.listInvitationsByCreator(params.creatorUserId);
+  const out: CreatorOpportunity[] = [];
+  for (const row of rows) {
+    const campaign = await deps.store.getCampaign(row.campaignId).catch(() => null);
+    const workspace = campaign ? await deps.store.getWorkspace(campaign.workspaceId).catch(() => null) : null;
+    const version = campaign
+      ? await deps.store.getVersion(row.campaignId, row.offeredPolicyVersion).catch(() => null)
+      : null;
+    out.push({
+      ...toDto(row, null),
+      campaign: {
+        workspaceName: workspace?.name ?? "Unknown organization",
+        objective: version?.intentText ?? "",
+        category: workspace?.category ?? null,
+        deadline: version?.deadline ? version.deadline.toISOString() : null,
+        visibility: version?.marketVisibility ?? null,
+      },
+    });
+  }
+  return out;
 }
 
 /** Bounded bulk invite: one creator's failure never corrupts the batch. */
@@ -333,22 +407,212 @@ export async function listCreatorInvitations(
   return rows.map((row) => toDto(row, null));
 }
 
-/* ---------------- Slice 3 contract (interface only — not implemented) ---------------- */
+/* ---------------- Creator accept / decline (Slice 3) ---------------- */
 
-/** Slice 3: creator accepts → creates participation + referral from the frozen offer. */
-export async function acceptInvitation(
-  _deps: InvitationDeps,
-  _params: { creatorUserId: string; invitationId: string },
-): Promise<never> {
-  fail(501, "NOT_IMPLEMENTED", "Invitation acceptance ships in Slice 3");
-  throw new Error("unreachable");
+export interface AcceptResult {
+  invitation: InvitationDto;
+  participation: {
+    termsId: string;
+    priceMicroUsdc: string;
+    policyVersion: number;
+    marketVersion: number;
+    source: string;
+  };
+  referral: { id: string; code: string; path: string };
+  alreadyJoined: boolean;
 }
 
-/** Slice 3: creator declines → marks DECLINED, no participation. */
+/** Best-effort: mark the invite notification read after a creator responds. */
+async function markInviteNotificationRead(deps: InvitationDeps, creatorUserId: string, invitationId: string) {
+  try {
+    const store = deps.notifications ?? createDrizzleNotificationStore();
+    const items = await store.listForCreator(creatorUserId, 200);
+    const found = items.find((n) => n.dedupeKey === `invite:${invitationId}` && !n.readAt);
+    if (found) await store.markRead(creatorUserId, found.id);
+  } catch {
+    // Notification state never blocks the response.
+  }
+}
+
+async function requireOwnedInvitation(
+  deps: InvitationDeps,
+  params: { creatorUserId: string; invitationId: string },
+): Promise<StoredInvitation> {
+  const row = await deps.store.getInvitation(params.invitationId);
+  if (!row) fail(404, "NOT_FOUND", "Invitation not found");
+  if (row.creatorUserId !== params.creatorUserId) {
+    fail(403, "FORBIDDEN", "This invitation belongs to another creator");
+  }
+  return row;
+}
+
+/**
+ * Accept: transactional + idempotent. Re-checks live campaign truth, then
+ * creates participation through the EXISTING join path countersigned with
+ * the invitation's FROZEN economics — never the current bounty. Creates
+ * no payout, no reservation, no verification.
+ *
+ * Slice 4 entry point: evaluate the invitation against creator rules, then
+ * call this same service to AUTO_ACCEPT (no separate accept path).
+ */
+export async function acceptInvitation(
+  deps: InvitationDeps,
+  params: { creatorUserId: string; invitationId: string },
+): Promise<AcceptResult> {
+  const now = deps.now?.() ?? new Date();
+  const row = await requireOwnedInvitation(deps, params);
+  if (row.status === "ACCEPTED") {
+    const profile = await deps.store.getPartnerByUserId(params.creatorUserId).catch(() => null);
+    const terms = profile ? await deps.store.getTerms(row.campaignId, profile.id).catch(() => null) : null;
+    const referral = terms ? await deps.store.getReferralByTerms(terms.id).catch(() => null) : null;
+    if (!terms || !referral) {
+      fail(409, "INVITATION_ORPHANED", "Invitation is accepted but participation is missing — contact support");
+    }
+    await markInviteNotificationRead(deps, params.creatorUserId, row.id);
+    return {
+      invitation: toDto(row, await handleFor(deps.store, params.creatorUserId)),
+      participation: {
+        termsId: terms.id,
+        priceMicroUsdc: terms.priceMicroUsdc.toString(),
+        policyVersion: terms.policyVersion,
+        marketVersion: terms.marketVersion,
+        source: terms.source,
+      },
+      referral: { id: referral.id, code: referral.code, path: `/r/${referral.code}` },
+      alreadyJoined: true,
+    };
+  }
+  if (row.status !== "INVITED") {
+    fail(
+      409,
+      row.status === "DECLINED" ? "ALREADY_DECLINED" : "INVITATION_LOCKED",
+      row.status === "DECLINED"
+        ? "Invitation was already declined and cannot be accepted"
+        : `Invitation is ${row.status} and can no longer be accepted`,
+    );
+  }
+  const campaign = await deps.store.getCampaign(row.campaignId);
+  if (!campaign || campaign.state !== "LIVE") {
+    fail(409, "CAMPAIGN_CLOSED", "Campaign is no longer live");
+  }
+  const market = await deps.store.getMarket(row.campaignId);
+  if (!market || market.status !== "OPEN") {
+    fail(409, "CAMPAIGN_CLOSED", "Campaign market is no longer open");
+  }
+  const settled = await evaluateTargetSettled(deps.store, row.campaignId, market.policyVersion);
+  if (settled.complete) {
+    fail(409, "TARGET_REACHED", "Market objective is complete and settled; participation is closed");
+  }
+  const version = await deps.store.getVersion(row.campaignId, market.policyVersion);
+  if (!version || !version.deadline || version.deadline <= now) {
+    fail(409, "EXPIRED", "Campaign deadline has passed");
+  }
+  const profile = await deps.store.getPartnerByUserId(params.creatorUserId).catch(() => null);
+  if (!profile) {
+    fail(409, "NOT_ELIGIBLE", "Creator participation profile is missing");
+  }
+  // Edge: creator joined independently after being invited. Compatible
+  // frozen economics resolve idempotently; anything else is a conflict —
+  // historical terms always win over rewriting history.
+  const existing = await deps.store.getTerms(row.campaignId, profile.id);
+  if (existing) {
+    const compatible =
+      existing.priceMicroUsdc === row.offeredBountyMicroUsdc &&
+      existing.policyVersion === row.offeredPolicyVersion &&
+      existing.marketVersion === row.offeredMarketVersion;
+    if (!compatible) {
+      fail(
+        409,
+        "PARTICIPATION_CONFLICT",
+        `Existing participation pays ${existing.priceMicroUsdc.toString()} micro-USDC; invitation offers ${row.offeredBountyMicroUsdc.toString()}. Kept as-is — no rewrite.`,
+      );
+    }
+  }
+  const joined = existing
+    ? await (async () => {
+        const referral = await deps.store.getReferralByTerms(existing.id).catch(() => null);
+        if (!referral) fail(500, "INTERNAL", "Terms exist without a referral");
+        return { terms: serializeTerms(existing), referral: { id: referral.id, code: referral.code }, alreadyJoined: true as const };
+      })()
+    : await joinCampaign(deps, {
+        campaignId: row.campaignId,
+        userId: params.creatorUserId,
+        frozenOffer: {
+          bountyMicroUsdc: row.offeredBountyMicroUsdc,
+          policyVersion: row.offeredPolicyVersion,
+          marketVersion: row.offeredMarketVersion,
+        },
+      });
+  const updated = await deps.store.updateInvitationStatus(row.id, "ACCEPTED");
+  await deps
+    .audit({
+      actorType: "USER",
+      actorId: params.creatorUserId,
+      workspaceId: campaign.workspaceId,
+      partnerId: profile.id,
+      action: "creator.invitation.accepted",
+      targetType: "invitation",
+      targetId: row.id,
+      metadata: {
+        campaignId: row.campaignId,
+        creatorUserId: params.creatorUserId,
+        invitationId: row.id,
+        offeredBountyMicroUsdc: row.offeredBountyMicroUsdc.toString(),
+        offeredOutcomeKind: row.offeredOutcomeKind,
+        offeredPolicyVersion: row.offeredPolicyVersion,
+        offeredMarketVersion: row.offeredMarketVersion,
+        termsId: joined.terms.id,
+        referralId: joined.referral.id,
+        alreadyJoined: joined.alreadyJoined,
+      },
+    })
+    .catch(() => {});
+  await markInviteNotificationRead(deps, params.creatorUserId, row.id);
+  return {
+    invitation: toDto(updated, await handleFor(deps.store, params.creatorUserId)),
+    participation: {
+      termsId: joined.terms.id,
+      priceMicroUsdc: joined.terms.priceMicroUsdc,
+      policyVersion: joined.terms.policyVersion,
+      marketVersion: joined.terms.marketVersion,
+      source: joined.terms.source,
+    },
+    referral: { id: joined.referral.id, code: joined.referral.code, path: `/r/${joined.referral.code}` },
+    alreadyJoined: joined.alreadyJoined,
+  };
+}
+
+/** Decline: INVITED → DECLINED. No participation, referral, or payout. Idempotent. */
 export async function declineInvitation(
-  _deps: InvitationDeps,
-  _params: { creatorUserId: string; invitationId: string },
-): Promise<never> {
-  fail(501, "NOT_IMPLEMENTED", "Invitation decline ships in Slice 3");
-  throw new Error("unreachable");
+  deps: InvitationDeps,
+  params: { creatorUserId: string; invitationId: string },
+): Promise<InvitationDto> {
+  const row = await requireOwnedInvitation(deps, params);
+  if (row.status === "DECLINED") {
+    return toDto(row, await handleFor(deps.store, params.creatorUserId));
+  }
+  if (row.status !== "INVITED") {
+    fail(
+      409,
+      "INVITATION_LOCKED",
+      row.status === "ACCEPTED"
+        ? "Invitation is already accepted and cannot be declined"
+        : `Invitation is ${row.status} and can no longer be declined`,
+    );
+  }
+  const updated = await deps.store.updateInvitationStatus(row.id, "DECLINED");
+  await deps
+    .audit({
+      actorType: "USER",
+      actorId: params.creatorUserId,
+      workspaceId: null,
+      partnerId: null,
+      action: "creator.invitation.declined",
+      targetType: "invitation",
+      targetId: row.id,
+      metadata: { campaignId: row.campaignId, creatorUserId: params.creatorUserId, invitationId: row.id },
+    })
+    .catch(() => {});
+  await markInviteNotificationRead(deps, params.creatorUserId, row.id);
+  return toDto(updated, await handleFor(deps.store, params.creatorUserId));
 }
