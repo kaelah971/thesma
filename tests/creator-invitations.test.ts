@@ -221,7 +221,7 @@ describe("invitation lifecycle", () => {
       { candidate: seed("creator-good", "bgirl"), history: HIST["creator-good"] },
     );
     expect(Object.keys(res.invitation).sort()).toEqual(
-      ["createdAt", "campaignId", "creatorHandle", "creatorUserId", "id", "match", "offered", "respondedAt", "status"].sort(),
+      ["acceptedBy", "createdAt", "campaignId", "creatorHandle", "creatorUserId", "id", "match", "offered", "respondedAt", "status"].sort(),
     );
     expect(JSON.stringify(res.invitation)).not.toMatch(/wallet|email|rulesJson|secret|token|session|payoutWallet/i);
     const inbox = await listCreatorInvitations({ store, audit: sink }, { creatorUserId: "creator-good" });
@@ -421,6 +421,185 @@ describe("creator accept / decline", () => {
     const after = await listCreatorOpportunities(deps, { creatorUserId: "creator-good" });
     expect(after[0].offered.bountyMicroUsdc).toBe("2000000");
     expect(await listCreatorOpportunities(deps, { creatorUserId: "stranger" })).toHaveLength(0);
+  });
+});
+
+describe("creator agent auto-accept", () => {
+  const ON = { ...GOOD_RULES, autoJoin: true, minScoutConfidence: "LOW" as const };
+  function snap(decision: "RECOMMEND" | "WATCH" = "RECOMMEND", confidence: "HIGH" | "MEDIUM" | "LOW" = "HIGH") {
+    return {
+      candidates: [{
+        facts: {
+          campaignId: "c-1", workspaceName: "Acme", objective: "Get customers", category: "ai",
+          bountyMicroUsdc: "2000000", targetOutcomeCount: 10, verifiedOutcomes: 0,
+          deadline: new Date(NOW.getTime() + 10 * 86_400_000),
+          campaignState: "LIVE", marketStatus: "OPEN", minQualifyingMicroUsdc: "500000", holdSeconds: 3600,
+          alreadyJoined: false, referralPath: null, creatorVerifiedTotal: 0, creatorVerifiedRecent: 0,
+          creatorActions: 0, creatorSettledTotalMicroUsdc: "0", paceStatus: null,
+        },
+        eligibility: "ELIGIBLE", eligibilityReason: "ok", score: 80, rank: 1,
+        decision, reason: "Strong match", confidence, evidenceUsed: [],
+        earningsEstimateMicroUsdc: null, earningsNote: "",
+      }],
+      plan: { topOpportunities: [], watchlist: [], joined: [], notEligible: [], summary: "" },
+    };
+  }
+  async function onSetup() {
+    const ctx = await liveSetup();
+    await ctx.store.updatePartnerRules("p-good", ON);
+    return ctx;
+  }
+  function inviteOpts() {
+    return {
+      candidate: seed("creator-good", "bgirl"),
+      history: HIST["creator-good"],
+      snapshot: snap() as never,
+      joinsToday: 0,
+    };
+  }
+
+  it("autoJoin OFF means REVIEW with no accept", async () => {
+    const ctx = await liveSetup();
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW };
+    const res = await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, {
+      candidate: seed("creator-good"), history: HIST["creator-good"],
+    });
+    expect(res.invitation.status).toBe("INVITED");
+    expect(await store.listPartnerTerms("p-good")).toHaveLength(0);
+    const { evaluateInvitationAuthority } = await import("@/server/services/scout");
+    const assessment = await evaluateInvitationAuthority(
+      { store, now: () => NOW },
+      { creatorUserId: "creator-good", campaignId: "c-1", invitationId: res.invitation.id, invitationStatus: "INVITED", offeredBountyMicroUsdc: 2_000_000n },
+      { joinsToday: 0, snapshot: snap() as never },
+    );
+    expect(assessment.result).toBe("REVIEW");
+    expect(assessment.rule).toBe("AUTOJOIN_DISABLED");
+    // Human override still works on the REVIEW row.
+    const manual = await acceptInvitation(deps, { creatorUserId: "creator-good", invitationId: res.invitation.id });
+    expect(manual.invitation.status).toBe("ACCEPTED");
+    expect(manual.alreadyJoined).toBe(false);
+  });
+
+  it("autoJoin ON with passing rules auto-accepts once with full proof", async () => {
+    const { createMemoryNotificationStore } = await import("@/server/services/creatorNotifications");
+    const notifications = createMemoryNotificationStore();
+    const ctx = await onSetup();
+    const { store, sink, events } = ctx;
+    const deps = { store, audit: sink, now: () => NOW, notifications };
+    const res = await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, inviteOpts());
+    expect(res.invitation.status).toBe("ACCEPTED");
+    expect(res.invitation.acceptedBy).toBe("AGENT");
+    const terms = await store.listPartnerTerms("p-good");
+    expect(terms).toHaveLength(1);
+    expect(terms[0].priceMicroUsdc).toBe(2_000_000n);
+    expect(terms[0].source).toBe("INVITED");
+    expect(await store.getPayoutByOutcome("anything")).toBeNull();
+    expect(await store.listReservationsByCampaign("c-1")).toHaveLength(0);
+    // Audit-backed acceptedBy resolution needs a real DB; in unit tests the
+    // direct return carries the mode while list resolution stays best-effort.
+    const org = await listInvitations(deps, { callerUserId: "owner-1", campaignId: "c-1" });
+    expect(org.find((r) => r.id === res.invitation.id)?.status).toBe("ACCEPTED");
+    const alerts = await notifications.listForCreator("creator-good");
+    const joined = alerts.filter((n) => n.type === "AUTO_JOINED");
+    expect(joined).toHaveLength(1);
+    expect(joined[0].dedupeKey).toBe(`autoaccept:${res.invitation.id}`);
+    expect(joined[0].message).toMatch(/satisfied your Scout rules/);
+    expect(alerts.find((n) => n.dedupeKey === `invite:${res.invitation.id}`)?.readAt).not.toBeNull();
+    const actions = events.map((e) => (e as { action?: string }).action);
+    expect(actions).toContain("creator.invitation.agent_evaluated");
+    expect(actions).toContain("creator.invitation.accepted");
+    // Repeat recovery is quiet: no new participation, alerts, or audits.
+    const { recoverCreatorInvitations } = await import("@/server/services/invitations");
+    const auditCount = events.length;
+    const second = await recoverCreatorInvitations(deps, { creatorUserId: "creator-good" });
+    expect(second).toEqual({ accepted: 0, evaluated: 0 });
+    expect(await store.listPartnerTerms("p-good")).toHaveLength(1);
+    expect((await notifications.listForCreator("creator-good")).filter((n) => n.type === "AUTO_JOINED")).toHaveLength(1);
+    expect(events.length).toBe(auditCount);
+  });
+
+  it("authority uses the frozen bounty, never the current one", async () => {
+    const ctx = await onSetup();
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW };
+    const { evaluateInvitationAuthority } = await import("@/server/services/scout");
+    const base = { creatorUserId: "creator-good", campaignId: "c-1", invitationId: "x", invitationStatus: "INVITED" };
+    // Frozen 2M below a 4M minimum refuses.
+    await store.updatePartnerRules("p-good", { ...ON, minimumBountyMicroUsdc: "4000000" });
+    const refused = await evaluateInvitationAuthority(
+      { store, now: () => NOW },
+      { ...base, offeredBountyMicroUsdc: 2_000_000n },
+      { joinsToday: 0, snapshot: snap() as never },
+    );
+    expect(refused.result).toBe("REFUSE");
+    expect(refused.rule).toBe("MIN_BOUNTY");
+    // Frozen 5M still satisfies the same minimum after the live market drops.
+    const ok = await evaluateInvitationAuthority(
+      { store, now: () => NOW },
+      { ...base, offeredBountyMicroUsdc: 5_000_000n },
+      { joinsToday: 0, snapshot: snap() as never },
+    );
+    expect(ok.result).toBe("AUTO_ACCEPT");
+    void deps;
+  });
+
+  it("blocked categories, low confidence, full capacity and daily caps never auto-accept", async () => {
+    const { evaluateInvitationAuthority } = await import("@/server/services/scout");
+    const ctx = await onSetup();
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW };
+    const base = { creatorUserId: "creator-good", campaignId: "c-1", invitationId: "x", invitationStatus: "INVITED", offeredBountyMicroUsdc: 2_000_000n };
+    // Blocked category.
+    await store.updatePartnerRules("p-good", { ...ON, blockedCategories: ["ai"] });
+    expect((await evaluateInvitationAuthority({ store, now: () => NOW }, base, { joinsToday: 0, snapshot: snap() as never })).result).toBe("REFUSE");
+    // Low confidence vs HIGH threshold.
+    await store.updatePartnerRules("p-good", { ...ON, minScoutConfidence: "HIGH" });
+    const low = await evaluateInvitationAuthority({ store, now: () => NOW }, base, { joinsToday: 0, snapshot: snap("RECOMMEND", "LOW") as never });
+    expect(low.result).toBe("REVIEW");
+    // Daily rate cap.
+    await store.updatePartnerRules("p-good", { ...ON, maxAutoJoinsPerDay: 1 });
+    const capped = await evaluateInvitationAuthority({ store, now: () => NOW }, base, { joinsToday: 1, snapshot: snap() as never });
+    expect(capped.result).toBe("REFUSE");
+    expect(capped.rule).toBe("RATE_LIMITED");
+    // Full active capacity (three other campaigns; none for c-1 itself).
+    await store.updatePartnerRules("p-good", ON);
+    for (let i = 0; i < 3; i += 1) {
+      await store.insertTerms({
+        id: `t-${i}`, campaignId: `c-other-${i}`, partnerId: "p-good", priceMicroUsdc: 2_000_000n,
+        allocationCount: 1, source: "PUBLIC", expiresAt: new Date(NOW.getTime() + 86400000),
+        policyVersion: 1, marketVersion: 1,
+      });
+    }
+    const full = await evaluateInvitationAuthority({ store, now: () => NOW }, base, { joinsToday: 0, snapshot: snap() as never });
+    expect(full.result).toBe("REFUSE");
+    expect(full.rule).toBe("MAX_ACTIVE");
+    void deps;
+  });
+
+  it("REFUSE never declines; background recovery accepts later when permitted", async () => {
+    const { createMemoryNotificationStore } = await import("@/server/services/creatorNotifications");
+    const { recoverCreatorInvitations } = await import("@/server/services/invitations");
+    const notifications = createMemoryNotificationStore();
+    const ctx = await liveSetup();
+    const { store, sink } = ctx;
+    const deps = { store, audit: sink, now: () => NOW, notifications };
+    // Invite while OFF: REVIEW, row stays INVITED, nothing joined.
+    const res = await createInvitation(deps, { callerUserId: "owner-1", campaignId: "c-1", creatorUserId: "creator-good" }, {
+      candidate: seed("creator-good"), history: HIST["creator-good"],
+    });
+    expect(res.invitation.status).toBe("INVITED");
+    expect(await store.listPartnerTerms("p-good")).toHaveLength(0);
+    // Creator enables auto-join later: background recovery accepts once.
+    await store.updatePartnerRules("p-good", ON);
+    const first = await recoverCreatorInvitations(deps, { creatorUserId: "creator-good" }, { joinsToday: 0, snapshot: snap() as never });
+    expect(first).toEqual({ accepted: 1, evaluated: 1 });
+    expect((await store.getInvitation(res.invitation.id))?.status).toBe("ACCEPTED");
+    expect((await store.listPartnerTerms("p-good"))).toHaveLength(1);
+    // Closed markets fail closed without crashing the batch.
+    await store.updateMarket("c-1", 1, { status: "CLOSED", version: 2 });
+    const closed = await recoverCreatorInvitations(deps, { creatorUserId: "creator-good" }, { joinsToday: 0, snapshot: snap() as never });
+    expect(closed).toEqual({ accepted: 0, evaluated: 0 });
   });
 });
 

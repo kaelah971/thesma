@@ -1,6 +1,7 @@
 import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { toApiError } from "@/server/api/errors";
 import { requireInternalSecret } from "@/server/api/internalAuth";
+import { recoverCreatorInvitations } from "@/server/services/invitations";
 import { runBackgroundScout } from "@/server/services/scout";
 
 const WORKER_SECRETS = ["SCOUT_WORKER_SECRET"];
@@ -15,7 +16,11 @@ const CRON_SECRETS = ["CRON_SECRET", ...WORKER_SECRETS];
 async function runWorker() {
   const wired = marketDepsOr503();
   if ("response" in wired) return wired.response;
-  const summary = await runBackgroundScout(wired.deps);
+  const summary = await runBackgroundScout({
+    ...wired.deps,
+    recoverInvitations: (creatorUserId: string) =>
+      recoverCreatorInvitations({ store: wired.deps.store, audit: wired.deps.audit }, { creatorUserId }),
+  });
   return Response.json(summary);
 }
 

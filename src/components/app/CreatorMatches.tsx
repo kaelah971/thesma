@@ -20,6 +20,7 @@ interface InviteState {
 export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
   const [report, setReport] = useState<MatchEngineReport | null>(null);
   const [invites, setInvites] = useState<InviteState>({ byCreator: {} });
+  const [inviteRows, setInviteRows] = useState<InvitationDto[]>([]);
   const [tab, setTab] = useState<Tab>("recommended");
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, setPending] = useState<string | null>(null);
@@ -41,6 +42,7 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
       }
     }
     setInvites({ byCreator });
+    setInviteRows(rows);
     setLoaded(true);
   }, [campaignId]);
 
@@ -203,6 +205,34 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
           <button type="button" className="btn btn-primary" disabled={pending === "bulk"} onClick={() => invite(selected)}>
             {pending === "bulk" ? "Inviting…" : `Invite selected (${selected.length})`}
           </button>
+        </div>
+      )}
+      {inviteRows.length > 0 && (
+        <div>
+          <h4 style={{ fontSize: 13, margin: "4px 0 8px" }}>Invitations</h4>
+          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>
+            {inviteRows.map((row) => (
+              <li key={row.id} style={{ fontSize: 12.5, display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center" }}>
+                <strong>{row.creatorHandle ? `@${row.creatorHandle}` : row.creatorUserId.slice(0, 8)}</strong>
+                <span>
+                  {row.status === "ACCEPTED"
+                    ? row.acceptedBy === "AGENT"
+                      ? "Accepted by creator agent"
+                      : "Accepted by creator"
+                    : row.status === "INVITED"
+                      ? "INVITED"
+                      : row.status === "DECLINED"
+                        ? "Declined"
+                        : "Cancelled"}
+                </span>
+                {row.status === "INVITED" && (
+                  <button type="button" className="btn btn-sm" disabled={pending === row.id} onClick={() => cancel(row.id)}>
+                    {pending === row.id ? "Working…" : "Cancel"}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

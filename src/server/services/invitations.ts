@@ -3,7 +3,16 @@ import { formatUsdc } from "@/lib/format";
 import { isUniqueViolation } from "./campaignStore";
 import type { AuditSink, InvitationStatus, MarketStore, StoredInvitation } from "./campaignStore";
 import { createDrizzleNotificationStore, type NotificationStore } from "./creatorNotifications";
+import { and, desc, eq } from "drizzle-orm";
+import { getDb } from "../db/client";
+import { auditEvents } from "../db/schema";
 import { evaluateTargetSettled, joinCampaign, serializeTerms } from "./markets";
+import {
+  evaluateInvitationAuthority,
+  loadScoutSnapshot,
+  type InvitationAgentResult,
+  type ScoutSnapshot,
+} from "./scout";
 import {
   evaluateCreatorForCampaign,
   loadCandidateSeed,
@@ -52,6 +61,8 @@ export interface InvitationDto {
   creatorUserId: string;
   creatorHandle: string | null;
   status: InvitationStatus;
+  /** Who accepted: AGENT (auto-accept), CREATOR (manual), or null (not accepted/unknown). */
+  acceptedBy: "AGENT" | "CREATOR" | null;
   offered: InvitationOffer & { bonus: Record<string, unknown> };
   match: { score: number; confidence: string; action: string; reasons: string[] };
   createdAt: string;
@@ -78,13 +89,14 @@ function fail(status: number, code: string, message: string): never {
   throw Object.assign(new Error(message), { status, code });
 }
 
-function toDto(row: StoredInvitation, handle: string | null): InvitationDto {
+function toDto(row: StoredInvitation, handle: string | null, acceptedBy: "AGENT" | "CREATOR" | null = null): InvitationDto {
   return {
     id: row.id,
     campaignId: row.campaignId,
     creatorUserId: row.creatorUserId,
     creatorHandle: handle,
     status: row.status,
+    acceptedBy: row.status === "ACCEPTED" ? acceptedBy : null,
     offered: {
       outcomeKind: row.offeredOutcomeKind,
       bountyMicroUsdc: row.offeredBountyMicroUsdc.toString(),
@@ -125,7 +137,7 @@ async function handleFor(store: MarketStore, creatorUserId: string): Promise<str
 export async function createInvitation(
   deps: InvitationDeps,
   params: { callerUserId: string; campaignId: string; creatorUserId: string },
-  opts?: { candidate?: CapabilitySeed | null; history?: HistorySeed | null },
+  opts?: { candidate?: CapabilitySeed | null; history?: HistorySeed | null; snapshot?: ScoutSnapshot; joinsToday?: number },
 ): Promise<InviteResult> {
   const now = deps.now?.() ?? new Date();
   if (params.creatorUserId === params.callerUserId) {
@@ -248,7 +260,25 @@ export async function createInvitation(
   } catch {
     // Notification state never blocks the invitation.
   }
-  return { invitation: toDto(row, candidate.handle), alreadyInvited: false };
+  // Slice 4: immediate agent evaluation. AUTO_ACCEPT flows through the same
+  // accept service; anything else (or any technical failure) leaves the
+  // valid invitation INVITED for human review and background retry.
+  try {
+    await evaluateAndAutoAcceptInvitation(
+      deps,
+      { creatorUserId: params.creatorUserId, invitationId: row.id },
+      { joinsToday: opts?.joinsToday, snapshot: opts?.snapshot },
+    );
+  } catch {
+    // Never fail invitation creation because of the agent pass.
+  }
+  const final = (await deps.store.getInvitation(row.id).catch(() => row)) ?? row;
+  // An ACCEPTED row here can only come from this call's own agent accept.
+  const acceptedBy = final.status === "ACCEPTED" ? ("AGENT" as const) : null;
+  return {
+    invitation: toDto(final, candidate.handle, acceptedBy),
+    alreadyInvited: false,
+  };
 }
 
 /* ---------------- Creator opportunity inbox (enriched, display-safe) ---------------- */
@@ -261,6 +291,10 @@ export interface CreatorOpportunity extends InvitationDto {
     deadline: string | null;
     visibility: string | null;
   };
+  /** Live agent assessment for INVITED rows (display only, never audited here). */
+  agent: { result: InvitationAgentResult; reasons: string[] } | null;
+  /** Referral once participating; null until ACCEPTED. */
+  referral: { code: string; path: string } | null;
 }
 
 /**
@@ -270,8 +304,13 @@ export interface CreatorOpportunity extends InvitationDto {
 export async function listCreatorOpportunities(
   deps: InvitationDeps,
   params: { creatorUserId: string },
+  opts?: { joinsToday?: number; snapshot?: ScoutSnapshot },
 ): Promise<CreatorOpportunity[]> {
   const rows = await deps.store.listInvitationsByCreator(params.creatorUserId);
+  const now = deps.now?.() ?? new Date();
+  // One shared Scout snapshot for every pending row on this page.
+  const snapshot = opts?.snapshot ?? (await loadScoutSnapshot(deps.store, params.creatorUserId, now).catch(() => null));
+  const profile = await deps.store.getPartnerByUserId(params.creatorUserId).catch(() => null);
   const out: CreatorOpportunity[] = [];
   for (const row of rows) {
     const campaign = await deps.store.getCampaign(row.campaignId).catch(() => null);
@@ -279,8 +318,34 @@ export async function listCreatorOpportunities(
     const version = campaign
       ? await deps.store.getVersion(row.campaignId, row.offeredPolicyVersion).catch(() => null)
       : null;
+    let agent: CreatorOpportunity["agent"] = null;
+    if (row.status === "INVITED" && snapshot) {
+      try {
+        const assessment = await evaluateInvitationAuthority(
+          { store: deps.store, now: () => now },
+          {
+            creatorUserId: params.creatorUserId,
+            campaignId: row.campaignId,
+            invitationId: row.id,
+            invitationStatus: row.status,
+            offeredBountyMicroUsdc: row.offeredBountyMicroUsdc,
+          },
+          { joinsToday: opts?.joinsToday, snapshot },
+        );
+        agent = { result: assessment.result, reasons: assessment.reasons };
+      } catch {
+        agent = null;
+      }
+    }
+    let referral: CreatorOpportunity["referral"] = null;
+    const acceptedBy = row.status === "ACCEPTED" ? await resolveAcceptedBy(deps, row.id) : null;
+    if (row.status === "ACCEPTED" && profile) {
+      const terms = await deps.store.getTerms(row.campaignId, profile.id).catch(() => null);
+      const ref = terms ? await deps.store.getReferralByTerms(terms.id).catch(() => null) : null;
+      if (ref) referral = { code: ref.code, path: `/r/${ref.code}` };
+    }
     out.push({
-      ...toDto(row, null),
+      ...toDto(row, null, acceptedBy),
       campaign: {
         workspaceName: workspace?.name ?? "Unknown organization",
         objective: version?.intentText ?? "",
@@ -288,6 +353,8 @@ export async function listCreatorOpportunities(
         deadline: version?.deadline ? version.deadline.toISOString() : null,
         visibility: version?.marketVisibility ?? null,
       },
+      agent,
+      referral,
     });
   }
   return out;
@@ -393,7 +460,8 @@ export async function listInvitations(
   const rows = await deps.store.listInvitationsByCampaign(params.campaignId);
   const out: InvitationDto[] = [];
   for (const row of rows) {
-    out.push(toDto(row, await handleFor(deps.store, row.creatorUserId)));
+    const acceptedBy = row.status === "ACCEPTED" ? await resolveAcceptedBy(deps, row.id) : null;
+    out.push(toDto(row, await handleFor(deps.store, row.creatorUserId), acceptedBy));
   }
   return out;
 }
@@ -455,9 +523,28 @@ async function requireOwnedInvitation(
  * Slice 4 entry point: evaluate the invitation against creator rules, then
  * call this same service to AUTO_ACCEPT (no separate accept path).
  */
+/** Who accepted: derived from the accept audit row (mode), never stored twice. */
+async function resolveAcceptedBy(deps: InvitationDeps, invitationId: string): Promise<"AGENT" | "CREATOR" | null> {
+  try {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.action, "creator.invitation.accepted"), eq(auditEvents.targetId, invitationId)))
+      .orderBy(desc(auditEvents.createdAt))
+      .limit(1);
+    if (!row) return null;
+    const mode = (row.metadata as { mode?: unknown } | null)?.mode;
+    return mode === "AGENT" ? "AGENT" : "CREATOR";
+  } catch {
+    return null;
+  }
+}
+
 export async function acceptInvitation(
   deps: InvitationDeps,
   params: { creatorUserId: string; invitationId: string },
+  opts?: { mode?: "AGENT" | "MANUAL" },
 ): Promise<AcceptResult> {
   const now = deps.now?.() ?? new Date();
   const row = await requireOwnedInvitation(deps, params);
@@ -470,7 +557,7 @@ export async function acceptInvitation(
     }
     await markInviteNotificationRead(deps, params.creatorUserId, row.id);
     return {
-      invitation: toDto(row, await handleFor(deps.store, params.creatorUserId)),
+      invitation: toDto(row, await handleFor(deps.store, params.creatorUserId), await resolveAcceptedBy(deps, row.id)),
       participation: {
         termsId: terms.id,
         priceMicroUsdc: terms.priceMicroUsdc.toString(),
@@ -554,6 +641,7 @@ export async function acceptInvitation(
       targetType: "invitation",
       targetId: row.id,
       metadata: {
+        mode: opts?.mode ?? "MANUAL",
         campaignId: row.campaignId,
         creatorUserId: params.creatorUserId,
         invitationId: row.id,
@@ -569,7 +657,11 @@ export async function acceptInvitation(
     .catch(() => {});
   await markInviteNotificationRead(deps, params.creatorUserId, row.id);
   return {
-    invitation: toDto(updated, await handleFor(deps.store, params.creatorUserId)),
+    invitation: toDto(
+      updated,
+      await handleFor(deps.store, params.creatorUserId),
+      (opts?.mode ?? "MANUAL") === "AGENT" ? "AGENT" : "CREATOR",
+    ),
     participation: {
       termsId: joined.terms.id,
       priceMicroUsdc: joined.terms.priceMicroUsdc,
@@ -615,4 +707,142 @@ export async function declineInvitation(
     .catch(() => {});
   await markInviteNotificationRead(deps, params.creatorUserId, row.id);
   return toDto(updated, await handleFor(deps.store, params.creatorUserId));
+}
+
+/* ---------------- Agent auto-accept (Slice 4) ---------------- */
+
+export interface AutoAcceptOutcome {
+  accepted: boolean;
+  result: InvitationAgentResult | "ERROR";
+  reasons: string[];
+  rule: string | null;
+}
+
+/**
+ * Evaluate one pending invitation against the creator's existing rules and
+ * auto-accept through the SAME accept service on AUTO_ACCEPT. REFUSE never
+ * declines — the row stays INVITED for human review. Technical failures
+ * keep the invitation intact for later retry.
+ */
+export async function evaluateAndAutoAcceptInvitation(
+  deps: InvitationDeps,
+  params: { creatorUserId: string; invitationId: string },
+  opts?: { auditEvaluation?: boolean; joinsToday?: number; snapshot?: ScoutSnapshot },
+): Promise<AutoAcceptOutcome> {
+  const row = await deps.store.getInvitation(params.invitationId).catch(() => null);
+  if (!row || row.creatorUserId !== params.creatorUserId) {
+    return { accepted: false, result: "ERROR", reasons: ["Invitation not found."], rule: null };
+  }
+  try {
+    const assessment = await evaluateInvitationAuthority(
+      { store: deps.store, now: deps.now },
+      {
+        creatorUserId: row.creatorUserId,
+        campaignId: row.campaignId,
+        invitationId: row.id,
+        invitationStatus: row.status,
+        offeredBountyMicroUsdc: row.offeredBountyMicroUsdc,
+      },
+      { joinsToday: opts?.joinsToday, snapshot: opts?.snapshot },
+    );
+    if (opts?.auditEvaluation !== false) {
+      await deps
+        .audit({
+          actorType: "SYSTEM",
+          actorId: null,
+          workspaceId: null,
+          partnerId: null,
+          action: "creator.invitation.agent_evaluated",
+          targetType: "invitation",
+          targetId: row.id,
+          metadata: {
+            campaignId: row.campaignId,
+            creatorUserId: row.creatorUserId,
+            invitationId: row.id,
+            result: assessment.result,
+            rule: assessment.rule,
+            frozenBountyMicroUsdc: row.offeredBountyMicroUsdc.toString(),
+            confidence: assessment.confidence,
+            reasons: assessment.reasons.slice(0, 6),
+          },
+        })
+        .catch(() => {});
+    }
+    if (assessment.result !== "AUTO_ACCEPT") {
+      return { accepted: false, result: assessment.result, reasons: assessment.reasons, rule: assessment.rule };
+    }
+    const accepted = await acceptInvitation(deps, { creatorUserId: row.creatorUserId, invitationId: row.id }, { mode: "AGENT" });
+    // One deduped agent-acceptance alert (accept already marked CAMPAIGN_INVITED read).
+    try {
+      const store = deps.notifications ?? createDrizzleNotificationStore();
+      const campaign = await deps.store.getCampaign(row.campaignId).catch(() => null);
+      const workspace = campaign ? await deps.store.getWorkspace(campaign.workspaceId).catch(() => null) : null;
+      await store.insertIfAbsent(row.creatorUserId, {
+        type: "AUTO_JOINED",
+        campaignId: row.campaignId,
+        title: `Agent accepted ${workspace?.name ?? "a campaign"}`,
+        message: `Your agent accepted ${workspace?.name ?? "a campaign"} because it satisfied your Scout rules — ${describeOffer(row.offeredOutcomeKind, row.offeredBountyMicroUsdc.toString())}, frozen at invite time.`,
+        dedupeKey: `autoaccept:${row.id}`,
+        metadataJson: {
+          invitationId: row.id,
+          campaignId: row.campaignId,
+          referralCode: accepted.referral.code,
+          referralPath: accepted.referral.path,
+          mode: "AGENT",
+        },
+      });
+    } catch {
+      // Notification state never blocks the acceptance.
+    }
+    return { accepted: true, result: "AUTO_ACCEPT", reasons: assessment.reasons, rule: assessment.rule };
+  } catch (e) {
+    await deps
+      .audit({
+        actorType: "SYSTEM",
+        actorId: null,
+        workspaceId: null,
+        partnerId: null,
+        action: "creator.invitation.agent_evaluated",
+        targetType: "invitation",
+        targetId: row.id,
+        metadata: {
+          campaignId: row.campaignId,
+          creatorUserId: row.creatorUserId,
+          invitationId: row.id,
+          result: "ERROR",
+          error: (e as Error).message,
+        },
+      })
+      .catch(() => {});
+    return { accepted: false, result: "ERROR", reasons: [(e as Error).message], rule: null };
+  }
+}
+
+/**
+ * Background recovery: re-evaluate pending INVITED rows for one creator.
+ * Quiet by design — only acceptances audit/notify; REVIEW/REFUSE rows
+ * produce nothing so repeat runs stay silent.
+ */
+export async function recoverCreatorInvitations(
+  deps: InvitationDeps,
+  params: { creatorUserId: string },
+  opts?: { joinsToday?: number; snapshot?: ScoutSnapshot },
+): Promise<{ accepted: number; evaluated: number }> {
+  const rows = await deps.store.listInvitationsByCreator(params.creatorUserId).catch(() => []);
+  let accepted = 0;
+  let evaluated = 0;
+  for (const row of rows.filter((r) => r.status === "INVITED")) {
+    try {
+      evaluated += 1;
+      const out = await evaluateAndAutoAcceptInvitation(
+        deps,
+        { creatorUserId: params.creatorUserId, invitationId: row.id },
+        { auditEvaluation: false, joinsToday: opts?.joinsToday, snapshot: opts?.snapshot },
+      );
+      if (out.accepted) accepted += 1;
+    } catch {
+      // One row's failure never aborts the rest.
+    }
+  }
+  return { accepted, evaluated };
 }

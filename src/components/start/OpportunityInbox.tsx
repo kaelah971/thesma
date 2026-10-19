@@ -10,6 +10,7 @@ interface Opportunity {
   id: string;
   campaignId: string;
   status: string;
+  acceptedBy: "AGENT" | "CREATOR" | null;
   offered: {
     outcomeKind: string;
     bountyMicroUsdc: string;
@@ -19,6 +20,8 @@ interface Opportunity {
   };
   match: { score: number; confidence: string; action: string; reasons: string[] };
   campaign: { workspaceName: string; objective: string; category: string | null; deadline: string | null };
+  agent: { result: string; reasons: string[] } | null;
+  referral: { code: string; path: string } | null;
   respondedAt: string | null;
 }
 
@@ -115,6 +118,31 @@ export function OpportunityInbox() {
               <strong>Thesma Scout · {o.match.confidence} match ({o.match.score})</strong>
               <span style={{ display: "block", color: "var(--ink-2)" }}>{o.match.reasons.join(" · ") || "Matched on campaign fit."}</span>
             </span>
+            {o.status === "ACCEPTED" && o.acceptedBy === "AGENT" && (
+              <span style={{ display: "block", fontSize: 12.5, marginTop: 4 }}>
+                <strong>Accepted by your agent</strong>
+                <span style={{ display: "block", color: "var(--ink-2)" }}>
+                  The frozen offer satisfied your Scout rules — {offerLine(o.offered)}, terms frozen at invite time.
+                </span>
+              </span>
+            )}
+            {o.status === "INVITED" && o.agent?.result === "REVIEW" && (
+              <span style={{ display: "block", fontSize: 12.5, marginTop: 4 }}>
+                <strong>Your review is required</strong>
+                <span style={{ display: "block", color: "var(--ink-2)" }}>{o.agent.reasons.join(" · ")}</span>
+              </span>
+            )}
+            {o.status === "INVITED" && o.agent?.result === "REFUSE" && (
+              <span style={{ display: "block", fontSize: 12.5, marginTop: 4 }}>
+                <strong>Your agent did not accept this</strong>
+                <span style={{ display: "block", color: "var(--ink-2)" }}>{o.agent.reasons.join(" · ")}</span>
+              </span>
+            )}
+            {o.status === "ACCEPTED" && o.referral && (
+              <span style={{ display: "block", fontSize: 12.5, marginTop: 4 }}>
+                Referral <Link href={o.referral.path}>/r/{o.referral.code}</Link>
+              </span>
+            )}
             <span style={{ display: "block", fontSize: 12, marginTop: 4, color: "var(--ink-2)" }}>
               Accepted ≠ earned · Verified ≠ paid · Submitted ≠ settled.
             </span>

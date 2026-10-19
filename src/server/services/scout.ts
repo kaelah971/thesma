@@ -576,6 +576,170 @@ export async function runScoutAutoJoin(
   return summary;
 }
 
+/* ---------------- Invitation authority adapter (Slice 4) ---------------- */
+
+export type InvitationAgentResult = "AUTO_ACCEPT" | "REVIEW" | "REFUSE";
+
+export interface InvitationAuthorityInput {
+  creatorUserId: string;
+  campaignId: string;
+  invitationId: string;
+  invitationStatus: string;
+  offeredBountyMicroUsdc: bigint;
+}
+
+export interface InvitationAuthorityAssessment {
+  result: InvitationAgentResult;
+  reasons: string[];
+  rule: string;
+  verdict: AutoJoinVerdict;
+  matchScore: number | null;
+  confidence: ScoutConfidence | null;
+}
+
+/**
+ * Creator-agent evaluation of one org invitation against the creator's
+ * EXISTING rules. Same Scout snapshot, same evaluateAutoJoinAuthority,
+ * same gates as manual Run Scout — the only substitution is the frozen
+ * invitation bounty for the economic/policy checks. REFUSE never declines;
+ * the invitation stays INVITED for human review.
+ */
+export async function evaluateInvitationAuthority(
+  deps: { store: MarketStore; now?: () => Date },
+  input: InvitationAuthorityInput,
+  opts?: {
+    joinsTodayByPartner?: (partnerId: string) => Promise<number>;
+    joinsToday?: number;
+    snapshot?: ScoutSnapshot;
+  },
+): Promise<InvitationAuthorityAssessment> {
+  const now = deps.now?.() ?? new Date();
+  const refuse = (rule: string, reasons: string[]): InvitationAuthorityAssessment => ({
+    result: "REFUSE",
+    reasons,
+    rule,
+    verdict: "REFUSE",
+    matchScore: null,
+    confidence: null,
+  });
+  const review = (
+    rule: string,
+    reasons: string[],
+    extra?: Partial<InvitationAuthorityAssessment>,
+  ): InvitationAuthorityAssessment => ({
+    result: "REVIEW",
+    reasons,
+    rule,
+    verdict: "RECOMMEND_ONLY",
+    matchScore: null,
+    confidence: null,
+    ...extra,
+  });
+  const profile = await deps.store.getPartnerByUserId(input.creatorUserId).catch(() => null);
+  if (!profile) return refuse("NO_PROFILE", ["No creator participation profile yet."]);
+  const parsed = parsePartnerRules(profile.rulesJson);
+  if (!parsed.ok) return refuse("INVALID_RULES", ["Stored creator rules are invalid."]);
+  const rules = (parsed as { ok: true; rules: import("../domain/market").PartnerRules }).rules;
+  if (!rules.autoJoin) {
+    return review("AUTOJOIN_DISABLED", ["Auto-join is off — Scout can recommend, but only you can accept."]);
+  }
+  if (input.invitationStatus !== "INVITED") {
+    return refuse("NOT_PENDING", ["Invitation is no longer pending."]);
+  }
+  const snapshot = opts?.snapshot ?? (await loadScoutSnapshot(deps.store, input.creatorUserId, now));
+  const candidate = snapshot.candidates.find((c) => c.facts.campaignId === input.campaignId) ?? null;
+  if (!candidate) {
+    // No live Scout view: check raw campaign truth before failing closed.
+    const campaign = await deps.store.getCampaign(input.campaignId).catch(() => null);
+    const market = campaign ? await deps.store.getMarket(input.campaignId).catch(() => null) : null;
+    if (!campaign || campaign.state !== "LIVE" || !market || market.status !== "OPEN") {
+      return refuse("CAMPAIGN_CLOSED", ["Campaign is no longer live with an open market."]);
+    }
+    const settled = await evaluateTargetSettled(deps.store, input.campaignId, market.policyVersion).catch(() => ({
+      complete: false,
+    }));
+    if (settled.complete) return refuse("TARGET_SETTLED", ["Market objective is complete and settled."]);
+    return review("NO_SCOUT_VIEW", ["No live Scout assessment for this campaign yet — your review is required."]);
+  }
+  const terms = await deps.store.listPartnerTerms(profile.id).catch(() => []);
+  const activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+  // Existing participation resolves to human confirm, never an agent-driven
+  // rewrite; the accept service still guards conflicting history.
+  const existingTerms = await deps.store.getTerms(input.campaignId, profile.id).catch(() => null);
+  if (existingTerms) {
+    return review("ALREADY_JOINED", ["Already participating — accept to confirm the invitation."]);
+  }
+  let joinsToday = opts?.joinsToday ?? 0;
+  if (opts?.joinsToday === undefined) {
+    if (opts?.joinsTodayByPartner) {
+      joinsToday = await opts.joinsTodayByPartner(profile.id);
+    } else if (rules.maxAutoJoinsPerDay !== null) {
+      try {
+        const db = getDb();
+        const dayStart = new Date(now);
+        dayStart.setUTCHours(0, 0, 0, 0);
+        const rows = await db.select().from(referrals).where(eq(referrals.partnerId, profile.id));
+        joinsToday = rows.filter((r) => r.createdAt >= dayStart).length;
+      } catch {
+        joinsToday = Number.MAX_SAFE_INTEGER;
+      }
+    }
+  }
+  const normCategory = (v: string | null) => (v ?? "").trim().toLowerCase();
+  const allowed = rules.allowedCategories.map((x) => x.toLowerCase());
+  const cat = normCategory(candidate.facts.category);
+  const authority = evaluateAutoJoinAuthority({
+    autoJoinEnabled: rules.autoJoin,
+    scoutDecision: candidate.decision,
+    eligibility: candidate.eligibility,
+    confidence: candidate.confidence,
+    confidenceThreshold: rules.minScoutConfidence,
+    bountyMicroUsdc: input.offeredBountyMicroUsdc,
+    minBountyMicroUsdc: rules.minimumBountyMicroUsdc,
+    categoryBlocked: cat !== "" && rules.blockedCategories.map((x) => x.toLowerCase()).includes(cat),
+    categoryAllowed: allowed.length === 0 || (cat !== "" && allowed.includes(cat)),
+    activeTermsCount,
+    maxActiveCampaigns: rules.maxActiveCampaigns,
+    campaignLive: candidate.facts.campaignState === "LIVE",
+    visibilityPublic: true,
+    deadlineOk: candidate.facts.deadline ? new Date(candidate.facts.deadline) > now : true,
+    targetSettled: false,
+    alreadyJoined: false,
+    joinsToday,
+    maxJoinsPerDay: rules.maxAutoJoinsPerDay,
+  });
+  const baseReasons = [
+    `Score ${candidate.score}, ${candidate.confidence} confidence.`,
+    `Frozen offer ${input.offeredBountyMicroUsdc.toString()} micro-USDC evaluated — never the current bounty.`,
+  ];
+  if (authority.verdict === "AUTO_JOIN") {
+    return {
+      result: "AUTO_ACCEPT",
+      reasons: ["Auto-join is on and every rule permits it.", ...baseReasons, authority.reason],
+      rule: authority.rule,
+      verdict: authority.verdict,
+      matchScore: candidate.score,
+      confidence: candidate.confidence,
+    };
+  }
+  if (authority.verdict === "RECOMMEND_ONLY") {
+    return {
+      ...review(authority.rule, [authority.reason, ...baseReasons], {
+        matchScore: candidate.score,
+        confidence: candidate.confidence,
+      }),
+    };
+  }
+  return {
+    result: "REFUSE",
+    reasons: [authority.reason, ...baseReasons],
+    rule: authority.rule,
+    verdict: authority.verdict,
+    matchScore: candidate.score,
+    confidence: candidate.confidence,
+  };
+}
+
 /** Alert candidates for one manual Run Scout pass. Pure — no delivery. */
 export function alertsForAutoJoinRun(summary: ScoutRunSummary): ScoutAlert[] {
   const alerts: ScoutAlert[] = [];
@@ -860,6 +1024,8 @@ export interface BackgroundScoutDeps {
   audit: AuditSink;
   now?: () => Date;
   notifications?: NotificationStore;
+  /** Slice 4 recovery hook (wired by the job route — no import cycle). */
+  recoverInvitations?: (creatorUserId: string) => Promise<{ accepted: number }>;
   /** Test seam: replace live snapshot loading (evidence lives in the DB in production). */
   loadSnapshot?: (store: MarketStore, userId: string, now: Date) => Promise<ScoutSnapshot>;
   onboardingCompleted?: (userId: string) => Promise<boolean>;
@@ -878,6 +1044,7 @@ export interface BackgroundScoutSummary {
   refusals: number;
   recommendedOnly: number;
   alertsCreated: number;
+  invitationsAccepted: number;
   truncated: boolean;
   errors: Array<{ partnerId: string; error: string }>;
 }
@@ -1193,6 +1360,7 @@ export async function runBackgroundScout(deps: BackgroundScoutDeps): Promise<Bac
     refusals: 0,
     recommendedOnly: 0,
     alertsCreated: 0,
+    invitationsAccepted: 0,
     truncated: false,
     errors: [],
   };
@@ -1254,6 +1422,17 @@ export async function runBackgroundScout(deps: BackgroundScoutDeps): Promise<Bac
           summary.errors.push({ partnerId: profile.id, error: `ALERT_FAILED: ${(e as Error).message}` });
         }
       }
+      // Slice 4 recovery: pending INVITED rows for autoJoin creators get
+      // one quiet re-evaluation (accepts audit themselves; REVIEW/REFUSE
+      // stays silent so repeat runs never spam).
+      if (deps.recoverInvitations) {
+        try {
+          const recovered = await deps.recoverInvitations(profile.userId);
+          summary.invitationsAccepted += recovered.accepted;
+        } catch (e) {
+          summary.errors.push({ partnerId: profile.id, error: `RECOVER_FAILED: ${(e as Error).message}` });
+        }
+      }
     } catch (e) {
       summary.errors.push({ partnerId: profile.id, error: (e as Error).message });
     }
@@ -1277,6 +1456,7 @@ export async function runBackgroundScout(deps: BackgroundScoutDeps): Promise<Bac
         refusals: summary.refusals,
         recommendedOnly: summary.recommendedOnly,
         alertsCreated: summary.alertsCreated,
+        invitationsAccepted: summary.invitationsAccepted,
         truncated: summary.truncated,
         errors: summary.errors.slice(0, 10),
       },
