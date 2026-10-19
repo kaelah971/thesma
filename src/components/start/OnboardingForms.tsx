@@ -78,6 +78,9 @@ export function CreatorForm({ initialName }: { initialName: string }) {
       handle: handle || null,
       bio: String(form.get("bio") ?? "").trim() || null,
       category: String(form.get("category") ?? "").trim() || null,
+      creatorType: String(form.get("creatorType") ?? "").trim() || null,
+      interests: String(form.get("interests") ?? "").trim() || null,
+      preferences: String(form.get("preferences") ?? "").trim() || null,
       complete: true,
     });
     setPending(false);
@@ -101,9 +104,31 @@ export function CreatorForm({ initialName }: { initialName: string }) {
           <span className="form-note">Reserves your future public profile — enter without @, e.g. blessing. Lowercase letters, numbers, _.</span>
         </div>
       </div>
-      <div className="field">
-        <label htmlFor="cr-category">Niche / category (optional)</label>
-        <input id="cr-category" name="category" className="input" maxLength={100} placeholder="e.g. Fitness, Fintech, Food" />
+      <div className={styles.row2}>
+        <div className="field">
+          <label htmlFor="cr-type">Creator type (optional)</label>
+          <select id="cr-type" name="creatorType" className="input" defaultValue="">
+            <option value="">Prefer not to say</option>
+            <option value="CREATOR">Creator</option>
+            <option value="KOL">KOL</option>
+            <option value="DEVELOPER">Developer</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="cr-category">Niche / category (optional)</label>
+          <input id="cr-category" name="category" className="input" maxLength={100} placeholder="e.g. Fitness, Fintech, Food" />
+        </div>
+      </div>
+      <div className={styles.row2}>
+        <div className="field">
+          <label htmlFor="cr-interests">Interests (optional, comma-separated)</label>
+          <input id="cr-interests" name="interests" className="input" maxLength={200} placeholder="e.g. ai, fitness, fintech" autoComplete="off" />
+        </div>
+        <div className="field">
+          <label htmlFor="cr-preferences">Campaign types (optional, comma-separated)</label>
+          <input id="cr-preferences" name="preferences" className="input" maxLength={200} placeholder="e.g. referral, purchase, signup" autoComplete="off" />
+          <span className="form-note">referral, purchase, signup, developer-adoption, product-testing, retention, content-community</span>
+        </div>
       </div>
       <div className="field">
         <label htmlFor="cr-bio">Short bio (optional)</label>

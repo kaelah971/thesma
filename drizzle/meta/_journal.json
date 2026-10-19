@@ -99,6 +99,13 @@
       "when": 1792500000000,
       "tag": "0013_tidy_scout",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792600000000,
+      "tag": "0014_creator_capability",
+      "breakpoints": true
     }
   ]
 }

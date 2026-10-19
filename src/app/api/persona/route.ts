@@ -7,9 +7,11 @@ import { badRequest, conflict, toApiError, unauthorized, unconfigured } from "@/
 import { getPartnerByUserId, createPartnerProfile } from "@/server/services/partners";
 import { listUserWorkspaces } from "@/server/services/workspaces";
 import {
+  CREATOR_TYPES,
   PERSONAS,
   getPersonaByUserId,
   isHandleValid,
+  normalizeCreatorType,
   normalizeHandle,
   parsePersona,
   personaFromEnum,
@@ -23,6 +25,9 @@ const patchSchema = z.object({
   bio: z.string().trim().max(500).nullish(),
   category: z.string().trim().max(100).nullish(),
   project: z.string().trim().max(500).nullish(),
+  creatorType: z.enum(CREATOR_TYPES).nullish(),
+  interests: z.union([z.string().max(500), z.array(z.string().max(60)).max(20)]).nullish(),
+  preferences: z.union([z.string().max(500), z.array(z.string().max(60)).max(10)]).nullish(),
   complete: z.boolean().optional(),
 });
 
@@ -45,6 +50,9 @@ export async function GET() {
             bio: persona.bio,
             category: persona.category,
             project: persona.project,
+            creatorType: persona.creatorType ?? null,
+            interests: [...(persona.interests ?? [])],
+            preferences: [...(persona.preferences ?? [])],
             onboardingCompletedAt: persona.onboardingCompletedAt?.toISOString() ?? null,
           }
         : null,
@@ -77,6 +85,9 @@ async function writeProfile(req: Request) {
     if (data.handle && !isHandleValid(data.handle)) {
       return badRequest("Handle must be 3–30 lowercase letters, numbers or underscores.");
     }
+    if (data.creatorType !== undefined && data.creatorType !== null && !normalizeCreatorType(data.creatorType)) {
+      return badRequest("Creator type must be Creator, KOL or Developer.");
+    }
 
     if (data.displayName?.trim()) {
       await getDb().update(users).set({ name: data.displayName.trim().slice(0, 100), updatedAt: new Date() }).where(eq(users.id, user.userId));
@@ -90,6 +101,9 @@ async function writeProfile(req: Request) {
         ...(data.bio !== undefined ? { bio: data.bio } : {}),
         ...(data.category !== undefined ? { category: data.category } : {}),
         ...(data.project !== undefined ? { project: data.project } : {}),
+        ...(data.creatorType !== undefined ? { creatorType: data.creatorType } : {}),
+        ...(data.interests !== undefined ? { interests: data.interests } : {}),
+        ...(data.preferences !== undefined ? { preferences: data.preferences } : {}),
         ...(data.complete ? { complete: true } : {}),
       });
     } catch (err) {

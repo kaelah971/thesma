@@ -118,7 +118,62 @@ export interface PersonaUpsert {
   bio?: string | null;
   category?: string | null;
   project?: string | null;
+  creatorType?: string | null;
+  interests?: string | string[] | null;
+  preferences?: string | string[] | null;
   complete?: boolean;
+}
+
+export const CREATOR_TYPES = ["CREATOR", "KOL", "DEVELOPER"] as const;
+export type CreatorType = (typeof CREATOR_TYPES)[number];
+
+/** Creator-controlled type. Unknown/missing stays null (generic) — never a 500. */
+export function normalizeCreatorType(value: unknown): CreatorType | null {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim().toUpperCase();
+  return (CREATOR_TYPES as readonly string[]).includes(s) ? (s as CreatorType) : null;
+}
+
+function normalizeTagList(value: unknown, allowed: readonly string[] | null, max: number): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const s = String(item ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40);
+    if (!s || out.includes(s)) continue;
+    if (allowed && !allowed.includes(s)) continue;
+    out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** Free-form interest tags (max 20). Unknown tokens are dropped, never fatal. */
+export function normalizeInterests(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  return normalizeTagList(value, null, 20);
+}
+
+/** Campaign-type preferences from a fixed vocabulary; anything else is dropped. */
+export const CAMPAIGN_PREFERENCES = [
+  "referral",
+  "purchase",
+  "signup",
+  "developer-adoption",
+  "product-testing",
+  "retention",
+  "content-community",
+] as const;
+
+export function normalizePreferences(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  return normalizeTagList(value, CAMPAIGN_PREFERENCES, CAMPAIGN_PREFERENCES.length);
 }
 
 /** Insert-or-update the caller's own persona row. Throws 409 on handle conflict. */
@@ -135,6 +190,9 @@ export async function upsertPersona(userId: string, input: PersonaUpsert) {
     bio: input.bio === undefined ? undefined : input.bio?.trim() ? input.bio.trim().slice(0, 500) : null,
     category: input.category === undefined ? undefined : input.category?.trim() ? input.category.trim().slice(0, 100) : null,
     project: input.project === undefined ? undefined : input.project?.trim() ? input.project.trim().slice(0, 500) : null,
+    creatorType: input.creatorType === undefined ? undefined : normalizeCreatorType(input.creatorType),
+    interests: input.interests === undefined ? undefined : normalizeInterests(input.interests),
+    preferences: input.preferences === undefined ? undefined : normalizePreferences(input.preferences),
   };
   if (clean.handle && !HANDLE_RE.test(clean.handle)) {
     throw Object.assign(new Error("Handle must be 3–30 lowercase letters, numbers or underscores."), {
@@ -154,6 +212,9 @@ export async function upsertPersona(userId: string, input: PersonaUpsert) {
           bio: clean.bio ?? null,
           category: clean.category ?? null,
           project: clean.project ?? null,
+          creatorType: clean.creatorType ?? null,
+          interests: clean.interests ?? [],
+          preferences: clean.preferences ?? [],
           onboardingCompletedAt: input.complete ? now : null,
           createdAt: now,
           updatedAt: now,
@@ -169,6 +230,9 @@ export async function upsertPersona(userId: string, input: PersonaUpsert) {
         ...(clean.bio !== undefined ? { bio: clean.bio } : {}),
         ...(clean.category !== undefined ? { category: clean.category } : {}),
         ...(clean.project !== undefined ? { project: clean.project } : {}),
+        ...(clean.creatorType !== undefined ? { creatorType: clean.creatorType } : {}),
+        ...(clean.interests !== undefined ? { interests: clean.interests } : {}),
+        ...(clean.preferences !== undefined ? { preferences: clean.preferences } : {}),
         ...(input.complete ? { onboardingCompletedAt: existing.onboardingCompletedAt ?? now } : {}),
         updatedAt: now,
       })
