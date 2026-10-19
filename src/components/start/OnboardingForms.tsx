@@ -64,9 +64,11 @@ export function CreatorForm({ initialName }: { initialName: string }) {
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") ?? "").trim();
     if (!name) return setError("Add a display name to continue.");
-    const handle = String(form.get("handle") ?? "").trim();
-    if (handle && !/^[a-z0-9_]{3,30}$/i.test(handle.replace(/^@/, ""))) {
-      return setError("Handle must be 3–30 lowercase letters, numbers or underscores.");
+    // Mirror the server normalization exactly (one leading @ is accepted and
+    // stripped; anything else invalid blocks here with a useful message).
+    const handle = String(form.get("handle") ?? "").trim().replace(/^@/, "");
+    if (handle && !/^[a-z0-9_]{3,30}$/i.test(handle)) {
+      return setError("Enter your handle without @ — e.g. blessing. Use 3–30 lowercase letters, numbers or underscores.");
     }
     setPending(true);
     setError(null);
@@ -96,7 +98,7 @@ export function CreatorForm({ initialName }: { initialName: string }) {
         <div className="field">
           <label htmlFor="cr-handle">Handle (optional)</label>
           <input id="cr-handle" name="handle" className="input" maxLength={34} placeholder="@yourname" autoComplete="off" />
-          <span className="form-note">Reserves your future public profile. Lowercase letters, numbers, _.</span>
+          <span className="form-note">Reserves your future public profile — enter without @, e.g. blessing. Lowercase letters, numbers, _.</span>
         </div>
       </div>
       <div className="field">

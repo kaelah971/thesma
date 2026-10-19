@@ -56,7 +56,7 @@ export async function GET() {
   }
 }
 
-export async function PATCH(req: Request) {
+async function writeProfile(req: Request) {
   try {
     if (!isDbConfigured()) return unconfigured();
     const user = await getSessionUser();
@@ -123,4 +123,16 @@ export async function PATCH(req: Request) {
   } catch (err) {
     return toApiError(err);
   }
+}
+
+export async function PATCH(req: Request) {
+  return writeProfile(req);
+}
+
+/**
+ * All onboarding forms submit here via POST. Shares the PATCH write path
+ * exactly — PATCH is kept so existing clients keep working.
+ */
+export async function POST(req: Request) {
+  return writeProfile(req);
 }
