@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { HomeShell } from "@/components/start/HomeShell";
 import { CreatorCampaignActions } from "@/components/start/CreatorCampaignActions";
 import { CreatorPreferencesForm, RunScoutButton } from "@/components/start/CreatorPreferencesForm";
+import { CreatorNotificationsPanel } from "@/components/start/CreatorNotificationsPanel";
 import { getSessionUser } from "@/server/auth/guard";
 import { getDb } from "@/server/db/client";
 import { outcomes, partnerTerms, payouts, referrals } from "@/server/db/schema";
@@ -167,6 +168,11 @@ export default async function CreatorHomePage() {
               </ul>
             </div>
           )}
+        </section>
+        <section className={styles.panel}>
+          <h2>Notifications &amp; Scout activity</h2>
+          <p>Hourly background Scout checks, auto-joins inside your rules, and bounty or payout changes.</p>
+          <CreatorNotificationsPanel />
         </section>
         <section className={styles.panel}>
           <h2>Referrals &amp; earnings</h2>

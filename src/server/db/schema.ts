@@ -836,6 +836,34 @@ export const supplyCommitments = pgTable(
   ],
 );
 
+/**
+ * Creator notification inbox (background Scout runs). Durable, deduped
+ * alerts per creator: one row per meaningful event, never one per run.
+ * (creator_user_id, dedupe_key) is unique so repeat background runs stay
+ * quiet; campaign_id carries no FK so the inbox survives campaign cleanup.
+ */
+export const creatorNotifications = pgTable(
+  "creator_notifications",
+  {
+    id: text("id").primaryKey(),
+    creatorUserId: text("creator_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    campaignId: text("campaign_id"),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    metadataJson: jsonb("metadata_json").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("creator_notifications_user_dedupe_unique").on(t.creatorUserId, t.dedupeKey),
+    index("creator_notifications_user_created_idx").on(t.creatorUserId, t.createdAt),
+  ],
+);
+
 export type DbUserPersona = typeof userPersonas.$inferSelect;
 export type DbUser = typeof users.$inferSelect;
 export type DbSupplyCommitment = typeof supplyCommitments.$inferSelect;
@@ -860,3 +888,4 @@ export type DbWorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type DbPartner = typeof partners.$inferSelect;
 export type DbSession = typeof sessions.$inferSelect;
 export type DbAuditEvent = typeof auditEvents.$inferSelect;
+export type DbCreatorNotification = typeof creatorNotifications.$inferSelect;

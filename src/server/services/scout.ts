@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { getDb } from "../db/client";
 import {
   checkoutIntents,
@@ -13,6 +13,18 @@ import { checkJoinEligibility, parsePartnerRules, type PartnerRules } from "../d
 import { buildPaceSnapshot, type PaceStatus } from "./growth";
 import { committedForCampaign } from "./payouts";
 import { evaluateTargetSettled, joinCampaign } from "./markets";
+import {
+  closingBucket,
+  createDrizzleNotificationStore,
+  dedupeKeyFor,
+  isUsefulRefusal,
+  isoWeekBucket,
+  refusalMessage,
+  type NewCreatorNotification,
+  type NotificationStore,
+  type StoredCreatorNotification,
+} from "./creatorNotifications";
+import { formatUsdc } from "@/lib/format";
 import type { AuditSink, MarketStore } from "./campaignStore";
 
 /**
@@ -457,6 +469,8 @@ export async function runScoutAutoJoin(
     joinsTodayByPartner?: (partnerId: string) => Promise<number>;
     /** Test seam: skip live loading and dispose this snapshot instead. */
     snapshot?: ScoutSnapshot;
+    /** Recorded in the evaluated audit event; background runs tag themselves. */
+    trigger?: "manual" | "background";
   },
 ): Promise<ScoutRunSummary> {
   const now = deps.now?.() ?? new Date();
@@ -552,6 +566,7 @@ export async function runScoutAutoJoin(
     targetType: "partner",
     targetId: profile.id,
     metadata: {
+      trigger: opts?.trigger ?? "manual",
       evaluated: summary.evaluated,
       joined: summary.joined.map((j) => j.campaignId),
       refused: summary.refused,
@@ -829,4 +844,443 @@ export async function loadScoutSnapshot(
     });
   }
   return { candidates: scored, plan: buildScoutPlan(scored) };
+}
+
+/* ---------------- Background Scout runner (scheduled, no clicks) ---------------- */
+
+export interface SettledPayoutInfo {
+  payoutId: string;
+  campaignId: string;
+  amountMicroUsdc: string;
+  workspaceName: string | null;
+}
+
+export interface BackgroundScoutDeps {
+  store: MarketStore;
+  audit: AuditSink;
+  now?: () => Date;
+  notifications?: NotificationStore;
+  /** Test seam: replace live snapshot loading (evidence lives in the DB in production). */
+  loadSnapshot?: (store: MarketStore, userId: string, now: Date) => Promise<ScoutSnapshot>;
+  onboardingCompleted?: (userId: string) => Promise<boolean>;
+  joinsTodayByPartner?: (partnerId: string) => Promise<number>;
+  settledPayoutsByPartner?: (partnerId: string) => Promise<SettledPayoutInfo[]>;
+  funnelRatesByPartner?: (partnerId: string) => Promise<{ recent: number; historical: number } | null>;
+  maxCreatorsPerRun?: number;
+}
+
+export interface BackgroundScoutSummary {
+  startedAt: string;
+  creatorsEvaluated: number;
+  creatorsSkipped: number;
+  campaignsEvaluated: number;
+  autoJoins: number;
+  refusals: number;
+  recommendedOnly: number;
+  alertsCreated: number;
+  truncated: boolean;
+  errors: Array<{ partnerId: string; error: string }>;
+}
+
+/** Onboarding gate: unknown (no DB) fails closed — the creator is skipped. */
+async function defaultOnboardingCompleted(userId: string): Promise<boolean> {
+  try {
+    const db = getDb();
+    const [row] = await db.select().from(userPersonas).where(eq(userPersonas.userId, userId)).limit(1);
+    return Boolean(row?.onboardingCompletedAt);
+  } catch {
+    return false;
+  }
+}
+
+/** Settlement truth only: state SETTLED. SUBMITTED rows never surface. */
+async function defaultSettledPayouts(store: MarketStore, partnerId: string): Promise<SettledPayoutInfo[]> {
+  try {
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(payouts)
+      .where(and(eq(payouts.partnerId, partnerId), eq(payouts.state, "SETTLED")))
+      .orderBy(desc(payouts.settledAt))
+      .limit(50);
+    const out: SettledPayoutInfo[] = [];
+    for (const r of rows) {
+      let workspaceName: string | null = null;
+      try {
+        const campaign = await store.getCampaign(r.campaignId);
+        const ws = campaign ? await store.getWorkspace(campaign.workspaceId) : null;
+        workspaceName = ws?.name ?? null;
+      } catch {
+        workspaceName = null;
+      }
+      out.push({
+        payoutId: r.id,
+        campaignId: r.campaignId,
+        amountMicroUsdc: r.amountMicroUsdc.toString(),
+        workspaceName,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Observable funnel change with sufficient evidence: verified-per-action
+ * rates for the recent 7d window vs the prior 7d. Null when evidence is
+ * thin (prior-window actions < 10) or the database is unavailable.
+ */
+async function defaultFunnelRates(partnerId: string): Promise<{ recent: number; historical: number } | null> {
+  try {
+    const db = getDb();
+    const nowMs = Date.now();
+    const weekMs = 7 * 86_400_000;
+    const recentStart = new Date(nowMs - weekMs);
+    const histStart = new Date(nowMs - 2 * weekMs);
+    const [recentVerified, histVerified, recentActions, histActions] = await Promise.all([
+      db
+        .select({ id: outcomes.id })
+        .from(outcomes)
+        .where(
+          and(
+            eq(outcomes.partnerId, partnerId),
+            eq(outcomes.status, "VERIFIED"),
+            gte(outcomes.verifiedAt, recentStart),
+          ),
+        ),
+      db
+        .select({ id: outcomes.id })
+        .from(outcomes)
+        .where(
+          and(
+            eq(outcomes.partnerId, partnerId),
+            eq(outcomes.status, "VERIFIED"),
+            gte(outcomes.verifiedAt, histStart),
+            lt(outcomes.verifiedAt, recentStart),
+          ),
+        ),
+      db
+        .select({ id: checkoutIntents.id })
+        .from(checkoutIntents)
+        .where(and(eq(checkoutIntents.partnerId, partnerId), gte(checkoutIntents.createdAt, recentStart))),
+      db
+        .select({ id: checkoutIntents.id })
+        .from(checkoutIntents)
+        .where(
+          and(
+            eq(checkoutIntents.partnerId, partnerId),
+            gte(checkoutIntents.createdAt, histStart),
+            lt(checkoutIntents.createdAt, recentStart),
+          ),
+        ),
+    ]);
+    if (histActions.length < 10 || recentActions.length === 0) return null;
+    return {
+      recent: recentVerified.length / recentActions.length,
+      historical: histVerified.length / histActions.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pure alert builder: Scout summary + market truth + settlement truth →
+ * deduped inbox rows. Repeat runs with no change produce nothing.
+ */
+export function buildBackgroundAlerts(params: {
+  candidates: ScoredCandidate[];
+  runSummary: ScoutRunSummary;
+  existing: StoredCreatorNotification[];
+  settled: SettledPayoutInfo[];
+  funnel: { recent: number; historical: number } | null;
+  rules: { minBountyMicroUsdc: string; maxActiveCampaigns: number | null; maxJoinsPerDay: number | null } | null;
+  now: Date;
+}): NewCreatorNotification[] {
+  const { candidates, runSummary, settled, funnel, rules, now } = params;
+  const existingKeys = new Set(params.existing.map((e) => e.dedupeKey));
+  const seen = new Set(
+    params.existing.map((e) => e.campaignId).filter((c): c is string => Boolean(c)),
+  );
+  const previousBounty: Record<string, string> = {};
+  const ordered = [...params.existing].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  for (const e of ordered) {
+    const b = (e.metadataJson as Record<string, unknown> | null)?.bountyMicroUsdc;
+    if (e.campaignId && typeof b === "string") previousBounty[e.campaignId] = b;
+  }
+  const out: NewCreatorNotification[] = [];
+  const push = (n: NewCreatorNotification) => {
+    if (existingKeys.has(n.dedupeKey)) return;
+    existingKeys.add(n.dedupeKey);
+    out.push(n);
+  };
+  const byCampaign = new Map(candidates.map((c) => [c.facts.campaignId, c]));
+
+  for (const j of runSummary.joined) {
+    const c = byCampaign.get(j.campaignId);
+    const ws = c?.facts.workspaceName ?? "a campaign";
+    push({
+      type: "AUTO_JOINED",
+      campaignId: j.campaignId,
+      title: `Auto-joined ${ws}`,
+      message:
+        `Scout auto-joined ${ws} (${c ? `score ${c.score}, ${c.confidence} confidence` : "inside creator rules"}). ` +
+        `Referral /r/${j.referralCode}${j.alreadyJoined ? " (existing link reused — no duplicate)" : ""}.`,
+      dedupeKey: dedupeKeyFor.autoJoined(j.campaignId, j.referralCode),
+      metadataJson: {
+        campaignId: j.campaignId,
+        referralCode: j.referralCode,
+        referralPath: `/r/${j.referralCode}`,
+        alreadyJoined: j.alreadyJoined,
+        rule: "WITHIN_CREATOR_AUTHORITY",
+        score: c?.score ?? null,
+        confidence: c?.confidence ?? null,
+        bountyMicroUsdc: c?.facts.bountyMicroUsdc ?? null,
+        reason: c?.reason ?? null,
+      },
+    });
+  }
+  for (const r of runSummary.refused) {
+    const c = byCampaign.get(r.campaignId);
+    if (!c || !isUsefulRefusal(c.decision, r.rule)) continue;
+    push({
+      type: "AUTO_JOIN_REFUSED",
+      campaignId: r.campaignId,
+      title: `Needs a rule change: ${c.facts.workspaceName}`,
+      message: refusalMessage({
+        workspaceName: c.facts.workspaceName,
+        bountyMicroUsdc: c.facts.bountyMicroUsdc,
+        rule: r.rule,
+        minBountyMicroUsdc: rules?.minBountyMicroUsdc ?? "0",
+        maxActiveCampaigns: rules?.maxActiveCampaigns ?? null,
+        maxJoinsPerDay: rules?.maxJoinsPerDay ?? null,
+        formatUsdc: (micro) => formatUsdc(micro),
+      }),
+      dedupeKey: dedupeKeyFor.autoJoinRefused(r.campaignId, r.rule),
+      metadataJson: {
+        campaignId: r.campaignId,
+        rule: r.rule,
+        reason: r.reason,
+        score: c.score,
+        confidence: c.confidence,
+        bountyMicroUsdc: c.facts.bountyMicroUsdc,
+      },
+    });
+  }
+  for (const r of runSummary.recommendedOnly) {
+    const c = byCampaign.get(r.campaignId);
+    const ws = c?.facts.workspaceName ?? r.campaignId;
+    push({
+      type: "NEW_MATCH_REQUIRES_REVIEW",
+      campaignId: r.campaignId,
+      title: `Review: ${ws}`,
+      message:
+        `Scout flagged ${ws}` +
+        `${c ? ` (score ${c.score}, ${c.confidence} confidence)` : ""} — ${r.reason}`,
+      dedupeKey: dedupeKeyFor.review(r.campaignId, r.rule),
+      metadataJson: {
+        campaignId: r.campaignId,
+        rule: r.rule,
+        reason: r.reason,
+        score: c?.score ?? null,
+        confidence: c?.confidence ?? null,
+        bountyMicroUsdc: c?.facts.bountyMicroUsdc ?? null,
+      },
+    });
+  }
+
+  const marketAlerts = detectScoutAlerts({
+    candidates: candidates.map((c) => ({
+      campaignId: c.facts.campaignId,
+      decision: c.decision,
+      bountyMicroUsdc: c.facts.bountyMicroUsdc,
+      msUntilDeadline: c.facts.deadline ? c.facts.deadline.getTime() - now.getTime() : null,
+    })),
+    seenCampaignIds: [...seen],
+    previousBountyByCampaign: previousBounty,
+    recentVerificationRate: funnel?.recent ?? null,
+    historicalVerificationRate: funnel?.historical ?? null,
+    newSettledPayouts: [],
+  });
+  for (const a of marketAlerts) {
+    // Match/join/review surfacing is handled above from the run summary.
+    if (a.kind === "NEW_MATCH") continue;
+    const c = byCampaign.get(a.campaignId);
+    if (a.kind === "BOUNTY_CHANGED" && c) {
+      const prev = previousBounty[a.campaignId] ?? "?";
+      push({
+        type: "BOUNTY_CHANGED",
+        campaignId: a.campaignId,
+        title: `Bounty changed: ${c.facts.workspaceName}`,
+        message:
+          `Prospective bounty moved ${formatUsdc(prev === "?" ? null : prev)} → ` +
+          `${formatUsdc(c.facts.bountyMicroUsdc)} USDC for ${c.facts.workspaceName}. ` +
+          `Scout re-evaluated the economics against your rules on this run; past outcomes keep their old terms.`,
+        dedupeKey: dedupeKeyFor.bountyChanged(a.campaignId, c.facts.bountyMicroUsdc),
+        metadataJson: {
+          campaignId: a.campaignId,
+          previousBountyMicroUsdc: prev === "?" ? null : prev,
+          bountyMicroUsdc: c.facts.bountyMicroUsdc,
+        },
+      });
+    } else if (a.kind === "CAMPAIGN_CLOSING_SOON" && c) {
+      const msLeft = c.facts.deadline ? c.facts.deadline.getTime() - now.getTime() : null;
+      const bucket = closingBucket(msLeft);
+      if (!bucket) continue;
+      push({
+        type: "CAMPAIGN_CLOSING_SOON",
+        campaignId: a.campaignId,
+        title: `Closing soon: ${c.facts.workspaceName}`,
+        message:
+          `${c.facts.workspaceName} closes within ${bucket} ` +
+          `(${c.facts.deadline ? c.facts.deadline.toISOString() : "soon"}) — eligible now at ` +
+          `${formatUsdc(c.facts.bountyMicroUsdc)} USDC per verified outcome.`,
+        dedupeKey: dedupeKeyFor.closingSoon(a.campaignId, bucket),
+        metadataJson: { campaignId: a.campaignId, bucket, bountyMicroUsdc: c.facts.bountyMicroUsdc },
+      });
+    } else if (a.kind === "VERIFICATION_DROP" && a.campaignId) {
+      push({
+        type: "VERIFICATION_DROP",
+        campaignId: a.campaignId,
+        title: "Verification dip detected",
+        message:
+          `Recent verification fell below half the historical rate ` +
+          `(${(funnel?.recent ?? 0).toFixed(2)} vs ${(funnel?.historical ?? 0).toFixed(2)}). ` +
+          `Check which step of the funnel is losing visits before scaling spend.`,
+        dedupeKey: dedupeKeyFor.verificationDrop(isoWeekBucket(now)),
+        metadataJson: { recentRate: funnel?.recent ?? null, historicalRate: funnel?.historical ?? null },
+      });
+    }
+  }
+  for (const s of settled) {
+    push({
+      type: "PAYOUT_SETTLED",
+      campaignId: s.campaignId,
+      title: `Payout settled: ${formatUsdc(s.amountMicroUsdc)} USDC`,
+      message:
+        `${formatUsdc(s.amountMicroUsdc)} USDC settled for ${s.workspaceName ?? "a campaign"} ` +
+        `(payout ${s.payoutId.slice(0, 8)}…). Verified and paid — not just submitted.`,
+      dedupeKey: dedupeKeyFor.payoutSettled(s.payoutId),
+      metadataJson: {
+        payoutId: s.payoutId,
+        campaignId: s.campaignId,
+        amountMicroUsdc: s.amountMicroUsdc,
+      },
+    });
+  }
+  return out;
+}
+
+/**
+ * Background Creator Scout runner. For every autoJoin creator with finished
+ * onboarding: load the live Scout snapshot, dispose it through the SAME
+ * runScoutAutoJoin path as manual runs (same eligibility, same Scout
+ * decision, same evaluateAutoJoinAuthority, same idempotent joinCampaign),
+ * then persist deduped alerts. One creator failure never aborts the batch.
+ * Read-only except permitted joins + inbox rows: no economics mutation,
+ * no payout execution.
+ */
+export async function runBackgroundScout(deps: BackgroundScoutDeps): Promise<BackgroundScoutSummary> {
+  const now = deps.now?.() ?? new Date();
+  const notifications = deps.notifications ?? createDrizzleNotificationStore();
+  const summary: BackgroundScoutSummary = {
+    startedAt: now.toISOString(),
+    creatorsEvaluated: 0,
+    creatorsSkipped: 0,
+    campaignsEvaluated: 0,
+    autoJoins: 0,
+    refusals: 0,
+    recommendedOnly: 0,
+    alertsCreated: 0,
+    truncated: false,
+    errors: [],
+  };
+  const partners = await deps.store.listAutoJoinPartners();
+  const cap = deps.maxCreatorsPerRun ?? 500;
+  for (const profile of partners.slice(0, cap)) {
+    try {
+      const onboarded = deps.onboardingCompleted
+        ? await deps.onboardingCompleted(profile.userId)
+        : await defaultOnboardingCompleted(profile.userId);
+      if (!onboarded) {
+        summary.creatorsSkipped += 1;
+        continue;
+      }
+      const loadSnapshot = deps.loadSnapshot ?? loadScoutSnapshot;
+      const snapshot = await loadSnapshot(deps.store, profile.userId, now);
+      const run = await runScoutAutoJoin(
+        { store: deps.store, audit: deps.audit, now: () => now },
+        profile.userId,
+        {
+          snapshot,
+          joinsTodayByPartner: deps.joinsTodayByPartner,
+          trigger: "background",
+        },
+      );
+      summary.creatorsEvaluated += 1;
+      summary.campaignsEvaluated += run.evaluated;
+      summary.autoJoins += run.joined.length;
+      summary.refusals += run.refused.length;
+      summary.recommendedOnly += run.recommendedOnly.length;
+      const existing = await notifications.listForCreator(profile.userId, 500).catch(() => []);
+      const settled = deps.settledPayoutsByPartner
+        ? await deps.settledPayoutsByPartner(profile.id).catch(() => [])
+        : await defaultSettledPayouts(deps.store, profile.id);
+      const funnel = deps.funnelRatesByPartner
+        ? await deps.funnelRatesByPartner(profile.id).catch(() => null)
+        : await defaultFunnelRates(profile.id);
+      const parsed = parsePartnerRules(profile.rulesJson);
+      const rules = parsed.ok
+        ? {
+            minBountyMicroUsdc: (parsed as { ok: true; rules: PartnerRules }).rules.minimumBountyMicroUsdc.toString(),
+            maxActiveCampaigns: (parsed as { ok: true; rules: PartnerRules }).rules.maxActiveCampaigns,
+            maxJoinsPerDay: (parsed as { ok: true; rules: PartnerRules }).rules.maxAutoJoinsPerDay,
+          }
+        : null;
+      const alerts = buildBackgroundAlerts({
+        candidates: snapshot.candidates,
+        runSummary: run,
+        existing,
+        settled,
+        funnel,
+        rules,
+        now,
+      });
+      for (const a of alerts) {
+        try {
+          if ((await notifications.insertIfAbsent(profile.userId, a)).inserted) summary.alertsCreated += 1;
+        } catch (e) {
+          summary.errors.push({ partnerId: profile.id, error: `ALERT_FAILED: ${(e as Error).message}` });
+        }
+      }
+    } catch (e) {
+      summary.errors.push({ partnerId: profile.id, error: (e as Error).message });
+    }
+  }
+  summary.truncated = partners.length > cap;
+  await deps
+    .audit({
+      actorType: "SYSTEM",
+      actorId: null,
+      workspaceId: null,
+      partnerId: null,
+      action: "creator.scout.background.completed",
+      targetType: "job",
+      targetId: "creator-scout-background",
+      metadata: {
+        startedAt: summary.startedAt,
+        creatorsEvaluated: summary.creatorsEvaluated,
+        creatorsSkipped: summary.creatorsSkipped,
+        campaignsEvaluated: summary.campaignsEvaluated,
+        autoJoins: summary.autoJoins,
+        refusals: summary.refusals,
+        recommendedOnly: summary.recommendedOnly,
+        alertsCreated: summary.alertsCreated,
+        truncated: summary.truncated,
+        errors: summary.errors.slice(0, 10),
+      },
+    })
+    .catch(() => {});
+  return summary;
 }

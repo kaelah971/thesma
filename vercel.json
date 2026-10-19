@@ -7,6 +7,10 @@
     {
       "path": "/internal/agents/supply/run",
       "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/internal/agents/scout/run",
+      "schedule": "20 * * * *"
     }
   ]
 }
