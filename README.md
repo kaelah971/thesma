@@ -164,7 +164,7 @@ Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) —
 </p>
 
 - **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
-- **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (reserved for a future `/@username` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
+- **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (your `/@handle` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
 - **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
 - **Build with Thesma** — use Thesma's verification, receipts and payout infrastructure in your own product. Developer onboarding explains connect → send outcomes → verify → receipts → payouts; API keys/webhooks are truthful empty states until the developer preview opens.
 
@@ -180,7 +180,7 @@ Live production UI at [thesma.vercel.app](https://thesma.vercel.app) — every s
 
 ### Creator distribution loop
 
-Join campaign → unique referral link → customer action → attribution → verification → hold → settlement. Creators join live campaigns from their home, copy a stable `/r/[code]` link, and watch a real funnel: clicks, conversions, verified outcomes, holds, settled payouts. No fake metrics — empty stages show 0. (Creator home and campaign workspace require sign-in, so they are described here rather than screenshotted.) Public `/@username` creator profiles and follow are not shipped yet — creator identity appears on onboarding, the creator home, and referral landings.
+Join campaign → unique referral link → customer action → attribution → verification → hold → settlement. Creators join live campaigns from their home, copy a stable `/r/[code]` link, and watch a real funnel: clicks, conversions, verified outcomes, holds, settled payouts. No fake metrics — empty stages show 0. (Creator home and campaign workspace require sign-in, so they are described here rather than screenshotted.) Public `/@handle` creator profiles are shipped — proof-backed collaboration history plus customer follow, with proof above follower counts. Referral landings link the referring creator to their profile.
 
 ### Organization operations
 

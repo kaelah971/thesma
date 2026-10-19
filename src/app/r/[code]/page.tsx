@@ -147,7 +147,14 @@ export default async function ReferralLandingPage({ params }: { params: Promise<
           <h1>{version?.intentText || "Campaign"}</h1>
           {(creatorName || creatorHandle) && (
             <p style={{ margin: 0 }}>
-              Referred by {creatorHandle ? `@${creatorHandle}` : creatorName}
+              Referred by{" "}
+              {creatorHandle ? (
+                <Link href={`/${creatorHandle}`} style={{ textDecoration: "underline", textUnderlineOffset: 3 }}>
+                  @{creatorHandle}
+                </Link>
+              ) : (
+                creatorName
+              )}
               {creatorHandle && creatorName ? ` (${creatorName})` : ""}
             </p>
           )}

@@ -7,6 +7,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -253,6 +254,28 @@ export const userPersonas = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("user_personas_handle_unique").on(t.handle)],
+);
+
+/**
+ * Customer → creator follows (v1). Pair uniqueness is the primary key:
+ * follow/unfollow are naturally idempotent. Self-follow is rejected in
+ * service validation. Counts are always computed, never stored.
+ */
+export const creatorFollows = pgTable(
+  "creator_follows",
+  {
+    followerUserId: text("follower_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    creatorUserId: text("creator_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.followerUserId, t.creatorUserId] }),
+    index("creator_follows_creator_idx").on(t.creatorUserId),
+  ],
 );
 
 export const sessions = pgTable(

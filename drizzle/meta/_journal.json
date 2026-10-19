@@ -85,6 +85,13 @@
       "when": 1792417242377,
       "tag": "0011_unknown_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792420097929,
+      "tag": "0012_optimal_carlie_cooper",
+      "breakpoints": true
     }
   ]
 }
