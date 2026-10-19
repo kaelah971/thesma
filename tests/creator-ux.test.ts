@@ -10,6 +10,7 @@ import { parsePartnerRules } from "@/server/domain/market";
 import { runScoutAutoJoin } from "@/server/services/scout";
 import { serverErrorMessage } from "@/lib/api";
 import { getPublicCreatorProfile } from "@/server/services/creatorProfiles";
+import { normalizeHandle } from "@/server/services/personas";
 
 const NOW = new Date("2026-06-01T12:00:00.000Z");
 
@@ -147,6 +148,16 @@ describe("inline errors are always render-safe strings", () => {
     expect(serverErrorMessage({ error: "plain" }, "fallback")).toBe("plain");
     expect(serverErrorMessage({ error: {} }, "fallback")).toBe("fallback");
     expect(serverErrorMessage(null, "fallback")).toBe("fallback");
+  });
+});
+
+describe("encoded handle params", () => {
+  it("decodes %40 before matching; malformed sequences stay rejected", async () => {
+    const { decodeHandleParam } = await import("@/app/[handle]/page");
+    expect(normalizeHandle(decodeHandleParam("%40bgirl"))).toBe("bgirl");
+    expect(normalizeHandle(decodeHandleParam("@bgirl"))).toBe("bgirl");
+    expect(normalizeHandle(decodeHandleParam("bgirl"))).toBe("bgirl");
+    expect(normalizeHandle(decodeHandleParam("%E0%A4%A"))).toBeNull();
   });
 });
 
