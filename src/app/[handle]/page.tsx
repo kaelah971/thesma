@@ -9,21 +9,9 @@ import {
   createDrizzleFollowStore,
   getPublicCreatorProfile,
 } from "@/server/services/creatorProfiles";
-import { normalizeHandle } from "@/server/services/personas";
+import { decodeHandleParam, normalizeHandle } from "@/server/services/personas";
 import { formatUsdc } from "@/lib/format";
 import styles from "@/components/start/start.module.css";
-
-/**
- * Route params arrive URL-encoded ("%40bgirl"); decode before matching.
- * Keeps raw input on malformed sequences — normalizeHandle still rejects.
- */
-export function decodeHandleParam(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
 
 export async function generateMetadata({ params }: { params: Promise<{ handle: string }> }): Promise<Metadata> {
   const { handle } = await params;

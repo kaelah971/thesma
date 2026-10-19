@@ -182,6 +182,14 @@ Live production UI at [thesma.vercel.app](https://thesma.vercel.app) — every s
 
 Join campaign → unique referral link → customer action → attribution → verification → hold → settlement. Creators join live campaigns from their home, copy a stable `/r/[code]` link, and watch a real funnel: clicks, conversions, verified outcomes, holds, settled payouts. No fake metrics — empty stages show 0. (Creator home and campaign workspace require sign-in, so they are described here rather than screenshotted.) Public `/@handle` creator profiles are shipped — proof-backed collaboration history plus customer follow, with proof above follower counts. Referral landings link the referring creator to their profile.
 
+### Creator agent
+
+<p align="center">
+  <img src="docs/readme/11-public-creator-profile.png" alt="Public creator profile for @bgirl: identity, niche, proof-first metrics, follower count, collaboration sections and truth note" width="900" />
+</p>
+
+Campaign Scout ranks live campaigns on fit, verified evidence and economics — never on bounty alone, never on follower counts. The creator stays in control: minimum bounty, allowed/blocked categories, minimum Scout confidence, max active campaigns and max joins per day, plus the auto-join master switch. Thesma can automatically join a campaign only when every one of those rules is satisfied; anything else surfaces as a recommendation or a review request, and every background check writes a deduped inbox alert (auto-joined, needs-review, bounty change, closing soon, verification dip, settled payout). Public `/@handle` profiles (above: the real production creator `@bgirl`) show proof-backed history with proof above follower counts, and customers can follow creators for future opportunities. (Creator home requires sign-in, so the Scout board, auto-join toggle, Run Scout and notification inbox are described here rather than screenshotted.)
+
 ### Organization operations
 
 Account → workspace → campaign creation, then the `/app` workspace: funded vs committed vs available budget, outcomes truthfully stated, reservation → submission → reconciliation payouts, receipts, activity, and a per-participant funnel on each campaign. (Workspace views require sign-in.)

@@ -10,7 +10,7 @@ import { parsePartnerRules } from "@/server/domain/market";
 import { runScoutAutoJoin } from "@/server/services/scout";
 import { serverErrorMessage } from "@/lib/api";
 import { getPublicCreatorProfile } from "@/server/services/creatorProfiles";
-import { normalizeHandle } from "@/server/services/personas";
+import { decodeHandleParam, normalizeHandle } from "@/server/services/personas";
 
 const NOW = new Date("2026-06-01T12:00:00.000Z");
 
@@ -152,8 +152,7 @@ describe("inline errors are always render-safe strings", () => {
 });
 
 describe("encoded handle params", () => {
-  it("decodes %40 before matching; malformed sequences stay rejected", async () => {
-    const { decodeHandleParam } = await import("@/app/[handle]/page");
+  it("decodes %40 before matching; malformed sequences stay rejected", () => {
     expect(normalizeHandle(decodeHandleParam("%40bgirl"))).toBe("bgirl");
     expect(normalizeHandle(decodeHandleParam("@bgirl"))).toBe("bgirl");
     expect(normalizeHandle(decodeHandleParam("bgirl"))).toBe("bgirl");

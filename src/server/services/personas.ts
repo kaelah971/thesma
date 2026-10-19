@@ -52,6 +52,16 @@ export function onboardingPath(p: Persona): string {
   return `/onboarding/${p}`;
 }
 
+/** Route params arrive URL-encoded ("%40bgirl"); decode before matching.
+ * Keeps raw input on malformed sequences — normalizeHandle still rejects. */
+export function decodeHandleParam(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Public creator handle: 3–30 chars, lowercase alphanumerics + underscore. */
 const HANDLE_RE = /^[a-z0-9_]{3,30}$/;
 
