@@ -1,5 +1,9 @@
 # Autonomous Operator — Canteen Arc Testnet Proof (RFB 04)
 
+> Linked from [README](../../README.md#judge-quick-links) and
+> [docs/arc-testnet.md](../arc-testnet.md). Start there for setup;
+> this file is the evidence log.
+
 Live onchain evidence that Thesma's operator spending authority is enforced
 by the vault itself, not just the backend. No mainnet interaction occurred
 at any point in this run.

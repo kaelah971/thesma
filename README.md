@@ -48,6 +48,21 @@
 
 ---
 
+## Judge quick links
+
+| Area | Link |
+| --- | --- |
+| Live app | [thesma.vercel.app](https://thesma.vercel.app) |
+| Public markets | [thesma.vercel.app/markets](https://thesma.vercel.app/markets) |
+| Security | [thesma.vercel.app/security](https://thesma.vercel.app/security) |
+| Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
+| Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
+| Arc testnet operator proof | [`docs/proof/operator-testnet.md`](docs/proof/operator-testnet.md) |
+| Beaconfield live proof | [market `dcec0b71…`](https://thesma.vercel.app/markets/dcec0b71-2a4d-496c-b573-6999d09c8cb2) |
+| Aster settled proof | [market `5571f328…`](https://thesma.vercel.app/markets/5571f328-ceeb-4712-8671-a72be1966ffb) |
+
+---
+
 ## Live production usage
 
 On October 18, 2026, a user-operated production run took a fresh Thesma campaign from approved policy to LIVE on Arc Mainnet through the deployed web app and MetaMask — not a script-only chain call.
@@ -208,6 +223,10 @@ The live app gives each workspace:
 
 ### RFB 04 — Autonomous Business Operator
 
+AI proposes. Policy permits or refuses. Thesma executes. The ledger proves it.
+
+Revenue / funded liquidity → assess obligations → autonomous payment within authority → contract refusal outside authority → human exact approval → settlement → durable evidence. Demonstrated live on the Arc testnet ([proof](docs/proof/operator-testnet.md), [setup](docs/arc-testnet.md)).
+
 Most business agents automate bills. Thesma autonomously buys verified growth: organizations fund outcome campaigns in USDC, creators participate, customer results are verified, and money moves only after proof and policy conditions are satisfied — every settlement leaving durable evidence.
 
 Shipped operator behavior (deterministic kernels + workers, never LLM-decided payouts): track funded vs committed vs available budget per campaign; manage creator payout obligations through the eligible-payout worker; operate strictly inside frozen campaign budgets and limits; settle only hold-cleared, verified outcomes with reserve → submit-once → reconcile; keep decision/evidence logs in the append-only audit trail; fail ambiguous states closed (`AMBIGUOUS`, reconcile-before-resend) instead of escalating blindly. Future: bounty/allocation auto-adjustment stays inside approved bounds (pricing kernel states exist; autonomous execution is not wired in this build), and negotiation automation is explicitly not available yet.
@@ -336,8 +355,23 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 - **S7.1 — Accepted negotiation commitment safety:** atomic supply-unit + capacity-unit commit on ACCEPT, consumed exactly once by the first reservation.
 - **S8 — Arc Mainnet proof:** deployment verification, funding, purchase, verification, hold, payout, reconciliation, and the live no-double-pay second run — all on Arc Mainnet (chain 5042).
 
+## Build in public
+
+Concise social proof — official accounts and representative posts:
+
+- Builder: Kaelah — [x.com/_kaaelaa_](https://x.com/_kaaelaa_)
+- Builder update #1 — [View post](https://x.com/_kaaelaa_/status/2111955196238803027)
+- Builder update #2 — [View post](https://x.com/_kaaelaa_/status/2112081428515315777)
+- Thesma official — [x.com/usethesma](https://x.com/usethesma)
+- Thesma update #1 — [View post](https://x.com/usethesma/status/2112083441479250314)
+- Thesma update #2 — [View post](https://x.com/usethesma/status/2111837615213400366)
+- Thesma update #3 — [View post](https://x.com/usethesma/status/2111584169046503553)
+- Thesma update #4 — [View post](https://x.com/usethesma/status/2111559308387156072)
+
 ## Docs
 
 - [`docs/mainnet-proof.md`](docs/mainnet-proof.md) — canonical S8.2 mainnet evidence (detailed record).
 - [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md) — mainnet runtime provisioning runbook.
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
+- [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.
+- [`docs/proof/operator-testnet.md`](docs/proof/operator-testnet.md) — live Arc testnet autonomous-operator proof (autonomous payout, policy refusal, human approval).
