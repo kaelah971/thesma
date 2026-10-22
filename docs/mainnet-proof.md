@@ -13,6 +13,7 @@ No secrets in this document. All hashes/addresses below are public onchain data.
 - USDC (Arc canonical): `0x3600000000000000000000000000000000000000`
 - ThesmaMarketVault (canonical, unchanged): `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`
 - Vault deployment tx: `0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558` (block 26454958)
+- Source verification: **VERIFIED (Sourcify `exact_match`, 2026-10-22T14:48:09Z)** — creation `exact_match`, runtime `exact_match`, matchId `56720486`. Sourcify: `https://sourcify.dev/server/v2/contract/5042/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`. Blockscout forwarding queued (`https://explorer.arc.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`).
 
 ## Roles (public addresses only)
 

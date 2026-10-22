@@ -1,10 +1,11 @@
-# ThesmaMarketVault — Mainnet Source-Verification Plan (chain 5042)
+# ThesmaMarketVault — Mainnet Source Verification (chain 5042)
 
-Status: **deployed, NOT yet source-verified** (checked 2026-10-22).
+Status: **VERIFIED via Sourcify (exact_match, 2026-10-22T14:48:09Z)**.
 
-- Blockscout (`explorer.arc.io` API): `"is_verified": false` for
-  `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`.
-- Sourcify v2 (`/v2/contract/5042/0x0fA8…6F79`): `"match": null`.
+- Sourcify v2 (`/v2/contract/5042/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`): `match: exact_match`, `creationMatch: exact_match`, `runtimeMatch: exact_match`, `verifiedAt: 2026-10-22T14:48:09Z`, `matchId: 56720486`.
+- Verification job: `b5ed2a95-8669-474c-84aa-fdce7313681b` (HTTP 202 → `isJobCompleted: true`).
+- Sourcify lookup: `https://sourcify.dev/server/v2/contract/5042/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` — Arc mainnet address `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`.
+- Blockscout forwarding queued via Sourcify (verificationId `0fa826256a58f19ad24fc9384d81d313f2266f796ada2229`, explorer `https://explorer.arc.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`); direct Blockscout API check returns Cloudflare 403 from this environment, so Blockscout UI status is not independently confirmed. Bounty accepts Blockscout OR Sourcify; Sourcify `exact_match` is authoritative success.
 
 Bytecode **is** proven deployed (exact runtime match modulo the immutable USDC
 slot — see `contracts/deployments/arc-mainnet.json`). Bytecode match is not
@@ -59,11 +60,16 @@ chain 5042 — same compiler, optimizer, EVM version, and constructor argument.
 4. Constructor argument (ABI-encoded `address`):
    `0000000000000000000000003600000000000000000000000000000000000000`.
 
-## After verification succeeds
+## Verification result (2026-10-22, source-only, no broadcast)
 
-- Re-check: Blockscout address API should report `"is_verified": true`, and
-  Sourcify `/v2/contract/5042/<address>` should report a `match`.
-- Update `README.md` (Arc Mainnet deployment block) and `docs/mainnet-proof.md`
-  with the verified-contract link.
-- Re-run `arc-canteen submit-showcase` so the entry carries the verified link
-  and the X post URL for the Mainnet Bounty.
+- Sourcify POST `https://sourcify.dev/server/v2/verify/5042/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` with `stdJsonInput` from `contracts/verification/ThesmaMarketVault-standard-input.json`, `compilerVersion 0.8.28+commit.7893614a`, `contractIdentifier src/ThesmaMarketVault.sol:ThesmaMarketVault`, `creationTransactionHash 0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558` → HTTP 202, `verificationId b5ed2a95-8669-474c-84aa-fdce7313681b`.
+- Poll `GET /v2/verify/b5ed2a95-8669-474c-84aa-fdce7313681b` → `isJobCompleted: true`, `match: exact_match`, `creationMatch: exact_match`, `runtimeMatch: exact_match`, `verifiedAt: 2026-10-22T14:48:09Z`, `matchId: 56720486`.
+- Confirm `GET /v2/contract/5042/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` → `exact_match` (creation + runtime).
+- Sourcify also returned external forwarding refs: Blockscout `https://explorer.arc.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` and Etherscan-family `https://arc.etherscan.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`.
+- No redeploy, no broadcast, no gas/USDC spent, no DB touched for verification.
+
+## After verification succeeds (done)
+
+- [x] Sourcify `/v2/contract/5042/<address>` reports `exact_match`.
+- [x] Updated `README.md` (Arc Mainnet deployment block) and `docs/mainnet-proof.md` with the verified-contract link.
+- [ ] Re-run `arc-canteen submit-showcase` so the entry carries the verified link and the X post URL for the Mainnet Bounty (operator step, not done here).

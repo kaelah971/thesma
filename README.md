@@ -142,7 +142,7 @@ Thesma completed the full real lifecycle on **Arc Mainnet (chain ID 5042)**. Ful
 - Chain: **Arc Mainnet (5042)** — RPC `https://rpc.mainnet.arc.io`, canonical USDC `0x3600000000000000000000000000000000000000`.
 - Vault: `ThesmaMarketVault` at [`0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`](https://explorer.arc.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79).
 - Deployment tx: [`0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558`](https://explorer.arc.io/tx/0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558) (block 26454958).
-- Source verification: **pending** — the contract is deployed and byte-matched against the local Foundry build (see `contracts/deployments/arc-mainnet.json`), but not yet source-verified on Blockscout/Sourcify for chain 5042. Bytecode match is not source verification. Exact verification plan: [`docs/mainnet-verification.md`](docs/mainnet-verification.md).
+- Source verification: **VERIFIED (Sourcify `exact_match`, 2026-10-22T14:48:09Z)** — `ThesmaMarketVault` at `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` verified via Sourcify API v2 (creation `exact_match`, runtime `exact_match`, matchId `56720486`). Sourcify lookup: `https://sourcify.dev/server/v2/contract/5042/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79` — Arc mainnet address `0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`. Blockscout forwarding queued via Sourcify (`https://explorer.arc.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`); direct Blockscout API check blocked by Cloudflare. Details: [`docs/mainnet-verification.md`](docs/mainnet-verification.md).
 - Full lifecycle proof (fund → purchase → verify → hold → payout → reconcile): [`docs/mainnet-proof.md`](docs/mainnet-proof.md).
 
 ## How Thesma works
