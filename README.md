@@ -137,6 +137,14 @@ Thesma completed the full real lifecycle on **Arc Mainnet (chain ID 5042)**. Ful
 - **SETTLED** — exactly **1.00 USDC** partner payout submitted once (tx `0xec3ab9e2bd8ad1ce1412fc0c2c4a65897dc598ddc221c3ef18cd148f350cb6b0`) and reconciled against the matching onchain `OutcomePaid` event.
 - **NO DOUBLE PAY** — a second worker run settled 0 and submitted 0 with reason `ALREADY_SETTLED`: no second reservation, no second payout, no second transaction.
 
+### Arc Mainnet deployment
+
+- Chain: **Arc Mainnet (5042)** — RPC `https://rpc.mainnet.arc.io`, canonical USDC `0x3600000000000000000000000000000000000000`.
+- Vault: `ThesmaMarketVault` at [`0x0fA826256a58F19Ad24Fc9384d81D313f2266F79`](https://explorer.arc.io/address/0x0fA826256a58F19Ad24Fc9384d81D313f2266F79).
+- Deployment tx: [`0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558`](https://explorer.arc.io/tx/0xe3c1536f0f13467eea293cb68b8b4b15fdbc4ee06e715f7c32ea7f87b711c558) (block 26454958).
+- Source verification: **pending** — the contract is deployed and byte-matched against the local Foundry build (see `contracts/deployments/arc-mainnet.json`), but not yet source-verified on Blockscout/Sourcify for chain 5042. Bytecode match is not source verification. Exact verification plan: [`docs/mainnet-verification.md`](docs/mainnet-verification.md).
+- Full lifecycle proof (fund → purchase → verify → hold → payout → reconcile): [`docs/mainnet-proof.md`](docs/mainnet-proof.md).
+
 ## How Thesma works
 
 A business describes its intent in plain language. Thesma turns it into a typed campaign policy, funds it onchain, and then enforces the policy end to end:
@@ -253,6 +261,23 @@ Revenue / funded liquidity → assess obligations → autonomous payment within 
 Most business agents automate bills. Thesma autonomously buys verified growth: organizations fund outcome campaigns in USDC, creators participate, customer results are verified, and money moves only after proof and policy conditions are satisfied — every settlement leaving durable evidence.
 
 Shipped operator behavior (deterministic kernels + workers, never LLM-decided payouts): track funded vs committed vs available budget per campaign; manage creator payout obligations through the eligible-payout worker; operate strictly inside frozen campaign budgets and limits; settle only hold-cleared, verified outcomes with reserve → submit-once → reconcile; keep decision/evidence logs in the append-only audit trail; fail ambiguous states closed (`AMBIGUOUS`, reconcile-before-resend) instead of escalating blindly. Future: bounty/allocation auto-adjustment stays inside approved bounds (pricing kernel states exist; autonomous execution is not wired in this build), and negotiation automation is explicitly not available yet.
+
+## Reusable primitives for other Arc builders
+
+Thesma exposes **policy-bound outcome settlement primitives for autonomous businesses**: a business funds verified outcomes in USDC and money moves only when proof, policy and budget agree. Everything below is shipped, on Arc Mainnet, and referenced to the exact implementation — no unfinished slices advertised.
+
+**What another Arc builder can reuse:**
+
+1. **Typed campaign-policy enforcement** — plain-text intent becomes a versioned, owner-approved policy (`DRAFT → REVIEW → APPROVED`); the approved `policyHash` is frozen into the vault and can never be replaced (`src/server/services`, `createCampaign` in `contracts/src/ThesmaMarketVault.sol`).
+2. **EIP-712 verified-outcome proof binding** — the verifier signs the exact outcome proof (`outcomeDigest`: campaignKey, policyHash, outcomeId, recipient, amount, proofHash, occurredAt, validUntil); the vault only pays on a valid signature (`payoutVerifiedOutcome`, `src/server/chain` signers).
+3. **Safety-hold enforcement** — `VERIFIED` outcomes wait out a legitimate refund-hold window before becoming payout-eligible; hold-active outcomes are skipped by the worker.
+4. **Reservation → submit-once → reconciliation settlement** — `processEligiblePayouts()` reserves, submits exactly once, then settles only after independently matching the onchain `OutcomePaid` event. `SUBMITTED` is never called settled.
+5. **No-double-pay / replay protection** — onchain `outcomeUsed`/`proofUsed` maps plus exactly one reservation and one payout per outcome for life; concurrent outcomes share free-budget accounting (`funded − committed`) so campaigns can never overcommit.
+6. **Fail-closed chain/signer validation** — every chain read asserts RPC `eth_chainId` equals the configured chain and the vault equals the canonical address; mismatches abort instead of proceeding (`src/server/chain`).
+7. **Public evidence ledger / receipts** — truthful receipts, per-campaign activity, and an append-only audit trail expose every autonomous decision for inspection.
+8. **Owner browser-signed funding flow** — register → approve USDC → fund in MetaMask, confirmed by independent onchain reads before the campaign goes `LIVE`.
+
+**What Thesma adds beyond the existing `circlefin/arc-*` samples (e.g. `arc-commerce`, `arc-p2p-payments`):** those repos show how to move money on Arc; Thesma adds the *settlement policy layer above the payment*: autonomous, no-per-payout-approval settlement bounded by frozen budgets, deterministic verification with safety holds, single-submission reconciliation against matched onchain events, and live mainnet no-double-pay evidence — the building blocks for outcome-based businesses rather than one-off transfers.
 
 ## Technical architecture
 
@@ -385,3 +410,4 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
 - [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.
 - [`docs/proof/operator-testnet.md`](docs/proof/operator-testnet.md) — live Arc testnet autonomous-operator proof (autonomous payout, policy refusal, human approval).
+- License: MIT — see [LICENSE](LICENSE).
