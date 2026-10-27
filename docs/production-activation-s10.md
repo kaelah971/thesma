@@ -1,5 +1,32 @@
 # Slice 10B — Production Migration + Deployment Runbook
 
+**10B ACTUALS (2026-10-27, appended during controlled activation):**
+- Activation commit: a076e3f (HEAD == origin/main at activation; Slices 1–9 + Arc docs verified in history).
+- Production DB: Neon Postgres 18.6, `thesma_mainnet` (us-east-2), `sslmode=verify-full`. Read-only connectivity verified (`SELECT current_database(), version()`).
+- Recovery point: local logical backup `.tmp-10b-backup/` (git-ignored, never committed) — 28 tables, 173 rows, MANIFEST.json at 2026-10-27T16:22:53Z; spot-verified row-for-row against live counts. No Neon API key exists in this environment, so no provider-native branch/snapshot was possible; the CSV backup is the rollback reference.
+- __drizzle_migrations: table DOES NOT EXIST in production (confirms 10A finding — never run `npm run db:migrate` here).
+- Drift check: zero pending objects pre-existed (no invitation_status, none of the 5 tables/columns/indexes). No drift → proceeded.
+- Migration hashes (sha256 of exact committed files applied byte-for-byte):
+  0014_creator_capability.sql: 1e034db10b7d8791a32a811d2bcbfe797111d37964366e17f4a0c136fbd7c1cc
+  0015_creator_invitations.sql: f08457efd924ba50cefd985996955487d10faf67ac457395c78bdad96b247e15
+  0016_cuddly_selene.sql: 1e045ecb3d5f73df589ca2150540fa1c641213a9d520fc9c53d10cb97a04e3c2 (hand-trimmed new-tables-only version, NOT regenerated)
+  0017_outstanding_misty_knight.sql: 557ade6181b25f4fad30919735dd3e71ae15a3535b3e917588d7b7dc3897b4bd
+- Migrations applied in order 0014→0015→0016→0017, one transaction per file, all COMMIT_OK; per-file verification passed (columns/types/defaults, enum, tables, FKs, unique/partial/regular indexes, CHECK constraints).
+- Post-migration invariants: all pre-existing row counts identical (users 9, personas 1 (@bgirl untouched: handle=bgirl, new cols null/[]), campaigns 7, outcomes 2×VERIFIED, payouts 2×SETTLED, reservations 2, audit_events 93, partners/terms/referrals/fundings 2, policy_versions 7); new tables all 0 rows.
+- Deployment: production auto-deploys on git push (Vercel GitHub integration); live deployment dpl_EXPkA7r26zZWFqN5Pac7Ta24bVUq (Ready 17:17:55 UTC+1) already serves a076e3f — no separate deploy action was needed or taken. Previous deployment (26m earlier) retained as rollback target.
+- Cron verified live: `/internal/agents/scout/run 20 8 * * *`, `/internal/agents/supply/run 30 6 * * *`, `/internal/payouts/process 0 6 * * *` (daily, Hobby-compatible; no sub-daily).
+- Worker auth: unauthenticated POST/GET → 401 on payouts/scout/cron paths; supply POST → 503 UNCONFIGURED (pre-existing fail-closed: SUPPLY_AGENT_WORKER_SECRET intentionally unset; scheduled GET path via CRON_SECRET healthy).
+- Env audit (names only, via `vercel env ls production`): all 13 required secrets present; procurement/test vars correctly ABSENT (NOT_CONFIGURED by design).
+- Public health: /,/start,/markets,/security,@bgirl,Aster,Beaconfield all 200, zero error markers, proof content intact; /creator,/app* correctly 307 (auth redirect).
+- New tables still 0 rows post-deploy (no render path mutates). Ledger read on real history: payout.submitted×2 vs settled×2 distinct, AMBIGUOUS×1 preserved, funding/operator actions present.
+- Authenticated smoke (/creator as @bgirl, org workspaces): DEFERRED — no operator-held user session available in this sandbox; no fake users created. Carried to 10C.
+- Procurement smoke: NOT_CONFIGURED confirmed (no policy rows, no env, no local-test execution in prod); no spend possible.
+- No source changes were required or made in 10B (docs + STATE + .gitignore scratch-guard only).
+
+---
+
+# Slice 10B — Production Migration + Deployment Runbook (plan; actuals above)
+
 **Status: PLAN ONLY. Nothing here has been executed. Slice 10A proved readiness; 10B performs the work.**
 
 Related: `docs/integration-readiness.md` (inventory), `docs/MAINNET_RUNBOOK.md` (chain proof era),

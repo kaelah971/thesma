@@ -22,11 +22,11 @@
 - [x] Slice 8: Verification procurement agent (this session)
 - [x] Slice 9: Autonomy ladder + unified decision ledger (87dc757)
 - [x] Slice 10A: Integration rehearsal + activation readiness (this session)
-- [ ] Slice 10B: Production migration + deployment (NOT STARTED — needs live prod access)
+- [x] Slice 10B: Production migration + deployment (ACTIVATED this session — see below; 10C still pending)
 - [ ] Slice 10C: Real production proof (NOT STARTED — needs real users)
 
 ## Current slice
-- Slice 10A SHIPPED (readiness only, zero production writes): git truth reconciled (Slices 1–9 + Arc docs in history, HEAD == origin/main); migrations 0014–0017 inventoried (additive, ordered, legacy-safe); live production DB unreachable from sandbox (ECONNREFUSED) → read-only prod audit + execution rehearsal BLOCKED, static audit substituted; disposable-DB rehearsal BLOCKED (no local Postgres, no Docker per machine constraint, no Neon/staging credentials) — no infra created; E2E rehearsal on memory store proves Slices 1–9 interoperate; auth matrix + privacy scan + legacy/Aster-Beaconfield rendering covered; env audit (29 names) + Hobby cron verified; full suite green; runbook docs/production-activation-s10.md written. Docker: not used (attempted fetch only; pulled image removed; daemon restored to down).
+- Slice 10B ACTIVATED (controlled, verified): Neon Postgres 18.6 thesma_mainnet reachable read-only; recovery = local full logical backup (28 tables/173 rows, MANIFEST 2026-10-27T16:22Z, row-verified); __drizzle_migrations absent (never run db:migrate); zero drift; 0014→0015→0016→0017 applied byte-for-byte in per-file transactions (hashes recorded in runbook); per-file verification passed; invariants hold (@bgirl intact, counts identical, new tables empty); production auto-deploys on push — live dpl_EXPkA7r26zZWFqN5Pac7Ta24bVUq already serves a076e3f (verified via new-route 401s + public health); cron daily×3 Hobby-compatible; worker auth gates correct (supply POST 503 = pre-existing fail-closed for unset optional secret; cron GETs 401); env audit complete (procurement vars correctly absent); Aster/Beaconfield 200 with proof content; no user/campaign/economic changes; no mainnet tx. Docker: image pull reverted, daemon restored to down, no containers/volumes/files left behind.
 
 ## Files (slice 10A)
 - tests/slice10a-rehearsal.test.ts (10 tests: Slices 1–9 E2E on memory store, legacy compat, Aster/Beaconfield-style legacy rendering, auth matrix, privacy scan, unconfigured procurement)
@@ -101,11 +101,11 @@
 - Slice 2: invitations.ts, matches/invitations routes, CreatorMatches.tsx, campaignStore persistence, 0015_creator_invitations.sql
 
 ## Blockers
-- Migrations 0014/0015 committed but NOT applied to prod; no prod deploy/migration/mutation until slice 10.
+- Migrations 0014–0017 APPLIED to prod in 10B (verified per-file); no further prod mutation until 10C.
 - Arc Showcase/Mainnet submission complete (b7f4c6a, accd972) — preserved, untouched; no contract redeploy, no mainnet tx, no Sourcify changes.
 
 ## Verification
-- typecheck clean + lint clean + build clean + FULL SUITE green: 515 passed / 2 skipped (opt-in anvil) across 51 files, incl. 10 new 10A rehearsal tests (this session).
+- 10B: migrations verified live per-file; invariants hold; public health + worker auth + Aster/Beaconfield proof checked live; new tables 0 rows; no source changes in 10B (docs/STATE/.gitignore only) so no test re-run required per slice protocol (last full green: typecheck + lint + 515 passed / 2 skipped + build, 10A).
 
 ## Protocol research (Slice 8, recorded 2026-10-27)
 - x402 v2 HTTP semantics implemented per product spec: 402 → PAYMENT-REQUIRED → client validates → PAYMENT-SIGNATURE retry → PAYMENT-RESPONSE. Exact-match only; v1 X-PAYMENT headers explicitly rejected.
@@ -116,7 +116,7 @@
 - Circle Gateway/nanopayments: no repo integration exists (README explicitly disclaims it); boundary left as env config, no provisioning in this slice.
 
 ## Next action
-- Slice 10B: Production migration + deployment (requires live prod access + recovery point; see docs/production-activation-s10.md).
+- Slice 10C: Real production proof + judge/demo capture (needs real users; runbook docs/production-activation-s10.md).
 
 ## Appendix A — Slice-9 decision systems audit (source of mapping truth)
 - CREATOR_SCOUT: scoreCandidate + evaluateAutoJoinAuthority (RECOMMEND/JOIN/REFUSE) + background runs; events: creator.autojoin.evaluated/executed, creator.scout.background.completed.
