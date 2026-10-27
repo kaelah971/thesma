@@ -20,11 +20,18 @@
 - [x] Slice 6: Hybrid creator deals + expanded outcome economics (this session)
 - [x] Slice 7: Creator reliability + outcome quality/retention (this session)
 - [x] Slice 8: Verification procurement agent (this session)
-- [x] Slice 9: Autonomy ladder + unified decision ledger (this session)
-- [ ] Slice 10: Integrated test + production activation + proof
+- [x] Slice 9: Autonomy ladder + unified decision ledger (87dc757)
+- [x] Slice 10A: Integration rehearsal + activation readiness (this session)
+- [ ] Slice 10B: Production migration + deployment (NOT STARTED — needs live prod access)
+- [ ] Slice 10C: Real production proof (NOT STARTED — needs real users)
 
 ## Current slice
-- Slice 9 SHIPPED: unified autonomy + decision ledger (envelope, ladder, escalations, metrics, read-only ledger over existing auditEvents; no new persistence, no migration, no new powers, no policy widened). See Appendix A for the audited decision systems.
+- Slice 10A SHIPPED (readiness only, zero production writes): git truth reconciled (Slices 1–9 + Arc docs in history, HEAD == origin/main); migrations 0014–0017 inventoried (additive, ordered, legacy-safe); live production DB unreachable from sandbox (ECONNREFUSED) → read-only prod audit + execution rehearsal BLOCKED, static audit substituted; disposable-DB rehearsal BLOCKED (no local Postgres, no Docker per machine constraint, no Neon/staging credentials) — no infra created; E2E rehearsal on memory store proves Slices 1–9 interoperate; auth matrix + privacy scan + legacy/Aster-Beaconfield rendering covered; env audit (29 names) + Hobby cron verified; full suite green; runbook docs/production-activation-s10.md written. Docker: not used (attempted fetch only; pulled image removed; daemon restored to down).
+
+## Files (slice 10A)
+- tests/slice10a-rehearsal.test.ts (10 tests: Slices 1–9 E2E on memory store, legacy compat, Aster/Beaconfield-style legacy rendering, auth matrix, privacy scan, unconfigured procurement)
+- docs/production-activation-s10.md (10B runbook: preconditions, env, recovery, exact migration order + per-file verify/abort, deploy order, rollback reality, 10C real-user plan, demo inventory)
+- docs/integration-readiness.md (updated by Slice 9; still the 10B pre-read)
 
 ## Files (slice 9)
 - src/server/services/autonomy.ts (envelope, 60+ event mapping, ladder, escalations, metrics, ledger reader)
@@ -98,7 +105,7 @@
 - Arc Showcase/Mainnet submission complete (b7f4c6a, accd972) — preserved, untouched; no contract redeploy, no mainnet tx, no Sourcify changes.
 
 ## Verification
-- typecheck clean + lint clean + build clean + FULL SUITE green: 505 passed / 2 skipped (opt-in anvil) across 50 files, incl. 17 new autonomy tests (this session).
+- typecheck clean + lint clean + build clean + FULL SUITE green: 515 passed / 2 skipped (opt-in anvil) across 51 files, incl. 10 new 10A rehearsal tests (this session).
 
 ## Protocol research (Slice 8, recorded 2026-10-27)
 - x402 v2 HTTP semantics implemented per product spec: 402 → PAYMENT-REQUIRED → client validates → PAYMENT-SIGNATURE retry → PAYMENT-RESPONSE. Exact-match only; v1 X-PAYMENT headers explicitly rejected.
@@ -109,7 +116,7 @@
 - Circle Gateway/nanopayments: no repo integration exists (README explicitly disclaims it); boundary left as env config, no provisioning in this slice.
 
 ## Next action
-- Slice 10: Integrated test + production activation + proof.
+- Slice 10B: Production migration + deployment (requires live prod access + recovery point; see docs/production-activation-s10.md).
 
 ## Appendix A — Slice-9 decision systems audit (source of mapping truth)
 - CREATOR_SCOUT: scoreCandidate + evaluateAutoJoinAuthority (RECOMMEND/JOIN/REFUSE) + background runs; events: creator.autojoin.evaluated/executed, creator.scout.background.completed.
