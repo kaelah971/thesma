@@ -138,10 +138,10 @@ describe("policy validation (pure, deterministic)", () => {
     expect(broke.issues.some((i) => i.code === "UNAFFORDABLE")).toBe(true);
   });
 
-  it("S1 transitions allow DRAFT->REVIEW->APPROVED only; FUNDING/LIVE are unreachable", () => {
+  it("S1 transitions allow DRAFT->REVIEW->APPROVED plus owner direct DRAFT->APPROVED; FUNDING/LIVE are unreachable", () => {
     expect(() => assertS1Transition("DRAFT", "REVIEW")).not.toThrow();
     expect(() => assertS1Transition("REVIEW", "APPROVED")).not.toThrow();
-    expect(() => assertS1Transition("DRAFT", "APPROVED")).toThrow();
+    expect(() => assertS1Transition("DRAFT", "APPROVED")).not.toThrow();
     for (const target of ["FUNDING", "LIVE", "PAUSED", "CLOSING", "CLOSED"] as const) {
       expect(() => assertS1Transition("DRAFT", target)).toThrow();
       expect(() => assertS1Transition("REVIEW", target)).toThrow();
@@ -177,11 +177,11 @@ describe("campaign service (workspace-isolated, owner-approved)", () => {
     expect(err.details.missing).toContain("bountyFloorMicroUsdc");
   });
 
-  it("rejects a DRAFT -> APPROVED jump: review is required", async () => {
+  it("owner can approve a complete DRAFT directly without self-review", async () => {
     const { deps } = setup();
     const d = await completeDraft(deps);
-    const err = await fails(approvePolicy(deps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 }));
-    expect(err.status).toBe(400);
+    const a = await approvePolicy(deps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
+    expect(a.version.status).toBe("APPROVED");
   });
 
   it("non-owner cannot approve; member may draft and request review", async () => {

@@ -173,7 +173,14 @@ export default async function CampaignPage({
         <div className={styles.notice} data-tone={missing.length ? "cream" : "mint"} style={{ marginBottom: 12 }}>
           {missing.length
             ? `Draft saved. Still missing: ${missing.map((m) => m.label).join(", ")}. Add them to your description in a new draft, or revise via the API.`
-            : "Draft saved with every required field. Request review when you're ready."}
+            : snapshot.workspace.role === "ORGANIZATION_OWNER"
+              ? "Draft saved with every required field. Review the terms below, then approve the campaign — no self-review needed."
+              : "Draft saved with every required field. Request review so an owner can approve it."}
+        </div>
+      )}
+      {campaign.state === "APPROVED" && !campaign.funding && (
+        <div className={styles.notice} data-tone="mint" style={{ marginBottom: 12 }}>
+          Approved — awaiting funding. You can match and invite creators now; customer acquisition and payouts begin after funding.
         </div>
       )}
 
@@ -284,6 +291,10 @@ export default async function CampaignPage({
                   { label: "Opened", value: formatDateTime(campaign.market.openedAt) },
                 ]}
               />
+            ) : campaign.state === "APPROVED" ? (
+              <p className={styles.muted} style={{ fontSize: 14 }}>
+                <strong>Not active</strong> — awaiting funding. Funding is required before customer acquisition and payouts begin. You can already match and invite creators above; the market opens after funding is confirmed.
+              </p>
             ) : (
               <p className={styles.muted} style={{ fontSize: 14 }}>
                 The market opens after funding is confirmed. Partners can then join at the published price.
@@ -304,32 +315,12 @@ export default async function CampaignPage({
       </div>
 
       <div className={styles.stack}>
-        <Card
-          title="Outcomes"
-          action={
-            rows.length > 0 && (
-              <Link href={`/app/outcomes?campaign=${campaign.id}`} className={styles.cardLink}>
-                Filter outcomes
-              </Link>
-            )
-          }
-        >
-          {rows.length ? (
-            <OutcomeTable rows={rows.slice(0, 12)} campaigns={snapshot.campaigns} showCampaign={false} />
-          ) : (
-            <EmptyState title="No outcomes yet" body="Outcomes appear when a referred customer completes a qualifying purchase." />
-          )}
-        </Card>
-        <Card title="Payouts">
-          {payouts.length ? (
-            <PayoutTable payouts={payouts.slice(0, 12)} campaigns={snapshot.campaigns} showCampaign={false} />
-          ) : (
-            <EmptyState title="No payouts yet" body="Payouts are created only for verified outcomes whose safety hold has passed." />
-          )}
-        </Card>
         <Card title="Creator matches">
           <p className={styles.muted} style={{ fontSize: 13, marginTop: 0 }}>
             Ranked registered creators for this campaign with the reason behind each match. Inviting is not participation — no referral, payout, or notification is created.
+            {campaign.state === "APPROVED" && !campaign.funding
+              ? " Advisory matches work before funding; the market opens after funding."
+              : ""}
           </p>
           <CreatorMatchesPanel campaignId={campaign.id} />
         </Card>
@@ -351,6 +342,29 @@ export default async function CampaignPage({
             </ul>
           ) : (
             <EmptyState title="No participants yet" body="Creators who join this campaign appear here with their real funnel." />
+          )}
+        </Card>
+        <Card
+          title="Outcomes"
+          action={
+            rows.length > 0 && (
+              <Link href={`/app/outcomes?campaign=${campaign.id}`} className={styles.cardLink}>
+                Filter outcomes
+              </Link>
+            )
+          }
+        >
+          {rows.length ? (
+            <OutcomeTable rows={rows.slice(0, 12)} campaigns={snapshot.campaigns} showCampaign={false} />
+          ) : (
+            <EmptyState title="No outcomes yet" body="Outcomes appear when a referred customer completes a qualifying purchase." />
+          )}
+        </Card>
+        <Card title="Payouts">
+          {payouts.length ? (
+            <PayoutTable payouts={payouts.slice(0, 12)} campaigns={snapshot.campaigns} showCampaign={false} />
+          ) : (
+            <EmptyState title="No payouts yet" body="Payouts are created only for verified outcomes whose safety hold has passed." />
           )}
         </Card>
       </div>

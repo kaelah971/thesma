@@ -14,8 +14,8 @@ const dealSchema = z.object({
 });
 
 const inviteSchema = z.union([
-  z.object({ creatorUserId: z.string().trim().min(1).max(100) }),
-  z.object({ creatorUserIds: z.array(z.string().trim().min(1).max(100)).min(1).max(20) }),
+  z.object({ creatorUserId: z.string().trim().min(1).max(100), offeredBountyMicroUsdc: z.string().regex(/^[0-9]+$/).optional() }),
+  z.object({ creatorUserIds: z.array(z.string().trim().min(1).max(100)).min(1).max(20), offeredBountyMicroUsdc: z.string().regex(/^[0-9]+$/).optional() }),
 ]);
 
 const cancelSchema = z.object({ invitationId: z.string().trim().min(1).max(100) });
@@ -59,10 +59,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       deal = dealParsed.data;
     }
     const creatorUserIds = "creatorUserIds" in body ? [...new Set(body.creatorUserIds)] : [body.creatorUserId];
+    const offeredBountyMicroUsdc = body.offeredBountyMicroUsdc;
     const result = await inviteCreators(
       wired.deps,
       { callerUserId: user.userId, campaignId: id, creatorUserIds },
-      deal !== undefined ? { deal } : undefined,
+      { ...(deal !== undefined ? { deal } : {}), ...(offeredBountyMicroUsdc !== undefined ? { offeredBountyMicroUsdc } : {}) },
     );
     return Response.json(result, { status: result.invited > 0 ? 201 : 200 });
   } catch (err) {

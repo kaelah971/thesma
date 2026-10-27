@@ -131,11 +131,13 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
     setError(null);
     setNotice(null);
     const deal = buildDealPayload(hybrid, report?.publicBountyMicroUsdc ?? "0");
+    // Pre-funding invitations need an explicit offer (policy floor shown above).
+    const offeredBountyMicroUsdc = report?.prefunding ? report.publicBountyMicroUsdc : undefined;
     const res = await postJson<{ invited: number; results: { creatorUserId: string; status: string; reason: string | null }[] }>(
       `/api/campaigns/${campaignId}/invitations`,
       creatorUserIds.length === 1
-        ? { creatorUserId: creatorUserIds[0], ...(deal ? { deal } : {}) }
-        : { creatorUserIds, ...(deal ? { deal } : {}) },
+        ? { creatorUserId: creatorUserIds[0], ...(deal ? { deal } : {}), ...(offeredBountyMicroUsdc ? { offeredBountyMicroUsdc } : {}) }
+        : { creatorUserIds, ...(deal ? { deal } : {}), ...(offeredBountyMicroUsdc ? { offeredBountyMicroUsdc } : {}) },
     ).catch(() => null);
     setPending(null);
     if (!res || !res.ok) {
@@ -199,6 +201,7 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
         ))}
         <span style={{ fontSize: 12.5, opacity: 0.7 }}>
           Offer: {formatUsdc(report.publicBountyMicroUsdc)} USDC per verified outcome
+          {report.prefunding ? " (advisory — policy floor until the market opens)" : ""}
         </span>
       </div>
       {error && (

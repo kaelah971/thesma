@@ -22,12 +22,16 @@ export function CampaignActions({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Owners approve their own complete draft directly — no self-review
+  // roundtrip. Non-owners still request review; only owners can approve.
   const action =
-    state === "DRAFT"
-      ? { path: "review", label: "Request review", enabled: ready, hint: ready ? null : "Complete the required fields first." }
-      : state === "REVIEW"
-        ? { path: "approve", label: "Approve policy", enabled: isOwner, hint: isOwner ? null : "Only the organization owner can approve." }
-        : null;
+    state === "DRAFT" && isOwner
+      ? { path: "approve", label: "Approve campaign", enabled: ready, hint: ready ? "Approving opens creator matching — funding still comes next." : "Complete the required fields first." }
+      : state === "DRAFT"
+        ? { path: "review", label: "Request review", enabled: ready, hint: ready ? null : "Complete the required fields first." }
+        : state === "REVIEW"
+          ? { path: "approve", label: "Approve policy", enabled: isOwner, hint: isOwner ? null : "Only the organization owner can approve." }
+          : null;
   if (!action) return null;
 
   async function run() {

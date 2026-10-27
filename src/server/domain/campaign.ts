@@ -165,7 +165,10 @@ export function isPolicySatisfied(analysis: PolicyAnalysis): boolean {
  * later slices but have no legal entry in S1 — any attempt is rejected.
  */
 const S1_TRANSITIONS: Record<string, readonly string[]> = {
-  DRAFT: ["REVIEW"],
+  // DRAFT -> APPROVED is the owner self-approval path: the same explicit
+  // approval action as REVIEW -> APPROVED, without a self-review roundtrip.
+  // Non-owners can never take it (approvePolicy enforces OWNER first).
+  DRAFT: ["REVIEW", "APPROVED"],
   REVIEW: ["DRAFT", "APPROVED"],
   // APPROVED -> DRAFT happens only via a new revision version, never by
   // editing the approved version in place.

@@ -146,16 +146,49 @@ async function handleFor(store: MarketStore, creatorUserId: string): Promise<str
 export async function createInvitation(
   deps: InvitationDeps,
   params: { callerUserId: string; campaignId: string; creatorUserId: string },
-  opts?: { candidate?: CapabilitySeed | null; history?: HistorySeed | null; snapshot?: ScoutSnapshot; joinsToday?: number; deal?: DealInput },
+  opts?: { candidate?: CapabilitySeed | null; history?: HistorySeed | null; snapshot?: ScoutSnapshot; joinsToday?: number; deal?: DealInput; offeredBountyMicroUsdc?: string },
 ): Promise<InviteResult> {
   const now = deps.now?.() ?? new Date();
   if (params.creatorUserId === params.callerUserId) {
     fail(400, "BAD_REQUEST", "Creators cannot invite themselves");
   }
-  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId);
+  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId, { allowPreview: true });
   await requireOrgMember(deps.store, ctx.workspace?.id ?? null, params.callerUserId);
-  if (ctx.campaign.state !== "LIVE" || ctx.market.status !== "OPEN") {
+  // Slice 10: pre-funding invitations. A live + open market keeps legacy
+  // behavior (frozen live economics). An approved-but-unfunded campaign
+  // may invite against an explicit org offer within policy bounds — the
+  // same frozen-economics + capacity-gated path, marked as prospective.
+  const prefunding = ctx.prefunding;
+  if (!prefunding && (ctx.campaign.state !== "LIVE" || ctx.market.status !== "OPEN")) {
     fail(409, "INVITATIONS_CLOSED", "Invitations require a live campaign with an open market");
+  }
+  if (prefunding && ctx.campaign.state !== "APPROVED") {
+    fail(409, "INVITATIONS_CLOSED", "Pre-funding invitations require an approved campaign");
+  }
+  let offeredBounty: bigint;
+  if (prefunding) {
+    if (opts?.offeredBountyMicroUsdc === undefined) {
+      fail(400, "BAD_REQUEST", "Pre-funding invitations require an explicit offeredBountyMicroUsdc within the policy floor/ceiling");
+    }
+    try {
+      offeredBounty = BigInt(opts.offeredBountyMicroUsdc as string);
+    } catch {
+      fail(400, "BAD_REQUEST", "offeredBountyMicroUsdc must be an integer micro-USDC string");
+    }
+    const full = await deps.store.getVersion(params.campaignId, ctx.market.policyVersion).catch(() => null);
+    const floor = full?.bountyFloorMicroUsdc;
+    const ceiling = full?.bountyCeilingMicroUsdc;
+    if (floor === null || floor === undefined || ceiling === null || ceiling === undefined) {
+      fail(500, "INTERNAL", "Approved policy is missing economic bounds");
+    }
+    if ((offeredBounty as bigint) < (floor as bigint) || (offeredBounty as bigint) > (ceiling as bigint)) {
+      fail(400, "OFFER_OUT_OF_BOUNDS", `Offered bounty must stay within the policy floor and ceiling`);
+    }
+  } else {
+    if (opts?.offeredBountyMicroUsdc !== undefined) {
+      fail(400, "BAD_REQUEST", "Explicit offers are only for pre-funding invitations; live-market invitations freeze the public bounty");
+    }
+    offeredBounty = ctx.market.publicBountyMicroUsdc;
   }
   const existing = await deps.store.findActiveInvitation(params.campaignId, params.creatorUserId);
   if (existing) {
@@ -185,7 +218,7 @@ export async function createInvitation(
     history.activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
   }
   const match = await evaluateCreatorForCampaign(deps.store, ctx, candidate, history, now);
-  if (match.eligibility !== "ELIGIBLE") {
+  if (!prefunding && match.eligibility !== "ELIGIBLE") {
     fail(409, "NOT_ELIGIBLE", match.eligibilityReason);
   }
   if (match.recommendedAction !== "INVITE" && match.recommendedAction !== "REVIEW") {
@@ -203,7 +236,7 @@ export async function createInvitation(
     const parsed = parseDeal(opts.deal);
     if (!parsed.ok) fail(400, "BAD_DEAL", `Invalid hybrid deal: ${parsed.issues.join("; ")}`);
     const deal = (parsed as { ok: true; deal: import("./deals").CanonicalDeal }).deal;
-    if (BigInt(deal.performanceBountyMicroUsdc) !== ctx.market.publicBountyMicroUsdc && deal.performanceBountyMicroUsdc !== "0") {
+    if (BigInt(deal.performanceBountyMicroUsdc) !== offeredBounty && deal.performanceBountyMicroUsdc !== "0") {
       fail(400, "DEAL_BOUNTY_MISMATCH", "Hybrid performance bounty must equal the frozen invitation bounty.");
     }
     const exposure = computeExposure(deal);
@@ -231,11 +264,14 @@ export async function createInvitation(
       organizationUserId: params.callerUserId,
       creatorUserId: params.creatorUserId,
       offeredOutcomeKind: outcomeKind,
-      offeredBountyMicroUsdc: ctx.market.publicBountyMicroUsdc,
+      // Pre-market sentinel: no market row exists yet. Accept-time joins
+      // against the live market and records its version; the frozen
+      // economics (bounty + policy) never change.
+      offeredBountyMicroUsdc: offeredBounty,
       offeredMinQualifyingMicroUsdc: ctx.version.minQualifyingPurchaseMicroUsdc,
       offeredHoldSeconds: ctx.version.refundHoldSeconds,
       offeredPolicyVersion: ctx.market.policyVersion,
-      offeredMarketVersion: ctx.market.version,
+      offeredMarketVersion: prefunding ? 0 : ctx.market.version,
       offeredBonusJson: frozenDealJson,
       matchScore: match.matchScore,
       matchConfidence: match.confidence,
@@ -439,7 +475,7 @@ export async function listCreatorOpportunities(
 export async function inviteCreators(
   deps: InvitationDeps,
   params: { callerUserId: string; campaignId: string; creatorUserIds: string[] },
-  opts?: { candidates?: Record<string, CapabilitySeed | null>; histories?: Record<string, HistorySeed>; deal?: DealInput },
+  opts?: { candidates?: Record<string, CapabilitySeed | null>; histories?: Record<string, HistorySeed>; deal?: DealInput; offeredBountyMicroUsdc?: string },
 ): Promise<{ campaignId: string; invited: number; results: BulkInviteItem[] }> {
   const ids = [...new Set(params.creatorUserIds)].slice(0, MAX_BULK_INVITES);
   const results: BulkInviteItem[] = [];
@@ -452,6 +488,7 @@ export async function inviteCreators(
           candidate: opts?.candidates?.[creatorUserId],
           history: opts?.histories?.[creatorUserId],
           deal: opts?.deal,
+          offeredBountyMicroUsdc: opts?.offeredBountyMicroUsdc,
         },
       );
       results.push({
@@ -679,10 +716,13 @@ export async function acceptInvitation(
   // historical terms always win over rewriting history.
   const existing = await deps.store.getTerms(row.campaignId, profile.id);
   if (existing) {
+    // offeredMarketVersion 0 = invited before any market existed; only the
+    // frozen economics (price + policy) are comparable in that case.
+    const marketMatches = row.offeredMarketVersion === 0 || existing.marketVersion === row.offeredMarketVersion;
     const compatible =
       existing.priceMicroUsdc === row.offeredBountyMicroUsdc &&
       existing.policyVersion === row.offeredPolicyVersion &&
-      existing.marketVersion === row.offeredMarketVersion;
+      marketMatches;
     if (!compatible) {
       fail(
         409,
@@ -703,7 +743,9 @@ export async function acceptInvitation(
         frozenOffer: {
           bountyMicroUsdc: row.offeredBountyMicroUsdc,
           policyVersion: row.offeredPolicyVersion,
-          marketVersion: row.offeredMarketVersion,
+          // Pre-market invitations freeze economics but join against the
+          // live market once it opens; terms always record the real market.
+          marketVersion: row.offeredMarketVersion === 0 ? market.version : row.offeredMarketVersion,
         },
       });
   // Slice 6: frozen hybrid extension. The performance leg already lives in

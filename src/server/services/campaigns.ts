@@ -266,8 +266,11 @@ export async function approvePolicy(
     if (version.status === "APPROVED") {
       return { campaign, version, alreadyApproved: true as const };
     }
-    if (version.status !== "REVIEW") {
-      fail(400, "BAD_REQUEST", `Only a REVIEW policy can be approved (current: ${version.status})`);
+    // Owner direct approval: a complete DRAFT skips the self-review
+    // roundtrip. REVIEW still requires the same explicit owner action.
+    // Non-owners never reach here (OWNER check above).
+    if (version.status !== "REVIEW" && version.status !== "DRAFT") {
+      fail(400, "BAD_REQUEST", `Only a DRAFT or REVIEW policy can be approved (current: ${version.status})`);
     }
     const now = deps.now?.() ?? new Date();
     const analysis = analyzePolicyFields(toFields(version), { checkDeadlineFuture: true, now });

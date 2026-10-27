@@ -45,6 +45,8 @@ export interface MatchCandidateFacts {
   maxActiveCampaigns: number | null;
   eligibility: MatchEligibility;
   eligibilityReason: string;
+  /** Prefunding advisory mode: score-based action despite NOT_ELIGIBLE. */
+  prefundingAdvisory?: boolean;
 }
 
 export interface CreatorMatch {
@@ -175,6 +177,7 @@ export function scoreCreatorMatch(f: MatchCandidateFacts): CreatorMatch {
   const sample = f.verifiedTotal + f.settledCollaborations;
   const confidence: MatchConfidence = sample >= 10 ? "HIGH" : sample >= 3 ? "MEDIUM" : "LOW";
   if (confidence === "LOW") warnings.push("low sample — treat score as provisional");
+  if (f.prefundingAdvisory) warnings.push("pre-funding estimate at policy floor — advisory only until the market opens");
 
   const matchScore = clampSub(fitScore + evidenceScore + economicsScore + availabilityScore, 100);
 
@@ -183,7 +186,7 @@ export function scoreCreatorMatch(f: MatchCandidateFacts): CreatorMatch {
   // just not worth the organization's attention yet.
   const hasSignal = fitScore > 10 || evidenceScore > 0;
   let recommendedAction: RecommendedAction;
-  if (f.eligibility !== "ELIGIBLE") {
+  if (f.eligibility !== "ELIGIBLE" && !f.prefundingAdvisory) {
     recommendedAction = "NOT_ELIGIBLE";
   } else if (matchScore >= 60 && confidence !== "LOW") {
     recommendedAction = "INVITE";
@@ -246,6 +249,8 @@ export interface MatchEngineReport {
   workspaceName: string;
   /** Live public bounty (string micro-USDC) so the org can quote the offer. */
   publicBountyMicroUsdc: string;
+  /** True when matched pre-funding against the policy floor (advisory only). */
+  prefunding: boolean;
   evaluated: number;
   invite: OrganizationCreatorMatch[];
   review: OrganizationCreatorMatch[];
@@ -294,25 +299,63 @@ export interface CampaignMatchContext {
     refundHoldSeconds: number | null;
   };
   kinds: string[];
+  /**
+   * Prefunding preview: no market row exists yet. publicBountyMicroUsdc is
+   * the policy floor (an explicitly labeled estimate, not a live price).
+   * Scoring is identical; eligibility stays NOT_ELIGIBLE with an advisory
+   * reason, and recommendedAction is score-only so orgs can plan invites.
+   */
+  prefunding: boolean;
 }
 
 /** Shared campaign context loader: market truth + observable outcome kinds. */
 export async function loadCampaignMatchContext(
   store: MarketStore,
   campaignId: string,
+  opts?: { allowPreview?: boolean },
 ): Promise<CampaignMatchContext> {
   const campaign = await store.getCampaign(campaignId);
   if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
   const workspace = await store.getWorkspace(campaign.workspaceId);
   const market = await store.getMarket(campaignId);
-  if (!market) fail(404, "MARKET_NOT_OPEN", "No open market for this campaign");
+  if (!market) {
+    if (!opts?.allowPreview) fail(404, "MARKET_NOT_OPEN", "No open market for this campaign");
+    // Preview path: approved-but-unfunded campaigns get advisory matching
+    // off the approved policy. Anything less than APPROVED must approve first.
+    const approved = await store.getCurrentVersion(campaignId).catch(() => null);
+    if (!approved || approved.status !== "APPROVED" || approved.bountyFloorMicroUsdc === null || approved.bountyFloorMicroUsdc === undefined) {
+      fail(404, "MARKET_NOT_OPEN", "Matching opens once the campaign policy is approved");
+    }
+    const kinds = ["referral"];
+    if (approved.minQualifyingPurchaseMicroUsdc !== null && approved.minQualifyingPurchaseMicroUsdc !== undefined) {
+      kinds.push("purchase");
+    }
+    return {
+      campaign,
+      workspace,
+      market: {
+        campaignId: campaign.id,
+        publicBountyMicroUsdc: approved.bountyFloorMicroUsdc as bigint,
+        status: "PREVIEW",
+        version: 0,
+        policyVersion: approved.version,
+      },
+      version: {
+        deadline: approved.deadline,
+        minQualifyingPurchaseMicroUsdc: approved.minQualifyingPurchaseMicroUsdc,
+        refundHoldSeconds: approved.refundHoldSeconds,
+      },
+      kinds,
+      prefunding: true,
+    };
+  }
   const version = await store.getVersion(campaignId, market.policyVersion);
   if (!version) fail(500, "INTERNAL", "Market policy version is missing");
   const kinds = ["referral"];
   if (version.minQualifyingPurchaseMicroUsdc !== null && version.minQualifyingPurchaseMicroUsdc !== undefined) {
     kinds.push("purchase");
   }
-  return { campaign, workspace, market, version, kinds };
+  return { campaign, workspace, market, version, kinds, prefunding: false };
 }
 
 /**
@@ -332,12 +375,25 @@ export async function evaluateCreatorForCampaign(
   let eligibilityReason = "Creator profile incomplete — cannot prove eligibility yet.";
   let activeTermsCount = history?.activeTermsCount ?? 0;
   let rules: PartnerRules | null = null;
+  let prefundingAdvisory = false;
   if (!candidate.onboardingCompleted) {
     eligibilityReason = "Creator has not finished onboarding.";
   } else if (!profile) {
     eligibilityReason = "No creator participation profile yet.";
   } else if (!parsed.ok) {
     eligibilityReason = "Stored creator rules are invalid.";
+  } else if (ctx.prefunding) {
+    // Advisory pre-funding match: the same kernel scores on the policy
+    // floor, but nobody is join-eligible until the market opens. The
+    // score-based action below lets orgs plan invitations early.
+    rules = (parsed as { ok: true; rules: PartnerRules }).rules;
+    const terms = await store.listPartnerTerms(profile.id).catch(() => []);
+    if (history?.activeTermsCount === undefined) {
+      activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+    }
+    eligibility = "NOT_ELIGIBLE";
+    eligibilityReason = "Advisory match — the market opens after funding. Priced at the policy floor until then.";
+    prefundingAdvisory = true;
   } else {
     rules = (parsed as { ok: true; rules: PartnerRules }).rules;
     const terms = await store.listPartnerTerms(profile.id).catch(() => []);
@@ -383,6 +439,7 @@ export async function evaluateCreatorForCampaign(
     maxActiveCampaigns: rules ? rules.maxActiveCampaigns : null,
     eligibility,
     eligibilityReason,
+    prefundingAdvisory,
   });
 }
 
@@ -507,10 +564,12 @@ export async function findCreatorMatches(
   opts?: {
     candidates?: CapabilitySeed[];
     histories?: Record<string, HistorySeed>;
+    /** Allow advisory matching on approved-but-unfunded campaigns. */
+    allowPreview?: boolean;
   },
 ): Promise<MatchEngineReport> {
   const now = deps.now?.() ?? new Date();
-  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId);
+  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId, { allowPreview: opts?.allowPreview });
   const { campaign, workspace } = ctx;
   const membership = workspace ? await deps.store.getMembership(workspace.id, params.callerUserId) : null;
   if (!membership || (membership.role !== "ORGANIZATION_OWNER" && membership.role !== "ORGANIZATION_MEMBER")) {
@@ -536,6 +595,7 @@ export async function findCreatorMatches(
     campaignId: campaign.id,
     workspaceName: workspace?.name ?? "Workspace",
     publicBountyMicroUsdc: ctx.market.publicBountyMicroUsdc.toString(),
+    prefunding: ctx.prefunding,
     evaluated: matches.length,
     invite: matches.filter((m) => m.recommendedAction === "INVITE").map(toOrganizationDto),
     review: matches.filter((m) => m.recommendedAction === "REVIEW").map(toOrganizationDto),

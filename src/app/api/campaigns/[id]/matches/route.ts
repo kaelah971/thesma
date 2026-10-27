@@ -14,7 +14,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     if ("response" in wired) return wired.response;
     const user = await requireUser();
     const { id } = await ctx.params;
-    const report = await findCreatorMatches(wired.deps, { callerUserId: user.userId, campaignId: id });
+    const report = await findCreatorMatches(wired.deps, { callerUserId: user.userId, campaignId: id }, { allowPreview: true });
     return Response.json(report);
   } catch (err) {
     return toApiError(err);
