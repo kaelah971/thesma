@@ -101,6 +101,85 @@ export type InvitationStatus = "INVITED" | "ACCEPTED" | "DECLINED" | "CANCELLED"
 
 export type HybridBaseStatus = "PENDING" | "VERIFIED" | "SETTLEMENT_NOT_SUPPORTED" | "PAID";
 
+export type ProcurementState =
+  | "CANDIDATE" | "QUOTED" | "REFUSED" | "ESCALATED" | "APPROVED"
+  | "PAYMENT_AUTHORIZED" | "PURCHASED" | "RESULT_RECEIVED" | "AMBIGUOUS" | "FAILED";
+
+export interface StoredVerificationProcurement {
+  id: string;
+  workspaceId: string;
+  campaignId: string;
+  outcomeId: string;
+  providerId: string;
+  checkType: string;
+  economicExposureMicroUsdc: bigint;
+  quotedCostMicroUsdc: bigint;
+  asset: string;
+  network: string;
+  payTo: string;
+  resourceUrl: string;
+  quoteVersion: string;
+  quoteExpiresAt: Date;
+  decision: string;
+  state: ProcurementState;
+  dedupeKey: string;
+  paymentReference: string | null;
+  responseHash: string | null;
+  normalizedResult: string | null;
+  reasonCodesJson: unknown;
+  decidedAt: Date | null;
+  purchasedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewVerificationProcurement {
+  id: string;
+  workspaceId: string;
+  campaignId: string;
+  outcomeId: string;
+  providerId: string;
+  checkType: string;
+  economicExposureMicroUsdc: bigint;
+  quotedCostMicroUsdc: bigint;
+  asset: string;
+  network: string;
+  payTo: string;
+  resourceUrl: string;
+  quoteVersion: string;
+  quoteExpiresAt: Date;
+  decision: string;
+  state: ProcurementState;
+  dedupeKey: string;
+}
+
+export interface StoredProcurementPolicy {
+  workspaceId: string;
+  enabled: boolean;
+  maxCostPerCheckMicroUsdc: bigint;
+  maxSpendPerPeriodMicroUsdc: bigint;
+  periodDays: number;
+  maxCostBpsOfExposure: number;
+  allowedProvidersJson: unknown;
+  allowedCheckTypesJson: unknown;
+  humanApprovalThresholdMicroUsdc: bigint | null;
+  updatedAt: Date;
+}
+
+export interface NewProcurementPolicy {
+  workspaceId: string;
+  enabled: boolean;
+  maxCostPerCheckMicroUsdc: bigint;
+  maxSpendPerPeriodMicroUsdc: bigint;
+  periodDays: number;
+  maxCostBpsOfExposure: number;
+  allowedProvidersJson: unknown;
+  allowedCheckTypesJson: unknown;
+  humanApprovalThresholdMicroUsdc: bigint | null;
+  updatedByUserId: string | null;
+}
+
 export interface StoredHybridDeal {
   id: string;
   termsId: string;
@@ -513,6 +592,14 @@ export interface MarketStore extends FundingStore {
   updateHybridDealBase(id: string, status: HybridBaseStatus): Promise<StoredHybridDeal>;
   insertMilestoneAward(a: NewMilestoneAward): Promise<StoredMilestoneAward>;
   listMilestoneAwardsByDeal(dealId: string): Promise<StoredMilestoneAward[]>;
+  insertProcurement(p: NewVerificationProcurement): Promise<StoredVerificationProcurement>;
+  getProcurement(id: string): Promise<StoredVerificationProcurement | null>;
+  getProcurementByDedupe(dedupeKey: string): Promise<StoredVerificationProcurement | null>;
+  updateProcurement(id: string, patch: Partial<Pick<StoredVerificationProcurement, "state" | "decision" | "paymentReference" | "responseHash" | "normalizedResult" | "reasonCodesJson" | "decidedAt" | "purchasedAt" | "completedAt">>): Promise<StoredVerificationProcurement>;
+  listProcurementsByCampaign(campaignId: string): Promise<StoredVerificationProcurement[]>;
+  listProcurementsByWorkspace(workspaceId: string): Promise<StoredVerificationProcurement[]>;
+  getProcurementPolicy(workspaceId: string): Promise<StoredProcurementPolicy | null>;
+  setProcurementPolicy(p: NewProcurementPolicy): Promise<StoredProcurementPolicy>;
   /** Optimistic market mutation; throws STALE (409) on version mismatch. */
   updateMarket(
     campaignId: string,
@@ -656,6 +743,9 @@ export function createMemoryCampaignStore(seed?: {
   const hybridDeals = new Map<string, StoredHybridDeal>();
   const hybridDealsByTerms = new Map<string, string>();
   const milestoneAwards = new Map<string, StoredMilestoneAward>();
+  const procurements = new Map<string, StoredVerificationProcurement>();
+  const procurementsByDedupe = new Map<string, string>();
+  const procurementPolicies = new Map<string, StoredProcurementPolicy>();
   const decisions: StoredPricingDecision[] = [];
   const decisionKeys = new Set<string>();
   const negotiations = new Map<string, StoredNegotiation>();
@@ -780,6 +870,9 @@ export function createMemoryCampaignStore(seed?: {
       const snapHybridDeals = new Map(hybridDeals);
       const snapHybridDealsByTerms = new Map(hybridDealsByTerms);
       const snapMilestoneAwards = new Map(milestoneAwards);
+      const snapProcurements = new Map(procurements);
+      const snapProcurementsByDedupe = new Map(procurementsByDedupe);
+      const snapProcurementPolicies = new Map(procurementPolicies);
       const snapDecisions = [...decisions];
       const snapDecisionKeys = new Set(decisionKeys);
       const snapNegotiations = new Map(negotiations);
@@ -839,6 +932,12 @@ export function createMemoryCampaignStore(seed?: {
         for (const [k, v] of snapHybridDealsByTerms) hybridDealsByTerms.set(k, v);
         milestoneAwards.clear();
         for (const [k, v] of snapMilestoneAwards) milestoneAwards.set(k, v);
+        procurements.clear();
+        for (const [k, v] of snapProcurements) procurements.set(k, v);
+        procurementsByDedupe.clear();
+        for (const [k, v] of snapProcurementsByDedupe) procurementsByDedupe.set(k, v);
+        procurementPolicies.clear();
+        for (const [k, v] of snapProcurementPolicies) procurementPolicies.set(k, v);
         decisions.length = 0;
         decisions.push(...snapDecisions);
         decisionKeys.clear();
@@ -1096,6 +1195,46 @@ export function createMemoryCampaignStore(seed?: {
     },
     async listMilestoneAwardsByDeal(dealId) {
       return [...milestoneAwards.values()].filter((r) => r.dealId === dealId);
+    },
+    async insertProcurement(p) {
+      if (procurements.has(p.id)) throw uniqueViolation("Procurement already exists");
+      if (procurementsByDedupe.has(p.dedupeKey)) throw uniqueViolation("Procurement already exists for this check");
+      const row: StoredVerificationProcurement = {
+        ...p, paymentReference: null, responseHash: null, normalizedResult: null,
+        reasonCodesJson: [], decidedAt: null, purchasedAt: null, completedAt: null,
+        createdAt: now, updatedAt: now,
+      };
+      procurements.set(p.id, row);
+      procurementsByDedupe.set(p.dedupeKey, p.id);
+      return row;
+    },
+    async getProcurement(id) {
+      return procurements.get(id) ?? null;
+    },
+    async getProcurementByDedupe(dedupeKey) {
+      const id = procurementsByDedupe.get(dedupeKey);
+      return id ? (procurements.get(id) ?? null) : null;
+    },
+    async updateProcurement(id, patch) {
+      const row = procurements.get(id);
+      if (!row) throw new Error("Procurement not found");
+      const next = { ...row, ...patch, updatedAt: now };
+      procurements.set(id, next);
+      return next;
+    },
+    async listProcurementsByCampaign(campaignId) {
+      return [...procurements.values()].filter((r) => r.campaignId === campaignId);
+    },
+    async listProcurementsByWorkspace(workspaceId) {
+      return [...procurements.values()].filter((r) => r.workspaceId === workspaceId);
+    },
+    async getProcurementPolicy(workspaceId) {
+      return procurementPolicies.get(workspaceId) ?? null;
+    },
+    async setProcurementPolicy(p) {
+      const row: StoredProcurementPolicy = { ...p, updatedAt: now };
+      procurementPolicies.set(p.workspaceId, row);
+      return row;
     },
     async updateMarket(campaignId, expectedVersion, patch) {
       const row = marketStates.get(campaignId);

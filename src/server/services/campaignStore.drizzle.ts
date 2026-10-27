@@ -14,6 +14,8 @@ import {
   negotiationDecisions,
   negotiations,
   supplyCommitments,
+  verificationProcurementPolicies,
+  verificationProcurements,
   outcomes,
   partners,
   partnerTerms,
@@ -37,16 +39,19 @@ import type {
   MarketStore,
   NewCampaign,
   NewFunding,
+  ProcurementState,
   StoredFunding,
   StoredHybridDeal,
   StoredInvitation,
   StoredMilestoneAward,
   StoredPolicyVersion,
+  StoredProcurementPolicy,
+  StoredVerificationProcurement,
   StoreMembership,
   StorePartner,
   StoreWorkspace,
 } from "./campaignStore";
-import type { DbCreatorInvitation, DbHybridDeal, DbMilestoneAward } from "../db/schema";
+import type { DbCreatorInvitation, DbHybridDeal, DbMilestoneAward, DbProcurementPolicy, DbVerificationProcurement } from "../db/schema";
 import { isUniqueViolation, uniqueViolation } from "./campaignStore";
 import type { CampaignState } from "../domain/enums";
 
@@ -120,6 +125,37 @@ function toStoredMilestoneAward(row: DbMilestoneAward): StoredMilestoneAward {
     amountMicroUsdc: row.amountMicroUsdc,
     status: row.status,
     createdAt: row.createdAt,
+  };
+}
+
+function toStoredProcurement(row: DbVerificationProcurement): StoredVerificationProcurement {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    campaignId: row.campaignId,
+    outcomeId: row.outcomeId,
+    providerId: row.providerId,
+    checkType: row.checkType,
+    economicExposureMicroUsdc: row.economicExposureMicroUsdc,
+    quotedCostMicroUsdc: row.quotedCostMicroUsdc,
+    asset: row.asset,
+    network: row.network,
+    payTo: row.payTo,
+    resourceUrl: row.resourceUrl,
+    quoteVersion: row.quoteVersion,
+    quoteExpiresAt: row.quoteExpiresAt,
+    decision: row.decision,
+    state: row.state as ProcurementState,
+    dedupeKey: row.dedupeKey,
+    paymentReference: row.paymentReference,
+    responseHash: row.responseHash,
+    normalizedResult: row.normalizedResult,
+    reasonCodesJson: row.reasonCodesJson,
+    decidedAt: row.decidedAt,
+    purchasedAt: row.purchasedAt,
+    completedAt: row.completedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -592,6 +628,105 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
     async listMilestoneAwardsByDeal(dealId) {
       const rows = await db.select().from(milestoneAwards).where(eq(milestoneAwards.dealId, dealId));
       return rows.map(toStoredMilestoneAward);
+    },
+    async insertProcurement(p) {
+      const [row] = await db.insert(verificationProcurements).values({
+        id: p.id,
+        workspaceId: p.workspaceId,
+        campaignId: p.campaignId,
+        outcomeId: p.outcomeId,
+        providerId: p.providerId,
+        checkType: p.checkType,
+        economicExposureMicroUsdc: p.economicExposureMicroUsdc,
+        quotedCostMicroUsdc: p.quotedCostMicroUsdc,
+        asset: p.asset,
+        network: p.network,
+        payTo: p.payTo,
+        resourceUrl: p.resourceUrl,
+        quoteVersion: p.quoteVersion,
+        quoteExpiresAt: p.quoteExpiresAt,
+        decision: p.decision,
+        state: p.state,
+        dedupeKey: p.dedupeKey,
+      }).returning();
+      return toStoredProcurement(row);
+    },
+    async getProcurement(id) {
+      const [row] = await db.select().from(verificationProcurements).where(eq(verificationProcurements.id, id)).limit(1);
+      return row ? toStoredProcurement(row) : null;
+    },
+    async getProcurementByDedupe(dedupeKey) {
+      const [row] = await db.select().from(verificationProcurements).where(eq(verificationProcurements.dedupeKey, dedupeKey)).limit(1);
+      return row ? toStoredProcurement(row) : null;
+    },
+    async updateProcurement(id, patch) {
+      const [row] = await db.update(verificationProcurements).set({ ...patch, updatedAt: new Date() }).where(eq(verificationProcurements.id, id)).returning();
+      if (!row) throw new Error("Procurement not found");
+      return toStoredProcurement(row);
+    },
+    async listProcurementsByCampaign(campaignId) {
+      const rows = await db.select().from(verificationProcurements).where(eq(verificationProcurements.campaignId, campaignId));
+      return rows.map(toStoredProcurement);
+    },
+    async listProcurementsByWorkspace(workspaceId) {
+      const rows = await db.select().from(verificationProcurements).where(eq(verificationProcurements.workspaceId, workspaceId));
+      return rows.map(toStoredProcurement);
+    },
+    async getProcurementPolicy(workspaceId) {
+      const [row] = await db.select().from(verificationProcurementPolicies).where(eq(verificationProcurementPolicies.workspaceId, workspaceId)).limit(1);
+      if (!row) return null;
+      return {
+        workspaceId: row.workspaceId,
+        enabled: row.enabled,
+        maxCostPerCheckMicroUsdc: row.maxCostPerCheckMicroUsdc,
+        maxSpendPerPeriodMicroUsdc: row.maxSpendPerPeriodMicroUsdc,
+        periodDays: row.periodDays,
+        maxCostBpsOfExposure: row.maxCostBpsOfExposure,
+        allowedProvidersJson: row.allowedProvidersJson,
+        allowedCheckTypesJson: row.allowedCheckTypesJson,
+        humanApprovalThresholdMicroUsdc: row.humanApprovalThresholdMicroUsdc,
+        updatedAt: row.updatedAt,
+      };
+    },
+    async setProcurementPolicy(p) {
+      const [row] = await db.insert(verificationProcurementPolicies).values({
+        workspaceId: p.workspaceId,
+        enabled: p.enabled,
+        maxCostPerCheckMicroUsdc: p.maxCostPerCheckMicroUsdc,
+        maxSpendPerPeriodMicroUsdc: p.maxSpendPerPeriodMicroUsdc,
+        periodDays: p.periodDays,
+        maxCostBpsOfExposure: p.maxCostBpsOfExposure,
+        allowedProvidersJson: p.allowedProvidersJson as string[],
+        allowedCheckTypesJson: p.allowedCheckTypesJson as string[],
+        humanApprovalThresholdMicroUsdc: p.humanApprovalThresholdMicroUsdc,
+        updatedByUserId: p.updatedByUserId,
+      }).onConflictDoUpdate({
+        target: verificationProcurementPolicies.workspaceId,
+        set: {
+          enabled: p.enabled,
+          maxCostPerCheckMicroUsdc: p.maxCostPerCheckMicroUsdc,
+          maxSpendPerPeriodMicroUsdc: p.maxSpendPerPeriodMicroUsdc,
+          periodDays: p.periodDays,
+          maxCostBpsOfExposure: p.maxCostBpsOfExposure,
+          allowedProvidersJson: p.allowedProvidersJson as string[],
+          allowedCheckTypesJson: p.allowedCheckTypesJson as string[],
+          humanApprovalThresholdMicroUsdc: p.humanApprovalThresholdMicroUsdc,
+          updatedByUserId: p.updatedByUserId,
+          updatedAt: new Date(),
+        },
+      }).returning();
+      return {
+        workspaceId: row.workspaceId,
+        enabled: row.enabled,
+        maxCostPerCheckMicroUsdc: row.maxCostPerCheckMicroUsdc,
+        maxSpendPerPeriodMicroUsdc: row.maxSpendPerPeriodMicroUsdc,
+        periodDays: row.periodDays,
+        maxCostBpsOfExposure: row.maxCostBpsOfExposure,
+        allowedProvidersJson: row.allowedProvidersJson,
+        allowedCheckTypesJson: row.allowedCheckTypesJson,
+        humanApprovalThresholdMicroUsdc: row.humanApprovalThresholdMicroUsdc,
+        updatedAt: row.updatedAt,
+      };
     },
     async updateMarket(campaignId, expectedVersion, patch) {
       const [row] = await db

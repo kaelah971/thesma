@@ -154,6 +154,9 @@ export interface CapitalPlan {
     est24hObligationsMicroUsdc: string;
     est7dObligationsMicroUsdc: string;
     unallocatedMicroUsdc: string;
+    /** Slice 8: verification spend is a business expense, never part of creator obligations. */
+    verificationSpendMicroUsdc: string;
+    pendingVerificationMicroUsdc: string;
   };
   overallConfidence: Confidence;
   /** Always UNAVAILABLE: no cross-campaign transfer primitive exists onchain. */
@@ -624,6 +627,19 @@ export async function buildCapitalPlan(
   const est24h = BigInt(orgForecast.next24hExpectedObligationsMicroUsdc);
   const deployableRaw = totalAvailable - reserve - est24h;
   const deployable = deployableRaw > 0n ? deployableRaw : 0n;
+  // Slice 8: verification procurement spend (business expense, reported separately).
+  let verificationSpendMicroUsdc = 0n;
+  let pendingVerificationMicroUsdc = 0n;
+  try {
+    const { verificationSpendForWorkspace } = await import("./verificationProcurement");
+    const spend = await verificationSpendForWorkspace(deps.store, snapshot.workspaceId, now.getTime()).catch(() => null);
+    if (spend) {
+      verificationSpendMicroUsdc = spend.spentMicroUsdc;
+      pendingVerificationMicroUsdc = spend.pendingMicroUsdc;
+    }
+  } catch {
+    // Spend visibility never breaks the capital plan.
+  }
 
   for (const row of snapshot.campaigns) {
     const funded = BigInt(row.financials.fundedMicroUsdc);
@@ -757,6 +773,8 @@ export async function buildCapitalPlan(
       est24hObligationsMicroUsdc: est24h.toString(),
       est7dObligationsMicroUsdc: BigInt(orgForecast.next7dExpectedObligationsMicroUsdc).toString(),
       unallocatedMicroUsdc: (unallocated > 0n ? unallocated : 0n).toString(),
+      verificationSpendMicroUsdc: verificationSpendMicroUsdc.toString(),
+      pendingVerificationMicroUsdc: pendingVerificationMicroUsdc.toString(),
     },
     overallConfidence,
     chainMovement: CAPITAL_MOVEMENT,

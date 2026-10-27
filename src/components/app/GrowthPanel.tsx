@@ -30,7 +30,89 @@ interface Briefing {
   };
 }
 
+interface Procurement {
+  id: string;
+  providerId: string;
+  checkType: string;
+  economicExposureMicroUsdc: string;
+  quotedCostMicroUsdc: string;
+  decision: string;
+  state: string;
+  normalizedResult: string | null;
+  paymentReference: string | null;
+  createdAt: string;
+}
+
 /** Growth intelligence: pace, bounty decision, allocation, forecast — real numbers only. */
+/** Slice 8: verification procurement ledger + owner evaluation. Renders never spend. */
+function VerificationAgent({ workspaceId, campaignId, isOwner }: { workspaceId: string; campaignId: string; isOwner: boolean }) {
+  const [rows, setRows] = useState<Procurement[] | null>(null);
+  const [result, setResult] = useState<{ decision?: { decision: string; reasons: string[] }; procurement?: Procurement | null; execution?: { signed: boolean; purchased: boolean; ambiguous: boolean; result: { result: string } | null } } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  async function load() {
+    const res = await getJson<{ procurements: Procurement[] }>(`/api/operator/verification?workspaceId=${workspaceId}&campaignId=${campaignId}`);
+    if (res.ok) setRows(res.data.procurements);
+  }
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      if (live) await load();
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, campaignId]);
+
+  async function evaluate() {
+    setRunning(true);
+    setError(null);
+    const res = await postJson(`/api/operator/verification/evaluate`, { workspaceId, campaignId });
+    setRunning(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setResult(res.data as never);
+    await load();
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <span className={styles.ctxLabel}>Verification agent</span>
+      {rows !== null && rows.length === 0 && !result && (
+        <p className={styles.muted} style={{ marginTop: 4 }}>No external checks. Real providers need configuration — nothing is purchased automatically.</p>
+      )}
+      {rows !== null &&
+        rows.slice(0, 3).map((p) => (
+          <p key={p.id} className={styles.summary}>
+            {p.checkType.replaceAll("_", " ")} · {formatUsdc(p.quotedCostMicroUsdc)} USDC · {p.decision} · {p.state}
+            {p.normalizedResult ? ` · result: ${p.normalizedResult}` : ""}
+          </p>
+        ))}
+      {result?.decision && (
+        <p className={styles.summary}>
+          Agent decision: {result.decision.decision} — {(result.decision.reasons ?? []).slice(0, 2).join(" · ")}
+          {result.execution?.purchased ? ` · PURCHASED${result.execution.result ? ` · ${result.execution.result.result}` : ""}` : ""}
+          {result.execution?.ambiguous ? " · AMBIGUOUS — reconciling, no repay" : ""}
+        </p>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      {isOwner && (
+        <button type="button" className="btn btn-primary btn-sm" disabled={running} onClick={evaluate} style={{ marginTop: 4 }}>
+          {running ? "Evaluating…" : "Evaluate verification"}
+        </button>
+      )}
+    </div>
+  );
+}
 export function GrowthPanel({ workspaceId, campaignId, isOwner }: { workspaceId: string; campaignId: string | null; isOwner: boolean }) {
   const [brief, setBrief] = useState<Briefing | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -136,6 +218,7 @@ export function GrowthPanel({ workspaceId, campaignId, isOwner }: { workspaceId:
               {running ? "Evaluating…" : "Run growth evaluation"}
             </button>
           )}
+          {campaignId && <VerificationAgent workspaceId={workspaceId} campaignId={campaignId} isOwner={isOwner} />}
         </>
       )}
     </div>

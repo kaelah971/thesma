@@ -19,12 +19,23 @@
 - [x] Slice 5: Campaign CFO + cross-campaign capital allocator (this session)
 - [x] Slice 6: Hybrid creator deals + expanded outcome economics (this session)
 - [x] Slice 7: Creator reliability + outcome quality/retention (this session)
-- [ ] Slice 8: Verification procurement agent
+- [x] Slice 8: Verification procurement agent (this session)
 - [ ] Slice 9: Autonomy ladder + unified decision ledger
 - [ ] Slice 10: Integrated testing, production migration/activation, proof, README/demo
 
 ## Current slice
-- Slice 7 SHIPPED: reliability kernel (scoreReliability with 5 components, fairness rule, PROVISIONAL/ESTABLISHED/STRONG_EVIDENCE) + retention model (D7/D30 windows from canonical VERIFIED trails, matured-denominator rates, UNSUPPORTED/REVIEW/PENDING/MISSED) + quality classification (6 states) + anomaly detector (4 signals, INFO/REVIEW, never auto-rejects) + verification readiness for Slice 8 (no purchasing) + loaders + retention.qualified audit on fresh VERIFIED + reliability audit at invite + review flags in growth evaluate + quality block in growth briefing + public profile proof-first retention + match evidence boost (capped, cold-start neutral) + match DTO reliability + Scout retained-evidence + CFO retention-gated scoring (milestone-deal campaigns only). No migration; no new contract; no external calls.
+- Slice 8 SHIPPED: verification procurement agent — Slice-7 readiness reused (NONE/REVIEW/EXTERNAL_CHECK_CANDIDATE); procurement policy (enabled, per-check/period caps, BPS-of-exposure, allowlists, human-approval threshold; additive migration 0017 committed NOT applied); deterministic decideVerificationProcurement (NO_CHECK/BUY_CHECK/WAIT/ESCALATE/REFUSE on observable economics, no invented probabilities); dedicated viem procurement signer (env key, address-match fail-closed, never logged); narrow x402 v2 client (402→PAYMENT-REQUIRED→validate→sign→PAYMENT-SIGNATURE→PAYMENT-RESPONSE, exact-match validation, SSRF allowlist, manual redirects, fail-closed); durable procurements ledger with dedupe (CANDIDATE→…→RESULT_RECEIVED, AMBIGUOUS never blind-repays); result normalization (CHECK_CLEAR/RISK_SIGNAL/INCONCLUSIVE, evidence only, never settles/rejects); CFO verification-spend separation; VERIFICATION AGENT org UI; owner evaluate + member read routes; local x402 test resource only (test-only, prod-gated); no real provider (CONFIGURATION_REQUIRED), no external spend, no new contract.
+
+## Files (slice 8)
+- src/server/services/verification.ts (provider interface, policy, decision engine, x402 v2 client, signer, normalization)
+- src/server/services/verificationProcurement.ts (evaluate/execute orchestration, idempotency, ambiguity, spend accounting, CFO hook)
+- src/server/services/verification.test-resource.ts (local x402 v2 test server, test-only, prod-gated)
+- src/server/db/schema.ts (verification_procurements, verification_procurement_policies) + drizzle/0017_outstanding_misty_knight.sql + meta (committed, NOT applied)
+- src/server/services/campaignStore.ts + .drizzle.ts (procurement + policy impls)
+- src/server/services/cfo.ts (verification spend/pending in org totals)
+- src/app/api/operator/verification/route.ts (member read) + evaluate/route.ts (owner evaluate)
+- src/components/app/GrowthPanel.tsx (VERIFICATION AGENT card)
+- tests/verification.test.ts (30 tests)
 
 ## Files (slice 7)
 - src/server/services/reliability.ts (score/retention/quality/anomaly/readiness kernels + loaders + retention audit)
@@ -78,7 +89,15 @@
 - Arc Showcase/Mainnet submission complete (b7f4c6a, accd972) — preserved, untouched; no contract redeploy, no mainnet tx, no Sourcify changes.
 
 ## Verification
-- typecheck clean + lint clean + build clean + 219 targeted green across 16 suites (19 reliability + match/scout/autojoin/background/ux/cfo/invitations/hybrid/checkout/buy-checkout/payout/growth/campaigns/profile/market) (this session). Shared kernels untouched (reuse only), no full-suite run.
+- typecheck clean + lint clean + build clean + 249 targeted green across 17 suites (30 verification + reliability/match/scout/autojoin/background/ux/cfo/invitations/hybrid/checkout/buy-checkout/payout/growth/campaigns/profile/market) (this session). Shared kernels untouched (reuse only), no full-suite run.
+
+## Protocol research (Slice 8, recorded 2026-10-27)
+- x402 v2 HTTP semantics implemented per product spec: 402 → PAYMENT-REQUIRED → client validates → PAYMENT-SIGNATURE retry → PAYMENT-RESPONSE. Exact-match only; v1 X-PAYMENT headers explicitly rejected.
+- CAIP-2 network ids; Arc mainnet eip155:5042 used as the canonical network constant.
+- No x402 npm package installed; no live spec fetch possible from this offline build sandbox (no web access). Provider payload shapes beyond the three headers are adapter-isolated and MUST be confirmed against the current official x402 spec before any mainnet use.
+- viem 2.57.7 (repo-pinned) used for procurement signing/recovery; no new payment dependencies.
+- Real provider discovery: none suitable found/connected from sandbox (no subscriptions, no funds, no paid calls). Local deterministic test resource only; real execution = CONFIGURATION_REQUIRED. Never presented as traction.
+- Circle Gateway/nanopayments: no repo integration exists (README explicitly disclaims it); boundary left as env config, no provisioning in this slice.
 
 ## Next action
-- Slice 8: Verification procurement agent.
+- Slice 9: Autonomy ladder + unified decision ledger.

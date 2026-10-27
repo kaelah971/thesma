@@ -204,6 +204,75 @@ export const growthPolicies = pgTable("growth_policies", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/* ------------------------------------------------------------------ */
+/* verification_procurements — durable x402 check ledger (Slice 8)      */
+/* Unique dedupeKey prevents paying twice for the same check. States:   */
+/* CANDIDATE → QUOTED → APPROVED → PAYMENT_AUTHORIZED → PURCHASED →      */
+/* RESULT_RECEIVED, with REFUSED / ESCALATED / AMBIGUOUS / FAILED exits. */
+/* ------------------------------------------------------------------ */
+
+export const verificationProcurements = pgTable(
+  "verification_procurements",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    outcomeId: text("outcome_id")
+      .notNull()
+      .references(() => outcomes.id, { onDelete: "cascade" }),
+    providerId: text("provider_id").notNull(),
+    checkType: text("check_type").notNull(),
+    economicExposureMicroUsdc: bigint("economic_exposure_micro_usdc", { mode: "bigint" }).notNull(),
+    quotedCostMicroUsdc: bigint("quoted_cost_micro_usdc", { mode: "bigint" }).notNull(),
+    asset: text("asset").notNull(),
+    network: text("network").notNull(),
+    payTo: text("pay_to").notNull(),
+    resourceUrl: text("resource_url").notNull(),
+    quoteVersion: text("quote_version").notNull(),
+    quoteExpiresAt: timestamp("quote_expires_at", { withTimezone: true }).notNull(),
+    decision: text("decision").notNull(),
+    state: text("state").notNull().default("CANDIDATE"),
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    paymentReference: text("payment_reference"),
+    responseHash: text("response_hash"),
+    normalizedResult: text("normalized_result"),
+    reasonCodesJson: jsonb("reason_codes_json").notNull().default([]),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    purchasedAt: timestamp("purchased_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("verification_procurements_campaign_idx").on(t.campaignId),
+    index("verification_procurements_workspace_idx").on(t.workspaceId),
+    check(
+      "verification_procurements_state_format",
+      sql`${t.state} IN ('CANDIDATE','QUOTED','REFUSED','ESCALATED','APPROVED','PAYMENT_AUTHORIZED','PURCHASED','RESULT_RECEIVED','AMBIGUOUS','FAILED')`,
+    ),
+  ],
+);
+
+export const verificationProcurementPolicies = pgTable("verification_procurement_policies", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  maxCostPerCheckMicroUsdc: bigint("max_cost_per_check_micro_usdc", { mode: "bigint" }).notNull(),
+  maxSpendPerPeriodMicroUsdc: bigint("max_spend_per_period_micro_usdc", { mode: "bigint" }).notNull(),
+  periodDays: integer("period_days").notNull().default(30),
+  maxCostBpsOfExposure: integer("max_cost_bps_of_exposure").notNull().default(200),
+  allowedProvidersJson: jsonb("allowed_providers_json").notNull().default([]),
+  allowedCheckTypesJson: jsonb("allowed_check_types_json").notNull().default([]),
+  humanApprovalThresholdMicroUsdc: bigint("human_approval_threshold_micro_usdc", { mode: "bigint" }),
+  updatedByUserId: text("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const workspaceMembers = pgTable(
   "workspace_members",
   {
@@ -1008,6 +1077,8 @@ export type DbInvite = typeof privateInvites.$inferSelect;
 export type DbCampaign = typeof campaigns.$inferSelect;
 export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;
+export type DbVerificationProcurement = typeof verificationProcurements.$inferSelect;
+export type DbProcurementPolicy = typeof verificationProcurementPolicies.$inferSelect;
 export type DbHybridDeal = typeof hybridDeals.$inferSelect;
 export type DbMilestoneAward = typeof milestoneAwards.$inferSelect;
 export type DbWorkspaceMember = typeof workspaceMembers.$inferSelect;

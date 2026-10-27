@@ -219,12 +219,13 @@ describe("outcome quality + anomalies", () => {
   it("signals never reject, never mutate, stay deterministic", async () => {
     const { store } = await setup();
     const outcomes = [
-      { id: "a", campaignId: "c-1", partnerId: "p-1", status: "VERIFIED", purchaseTx: "0xdup", customerKeyHash: "k1", verifiedAtMs: NOW.getTime() - 20 * DAY },
-      { id: "b", campaignId: "c-1", partnerId: "p-1", status: "VERIFIED", purchaseTx: "0xdup", customerKeyHash: "k2", verifiedAtMs: NOW.getTime() - 20 * DAY },
+      { id: "a", campaignId: "c-1", partnerId: "p-1", status: "VERIFIED", purchaseTx: "0xa1", customerKeyHash: "k1", verifiedAtMs: NOW.getTime() - 20 * DAY, rejectionCode: null },
+      { id: "b", campaignId: "c-1", partnerId: "p-1", status: "REJECTED", purchaseTx: "0xb2", customerKeyHash: "k2", verifiedAtMs: null, rejectionCode: "DUPLICATE_TX" },
+      { id: "c", campaignId: "c-1", partnerId: "p-1", status: "REJECTED", purchaseTx: "0xc3", customerKeyHash: "k3", verifiedAtMs: null, rejectionCode: "DUPLICATE_TX" },
     ];
     const intents = [
-      { id: "i1", campaignId: "c-1", partnerId: "p-1", orderId: "ord-1", payerAddress: "0xPAYER" },
-      { id: "i2", campaignId: "c-1", partnerId: "p-2", orderId: "ord-1", payerAddress: "0xother" },
+      { id: "i1", campaignId: "c-1", partnerId: "p-1", orderId: "ord-1", payerAddress: "0xPAYER", txHash: "0xt1" },
+      { id: "i3", campaignId: "c-1", partnerId: "p-2", orderId: "ord-1", payerAddress: "0xother", txHash: "0xt3" },
     ];
     const first = detectAnomalies({ outcomes, intents });
     expect(first.map((s) => s.type)).toContain("DUPLICATE_PAYMENT_REFERENCE");

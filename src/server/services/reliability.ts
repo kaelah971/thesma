@@ -252,28 +252,33 @@ const BURST_COUNT = 5;
  * order deterministic (type, then evidence).
  */
 export function detectAnomalies(args: {
-  outcomes: { id: string; campaignId: string; partnerId: string; status: string; purchaseTx: string | null; customerKeyHash: string | null; verifiedAtMs: number | null }[];
-  intents: { id: string; campaignId: string; partnerId: string; orderId: string; payerAddress: string }[];
+  outcomes: { id: string; campaignId: string; partnerId: string; status: string; purchaseTx: string | null; customerKeyHash: string | null; verifiedAtMs: number | null; rejectionCode?: string | null }[];
+  intents: { id: string; campaignId: string; partnerId: string; orderId: string; payerAddress: string; txHash: string | null }[];
 }): AnomalySignal[] {
   const signals: AnomalySignal[] = [];
-  const txGroups = new Map<string, typeof args.outcomes>();
+  // Duplicates surface in the rejection trail: the store enforces tx
+  // uniqueness, so a repeated payment reference appears as REJECTED
+  // outcomes with DUPLICATE_TX / DUPLICATE_CUSTOMER codes — the system
+  // already blocked them; this flags the pattern for review.
+  const dupGroups = new Map<string, typeof args.outcomes>();
   for (const o of args.outcomes) {
-    if (!o.purchaseTx) continue;
-    const list = txGroups.get(o.purchaseTx) ?? [];
+    if (o.status !== "REJECTED") continue;
+    const code = o.rejectionCode ?? null;
+    if (code !== "DUPLICATE_TX" && code !== "DUPLICATE_CUSTOMER") continue;
+    const key = `${o.campaignId}::${o.partnerId}::${code}`;
+    const list = dupGroups.get(key) ?? [];
     list.push(o);
-    txGroups.set(o.purchaseTx, list);
+    dupGroups.set(key, list);
   }
-  for (const [tx, list] of txGroups) {
-    if (list.length > 1) {
-      signals.push({
-        type: "DUPLICATE_PAYMENT_REFERENCE",
-        severity: "REVIEW",
-        campaignId: list[0].campaignId,
-        partnerId: list[0].partnerId,
-        evidenceRefs: list.map((o) => o.id).sort(),
-        reason: `Payment reference ${tx.slice(0, 10)}… appears on ${list.length} outcomes — requires review before any conclusion.`,
-      });
-    }
+  for (const [, list] of dupGroups) {
+    signals.push({
+      type: "DUPLICATE_PAYMENT_REFERENCE",
+      severity: "REVIEW",
+      campaignId: list[0].campaignId,
+      partnerId: list[0].partnerId,
+      evidenceRefs: list.map((o) => o.id).sort(),
+      reason: `Repeated duplicate-payment rejections (${list.length}) — requires review before any conclusion.`,
+    });
   }
   const orderPartners = new Map<string, Set<string>>();
   const orderCampaign = new Map<string, string>();
@@ -596,8 +601,9 @@ export async function loadCampaignQuality(store: MarketStore, campaignId: string
     outcomes: mine.map((o) => ({
       id: o.id, campaignId: o.campaignId, partnerId: o.partnerId, status: o.status,
       purchaseTx: o.purchaseTx, customerKeyHash: o.customerKeyHash ?? null, verifiedAtMs: o.verifiedAt?.getTime() ?? null,
+      rejectionCode: o.rejectionCode ?? null,
     })),
-    intents: intents.map((i) => ({ id: i.id, campaignId: i.campaignId, partnerId: i.partnerId, orderId: i.orderId, payerAddress: i.payerAddress })),
+    intents: intents.map((i) => ({ id: i.id, campaignId: i.campaignId, partnerId: i.partnerId, orderId: i.orderId, payerAddress: i.payerAddress, txHash: i.txHash })),
   });
   const reservations = await store.listReservationsByCampaign(campaignId).catch(() => []);
   const exposure = reservations.filter((r) => ["RESERVED", "SUBMITTED", "AMBIGUOUS"].includes(r.state)).reduce((s, r) => s + r.amountMicroUsdc, 0n);
