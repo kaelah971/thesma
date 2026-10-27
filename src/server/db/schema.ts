@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -521,6 +522,73 @@ export const campaignCreatorInvitations = pgTable(
   ],
 );
 
+/* ------------------------------------------------------------------ */
+/* hybrid_deals — base + milestone extension of frozen terms (Slice 6)    */
+/* The performance leg lives in partner_terms (canonical, untouched);     */
+/* this row carries only the base + milestone extension of one accepted   */
+/* invitation. Base starts PENDING: acceptance earns nothing.              */
+/* ------------------------------------------------------------------ */
+
+export const hybridDeals = pgTable(
+  "hybrid_deals",
+  {
+    id: text("id").primaryKey(),
+    termsId: text("terms_id")
+      .notNull()
+      .unique()
+      .references(() => partnerTerms.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    invitationId: text("invitation_id")
+      .notNull()
+      .references(() => campaignCreatorInvitations.id, { onDelete: "cascade" }),
+    structure: text("structure").notNull(),
+    baseAmountMicroUsdc: bigint("base_amount_micro_usdc", { mode: "bigint" }).notNull(),
+    baseStatus: text("base_status").notNull().default("PENDING"),
+    deliverableJson: jsonb("deliverable_json"),
+    performanceBountyMicroUsdc: bigint("performance_bounty_micro_usdc", { mode: "bigint" }).notNull(),
+    milestonesJson: jsonb("milestones_json").notNull().default([]),
+    maximumTotalExposureMicroUsdc: bigint("maximum_total_exposure_micro_usdc", { mode: "bigint" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("hybrid_deals_campaign_idx").on(t.campaignId),
+    index("hybrid_deals_partner_idx").on(t.partnerId),
+    check(
+      "hybrid_deals_base_status_format",
+      sql`${t.baseStatus} IN ('PENDING', 'VERIFIED', 'SETTLEMENT_NOT_SUPPORTED', 'PAID')`,
+    ),
+  ],
+);
+
+export const milestoneAwards = pgTable(
+  "milestone_awards",
+  {
+    id: text("id").primaryKey(),
+    dealId: text("deal_id")
+      .notNull()
+      .references(() => hybridDeals.id, { onDelete: "cascade" }),
+    milestoneIndex: integer("milestone_index").notNull(),
+    threshold: integer("threshold").notNull(),
+    amountMicroUsdc: bigint("amount_micro_usdc", { mode: "bigint" }).notNull(),
+    status: text("status").notNull().default("SETTLEMENT_NOT_SUPPORTED"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("milestone_awards_once_unique").on(t.dealId, t.milestoneIndex),
+    index("milestone_awards_deal_idx").on(t.dealId),
+    check(
+      "milestone_awards_status_format",
+      sql`${t.status} IN ('SETTLEMENT_NOT_SUPPORTED', 'PAID')`,
+    ),
+  ],
+);
+
 export const referrals = pgTable(
   "referrals",
   {
@@ -940,6 +1008,8 @@ export type DbInvite = typeof privateInvites.$inferSelect;
 export type DbCampaign = typeof campaigns.$inferSelect;
 export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;
+export type DbHybridDeal = typeof hybridDeals.$inferSelect;
+export type DbMilestoneAward = typeof milestoneAwards.$inferSelect;
 export type DbWorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type DbPartner = typeof partners.$inferSelect;
 export type DbSession = typeof sessions.$inferSelect;

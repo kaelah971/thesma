@@ -20,6 +20,15 @@ import {
   type CapabilitySeed,
   type HistorySeed,
 } from "./matching";
+import {
+  checkCapacity,
+  computeExposure,
+  createHybridDeal,
+  invitationDeal,
+  invitationDealCorrupt,
+  parseDeal,
+  type DealInput,
+} from "./deals";
 
 /**
  * Organization → creator invitations (Slice 2).
@@ -137,7 +146,7 @@ async function handleFor(store: MarketStore, creatorUserId: string): Promise<str
 export async function createInvitation(
   deps: InvitationDeps,
   params: { callerUserId: string; campaignId: string; creatorUserId: string },
-  opts?: { candidate?: CapabilitySeed | null; history?: HistorySeed | null; snapshot?: ScoutSnapshot; joinsToday?: number },
+  opts?: { candidate?: CapabilitySeed | null; history?: HistorySeed | null; snapshot?: ScoutSnapshot; joinsToday?: number; deal?: DealInput },
 ): Promise<InviteResult> {
   const now = deps.now?.() ?? new Date();
   if (params.creatorUserId === params.callerUserId) {
@@ -186,6 +195,33 @@ export async function createInvitation(
       ctx.version.minQualifyingPurchaseMicroUsdc !== undefined
     ? "purchase"
     : "referral";
+  // Slice 6: optional hybrid economics. Validated, bounded, capacity-gated,
+  // frozen into the invitation — later repricing never mutates it.
+  let frozenDealJson: Record<string, unknown> = {};
+  let frozenDealExposureTotal: string | null = null;
+  if (opts?.deal !== undefined) {
+    const parsed = parseDeal(opts.deal);
+    if (!parsed.ok) fail(400, "BAD_DEAL", `Invalid hybrid deal: ${parsed.issues.join("; ")}`);
+    const deal = (parsed as { ok: true; deal: import("./deals").CanonicalDeal }).deal;
+    if (BigInt(deal.performanceBountyMicroUsdc) !== ctx.market.publicBountyMicroUsdc && deal.performanceBountyMicroUsdc !== "0") {
+      fail(400, "DEAL_BOUNTY_MISMATCH", "Hybrid performance bounty must equal the frozen invitation bounty.");
+    }
+    const exposure = computeExposure(deal);
+    const fullVersion = await deps.store.getVersion(params.campaignId, ctx.market.policyVersion).catch(() => null);
+    const budgetMicroUsdc = fullVersion?.budgetMicroUsdc ?? null;
+    if (budgetMicroUsdc === null || budgetMicroUsdc === undefined) {
+      fail(409, "HYBRID_NO_BUDGET", "Hybrid offers require a campaign budget to bound exposure against.");
+    }
+    const funding = await deps.store.getFunding(params.campaignId, ctx.market.policyVersion).catch(() => null);
+    const funded = funding?.status === "CONFIRMED"
+      ? (funding.observedAmountMicroUsdc ?? funding.expectedAmountMicroUsdc)
+      : 0n;
+    const remaining = (budgetMicroUsdc as bigint) - funded;
+    const capacity = checkCapacity(exposure, remaining > 0n ? remaining : 0n);
+    if (!capacity.ok) fail(409, "HYBRID_OVER_CAPACITY", capacity.reason);
+    frozenDealJson = { deal };
+    frozenDealExposureTotal = exposure.maximumTotalMicroUsdc;
+  }
   const id = newId();
   let row: StoredInvitation;
   try {
@@ -200,7 +236,7 @@ export async function createInvitation(
       offeredHoldSeconds: ctx.version.refundHoldSeconds,
       offeredPolicyVersion: ctx.market.policyVersion,
       offeredMarketVersion: ctx.market.version,
-      offeredBonusJson: {},
+      offeredBonusJson: frozenDealJson,
       matchScore: match.matchScore,
       matchConfidence: match.confidence,
       matchAction: match.recommendedAction,
@@ -237,6 +273,12 @@ export async function createInvitation(
         offeredMarketVersion: row.offeredMarketVersion,
         matchScore: row.matchScore,
         matchConfidence: row.matchConfidence,
+        ...(frozenDealExposureTotal !== null
+          ? {
+              dealStructure: (frozenDealJson as { deal: { structure: string } }).deal.structure,
+              dealMaximumTotalMicroUsdc: frozenDealExposureTotal,
+            }
+          : {}),
       },
     })
     .catch(() => {});
@@ -364,7 +406,7 @@ export async function listCreatorOpportunities(
 export async function inviteCreators(
   deps: InvitationDeps,
   params: { callerUserId: string; campaignId: string; creatorUserIds: string[] },
-  opts?: { candidates?: Record<string, CapabilitySeed | null>; histories?: Record<string, HistorySeed> },
+  opts?: { candidates?: Record<string, CapabilitySeed | null>; histories?: Record<string, HistorySeed>; deal?: DealInput },
 ): Promise<{ campaignId: string; invited: number; results: BulkInviteItem[] }> {
   const ids = [...new Set(params.creatorUserIds)].slice(0, MAX_BULK_INVITES);
   const results: BulkInviteItem[] = [];
@@ -376,6 +418,7 @@ export async function inviteCreators(
         {
           candidate: opts?.candidates?.[creatorUserId],
           history: opts?.histories?.[creatorUserId],
+          deal: opts?.deal,
         },
       );
       results.push({
@@ -630,6 +673,20 @@ export async function acceptInvitation(
           marketVersion: row.offeredMarketVersion,
         },
       });
+  // Slice 6: frozen hybrid extension. The performance leg already lives in
+  // partnerTerms (canonical, never rewritten); the base + milestone
+  // extension starts PENDING — acceptance earns nothing, creates no payout
+  // and no reservation. Idempotent per terms.
+  const acceptedDeal = invitationDeal(row.offeredBonusJson);
+  if (acceptedDeal && acceptedDeal.structure !== "PERFORMANCE_ONLY") {
+    await createHybridDeal(deps.store, deps.audit, {
+      termsId: joined.terms.id,
+      campaignId: row.campaignId,
+      partnerId: profile.id,
+      invitationId: row.id,
+      deal: acceptedDeal,
+    });
+  }
   const updated = await deps.store.updateInvitationStatus(row.id, "ACCEPTED");
   await deps
     .audit({
@@ -732,6 +789,48 @@ export async function evaluateAndAutoAcceptInvitation(
   const row = await deps.store.getInvitation(params.invitationId).catch(() => null);
   if (!row || row.creatorUserId !== params.creatorUserId) {
     return { accepted: false, result: "ERROR", reasons: ["Invitation not found."], rule: null };
+  }
+  // Slice 6: agent authority covers performance-only economics. Hybrid
+  // structures and corrupt frozen payloads fail to human REVIEW — the
+  // invitation stays INVITED, the agent never accepts.
+  const hybridGate = async (
+    result: InvitationAgentResult,
+    rule: string,
+    reasons: string[],
+  ): Promise<AutoAcceptOutcome> => {
+    if (opts?.auditEvaluation !== false) {
+      await deps
+        .audit({
+          actorType: "SYSTEM",
+          actorId: null,
+          workspaceId: null,
+          partnerId: null,
+          action: "creator.invitation.agent_evaluated",
+          targetType: "invitation",
+          targetId: row.id,
+          metadata: {
+            campaignId: row.campaignId,
+            creatorUserId: row.creatorUserId,
+            invitationId: row.id,
+            result,
+            rule,
+            frozenBountyMicroUsdc: row.offeredBountyMicroUsdc.toString(),
+            confidence: null,
+            reasons: reasons.slice(0, 6),
+          },
+        })
+        .catch(() => {});
+    }
+    return { accepted: false, result, reasons, rule };
+  };
+  if (invitationDealCorrupt(row.offeredBonusJson)) {
+    return hybridGate("REVIEW", "HYBRID_CORRUPT", ["Frozen hybrid offer is unreadable — your review is required."]);
+  }
+  const frozenDeal = invitationDeal(row.offeredBonusJson);
+  if (frozenDeal && frozenDeal.structure !== "PERFORMANCE_ONLY") {
+    return hybridGate("REVIEW", "HYBRID_REVIEW", [
+      `Hybrid ${frozenDeal.structure} economics need human review — the agent auto-accepts performance-only offers.`,
+    ]);
   }
   try {
     const assessment = await evaluateInvitationAuthority(

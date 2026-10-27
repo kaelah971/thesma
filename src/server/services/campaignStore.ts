@@ -99,6 +99,59 @@ export interface StoredInvite {
 
 export type InvitationStatus = "INVITED" | "ACCEPTED" | "DECLINED" | "CANCELLED";
 
+export type HybridBaseStatus = "PENDING" | "VERIFIED" | "SETTLEMENT_NOT_SUPPORTED" | "PAID";
+
+export interface StoredHybridDeal {
+  id: string;
+  termsId: string;
+  campaignId: string;
+  partnerId: string;
+  invitationId: string;
+  structure: string;
+  baseAmountMicroUsdc: bigint;
+  baseStatus: HybridBaseStatus;
+  deliverableJson: unknown;
+  performanceBountyMicroUsdc: bigint;
+  milestonesJson: unknown;
+  maximumTotalExposureMicroUsdc: bigint;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NewHybridDeal {
+  id: string;
+  termsId: string;
+  campaignId: string;
+  partnerId: string;
+  invitationId: string;
+  structure: string;
+  baseAmountMicroUsdc: bigint;
+  baseStatus: HybridBaseStatus;
+  deliverableJson: unknown;
+  performanceBountyMicroUsdc: bigint;
+  milestonesJson: unknown;
+  maximumTotalExposureMicroUsdc: bigint;
+}
+
+export interface StoredMilestoneAward {
+  id: string;
+  dealId: string;
+  milestoneIndex: number;
+  threshold: number;
+  amountMicroUsdc: bigint;
+  status: string;
+  createdAt: Date;
+}
+
+export interface NewMilestoneAward {
+  id: string;
+  dealId: string;
+  milestoneIndex: number;
+  threshold: number;
+  amountMicroUsdc: bigint;
+  status: string;
+}
+
 export interface StoredInvitation {
   id: string;
   campaignId: string;
@@ -452,6 +505,14 @@ export interface MarketStore extends FundingStore {
   listInvitationsByCampaign(campaignId: string): Promise<StoredInvitation[]>;
   listInvitationsByCreator(creatorUserId: string): Promise<StoredInvitation[]>;
   updateInvitationStatus(id: string, status: "CANCELLED" | "ACCEPTED" | "DECLINED"): Promise<StoredInvitation>;
+  insertHybridDeal(d: NewHybridDeal): Promise<StoredHybridDeal>;
+  getHybridDeal(id: string): Promise<StoredHybridDeal | null>;
+  getHybridDealByTerms(termsId: string): Promise<StoredHybridDeal | null>;
+  getHybridDealByCampaignAndPartner(campaignId: string, partnerId: string): Promise<StoredHybridDeal | null>;
+  listHybridDealsByCampaign(campaignId: string): Promise<StoredHybridDeal[]>;
+  updateHybridDealBase(id: string, status: HybridBaseStatus): Promise<StoredHybridDeal>;
+  insertMilestoneAward(a: NewMilestoneAward): Promise<StoredMilestoneAward>;
+  listMilestoneAwardsByDeal(dealId: string): Promise<StoredMilestoneAward[]>;
   /** Optimistic market mutation; throws STALE (409) on version mismatch. */
   updateMarket(
     campaignId: string,
@@ -497,6 +558,7 @@ export interface MarketStore extends FundingStore {
   countTermsSince(campaignId: string, since: Date): Promise<number>;
   countVerifiedOutcomesSince(campaignId: string, since: Date): Promise<number>;
   countVerifiedOutcomes(campaignId: string): Promise<number>;
+  countVerifiedOutcomesForPartner(campaignId: string, partnerId: string): Promise<number>;
   insertAttributionSession(s: { id: string; referralId: string; campaignId: string; partnerId: string; partnerTermsId: string; expiresAt: Date }): Promise<StoredAttributionSession>;
   getAttributionSession(id: string): Promise<StoredAttributionSession | null>;
   /** Single-use consume: null when missing or already used (race-safe). */
@@ -589,6 +651,9 @@ export function createMemoryCampaignStore(seed?: {
   const referralEvents: Array<NewReferralEvent & { occurredAt: Date }> = [];
   const invites = new Map<string, StoredInvite>();
   const invitations = new Map<string, StoredInvitation>();
+  const hybridDeals = new Map<string, StoredHybridDeal>();
+  const hybridDealsByTerms = new Map<string, string>();
+  const milestoneAwards = new Map<string, StoredMilestoneAward>();
   const decisions: StoredPricingDecision[] = [];
   const decisionKeys = new Set<string>();
   const negotiations = new Map<string, StoredNegotiation>();
@@ -710,6 +775,9 @@ export function createMemoryCampaignStore(seed?: {
       const snapReferralsByCode = new Map(referralsByCode);
       const snapEvents = [...referralEvents];
       const snapInvites = new Map(invites);
+      const snapHybridDeals = new Map(hybridDeals);
+      const snapHybridDealsByTerms = new Map(hybridDealsByTerms);
+      const snapMilestoneAwards = new Map(milestoneAwards);
       const snapDecisions = [...decisions];
       const snapDecisionKeys = new Set(decisionKeys);
       const snapNegotiations = new Map(negotiations);
@@ -763,6 +831,12 @@ export function createMemoryCampaignStore(seed?: {
         referralEvents.push(...snapEvents);
         invites.clear();
         for (const [k, v] of snapInvites) invites.set(k, v);
+        hybridDeals.clear();
+        for (const [k, v] of snapHybridDeals) hybridDeals.set(k, v);
+        hybridDealsByTerms.clear();
+        for (const [k, v] of snapHybridDealsByTerms) hybridDealsByTerms.set(k, v);
+        milestoneAwards.clear();
+        for (const [k, v] of snapMilestoneAwards) milestoneAwards.set(k, v);
         decisions.length = 0;
         decisions.push(...snapDecisions);
         decisionKeys.clear();
@@ -981,6 +1055,46 @@ export function createMemoryCampaignStore(seed?: {
       invitations.set(id, next);
       return next;
     },
+    async insertHybridDeal(d) {
+      if (hybridDeals.has(d.id)) throw uniqueViolation("Hybrid deal already exists");
+      if (hybridDealsByTerms.has(d.termsId)) throw uniqueViolation("Hybrid deal already exists for terms");
+      const row: StoredHybridDeal = { ...d, createdAt: now, updatedAt: now };
+      hybridDeals.set(d.id, row);
+      hybridDealsByTerms.set(d.termsId, d.id);
+      return row;
+    },
+    async getHybridDeal(id) {
+      return hybridDeals.get(id) ?? null;
+    },
+    async getHybridDealByTerms(termsId) {
+      const id = hybridDealsByTerms.get(termsId);
+      return id ? (hybridDeals.get(id) ?? null) : null;
+    },
+    async getHybridDealByCampaignAndPartner(campaignId, partnerId) {
+      return [...hybridDeals.values()].find((r) => r.campaignId === campaignId && r.partnerId === partnerId) ?? null;
+    },
+    async listHybridDealsByCampaign(campaignId) {
+      return [...hybridDeals.values()].filter((r) => r.campaignId === campaignId);
+    },
+    async updateHybridDealBase(id, status) {
+      const row = hybridDeals.get(id);
+      if (!row) throw new Error("Hybrid deal not found");
+      const next = { ...row, baseStatus: status, updatedAt: now };
+      hybridDeals.set(id, next);
+      return next;
+    },
+    async insertMilestoneAward(a) {
+      if (milestoneAwards.has(a.id)) throw uniqueViolation("Milestone award already exists");
+      if ([...milestoneAwards.values()].some((r) => r.dealId === a.dealId && r.milestoneIndex === a.milestoneIndex)) {
+        throw uniqueViolation("Milestone already awarded for this deal and index");
+      }
+      const row: StoredMilestoneAward = { ...a, createdAt: now };
+      milestoneAwards.set(a.id, row);
+      return row;
+    },
+    async listMilestoneAwardsByDeal(dealId) {
+      return [...milestoneAwards.values()].filter((r) => r.dealId === dealId);
+    },
     async updateMarket(campaignId, expectedVersion, patch) {
       const row = marketStates.get(campaignId);
       if (!row) throw new Error("Market not found");
@@ -1146,6 +1260,9 @@ export function createMemoryCampaignStore(seed?: {
     },
     async countVerifiedOutcomes(campaignId) {
       return [...outcomes.values()].filter((o) => o.campaignId === campaignId && o.status === "VERIFIED").length;
+    },
+    async countVerifiedOutcomesForPartner(campaignId, partnerId) {
+      return [...outcomes.values()].filter((o) => o.campaignId === campaignId && o.partnerId === partnerId && o.status === "VERIFIED").length;
     },
     async insertAttributionSession(s) {
       if (attrSessions.has(s.id)) throw uniqueViolation("Attribution session exists");

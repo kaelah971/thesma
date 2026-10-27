@@ -4,6 +4,15 @@ import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { badRequest, toApiError } from "@/server/api/errors";
 import { cancelInvitation, inviteCreators, listInvitations } from "@/server/services/invitations";
 
+const dealSchema = z.object({
+  structure: z.enum(["PERFORMANCE_ONLY", "BASE_PLUS_PERFORMANCE", "MILESTONE_PLUS_PERFORMANCE", "HYBRID_FULL"]),
+  baseAmountMicroUsdc: z.string().regex(/^[0-9]+$/).optional(),
+  deliverable: z.object({ kind: z.string().trim().min(1).max(60), title: z.string().trim().min(1).max(120) }).optional(),
+  performanceBountyMicroUsdc: z.string().regex(/^[0-9]+$/).optional(),
+  milestones: z.array(z.object({ threshold: z.number().int().positive(), amountMicroUsdc: z.string().regex(/^[0-9]+$/) })).max(5).optional(),
+  allocationCount: z.number().int().positive().nullable().optional(),
+});
+
 const inviteSchema = z.union([
   z.object({ creatorUserId: z.string().trim().min(1).max(100) }),
   z.object({ creatorUserIds: z.array(z.string().trim().min(1).max(100)).min(1).max(20) }),
@@ -37,13 +46,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if ("response" in wired) return wired.response;
     const user = await requireUser();
     const { id } = await ctx.params;
-    const parsed = inviteSchema.safeParse(await req.json().catch(() => null));
+    const raw = await req.json().catch(() => null);
+    const parsed = inviteSchema.safeParse(raw);
     if (!parsed.success) return badRequest("Invalid invite request", parsed.error.flatten());
     const body = parsed.data;
+    // Optional hybrid economics: strictly validated + capacity-gated downstream;
+    // malformed deal payloads are rejected here, never defaulted.
+    let deal: z.infer<typeof dealSchema> | undefined;
+    if (raw !== null && typeof raw === "object" && "deal" in (raw as Record<string, unknown>)) {
+      const dealParsed = dealSchema.safeParse((raw as Record<string, unknown>).deal);
+      if (!dealParsed.success) return badRequest("Invalid hybrid deal", dealParsed.error.flatten());
+      deal = dealParsed.data;
+    }
     const creatorUserIds = "creatorUserIds" in body ? [...new Set(body.creatorUserIds)] : [body.creatorUserId];
     const result = await inviteCreators(
       wired.deps,
       { callerUserId: user.userId, campaignId: id, creatorUserIds },
+      deal !== undefined ? { deal } : undefined,
     );
     return Response.json(result, { status: result.invited > 0 ? 201 : 200 });
   } catch (err) {

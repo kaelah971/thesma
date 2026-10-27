@@ -84,6 +84,7 @@ function handSnapshot(): CfoSnapshot {
       committedMicroUsdc: "0", reservedMicroUsdc: "0",
       verifiedUnpaidMicroUsdc: "0", availableMicroUsdc: available.toString(),
       frozenTermsExposureMicroUsdc: "0",
+      hybridCommittedMicroUsdc: "0", hybridContingentMicroUsdc: "0",
     },
     pace: { status: "BEHIND", targetProgressPct: 20, timeProgressPct: 50, projectedOutcomes: 4 },
     evidence: {
@@ -104,6 +105,7 @@ function handSnapshot(): CfoSnapshot {
     totals: {
       fundedMicroUsdc: (200n * M).toString(), spentMicroUsdc: "0", committedMicroUsdc: "0",
       reservedMicroUsdc: "0", verifiedUnpaidMicroUsdc: "0", availableMicroUsdc: (100n * M).toString(),
+      hybridCommittedMicroUsdc: "0", hybridContingentMicroUsdc: "0",
     },
   };
 }

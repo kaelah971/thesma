@@ -68,6 +68,10 @@ export interface CfoFinancials {
   committedMicroUsdc: string;
   reservedMicroUsdc: string;
   verifiedUnpaidMicroUsdc: string;
+  /** Verified/payable hybrid obligations: base + awarded milestones. Subtracted from available. */
+  hybridCommittedMicroUsdc: string;
+  /** Contingent hybrid exposure (unverified base + unearned milestones). Info only — never subtracted. */
+  hybridContingentMicroUsdc: string;
   /** funded − spent − committedActive − verifiedUnpaid, floored at 0. Never double-counts. */
   availableMicroUsdc: string;
   /** Priced-at-frozen-terms exposure: spent + reserved + verifiedUnpaid. Informational. */
@@ -109,6 +113,8 @@ export interface CfoSnapshot {
     committedMicroUsdc: string;
     reservedMicroUsdc: string;
     verifiedUnpaidMicroUsdc: string;
+    hybridCommittedMicroUsdc: string;
+    hybridContingentMicroUsdc: string;
     availableMicroUsdc: string;
   };
 }
@@ -443,7 +449,27 @@ export async function loadCfoSnapshot(
       verifiedUnpaid += terms?.priceMicroUsdc ?? market.publicBountyMicroUsdc;
     }
     const committedActive = reservedActive + supplyLocked;
-    const available = funded - spent - committedActive - verifiedUnpaid;
+    // Slice 6: hybrid obligations. Verified/payable base + awarded milestones
+    // are hard commitments (subtracted); unverified base + unearned milestones
+    // are contingent exposure (reported, never subtracted — no double-count).
+    const hybridDeals = await store.listHybridDealsByCampaign(campaign.id).catch(() => []);
+    let hybridCommitted = 0n;
+    let hybridContingent = 0n;
+    for (const hd of hybridDeals) {
+      const awards = await store.listMilestoneAwardsByDeal(hd.id).catch(() => []);
+      const awardedIdx = new Set(awards.map((a) => a.milestoneIndex));
+      hybridCommitted += awards.reduce((s, a) => s + a.amountMicroUsdc, 0n);
+      if (hd.baseStatus === "VERIFIED" || hd.baseStatus === "SETTLEMENT_NOT_SUPPORTED" || hd.baseStatus === "PAID") {
+        hybridCommitted += hd.baseAmountMicroUsdc;
+      } else if (hd.baseStatus === "PENDING") {
+        hybridContingent += hd.baseAmountMicroUsdc;
+      }
+      const milestones = (Array.isArray(hd.milestonesJson) ? hd.milestonesJson : []) as { threshold: number; amountMicroUsdc: string }[];
+      milestones.forEach((m, i) => {
+        if (!awardedIdx.has(i)) hybridContingent += BigInt(m.amountMicroUsdc);
+      });
+    }
+    const available = funded - spent - committedActive - verifiedUnpaid - hybridCommitted;
     let pace: PaceSnapshot | null = null;
     try {
       pace = (await loadPace(store, campaign.id, windowDays, now)).pace;
@@ -475,8 +501,10 @@ export async function loadCfoSnapshot(
         committedMicroUsdc: committedActive.toString(),
         reservedMicroUsdc: reservedActive.toString(),
         verifiedUnpaidMicroUsdc: verifiedUnpaid.toString(),
+        hybridCommittedMicroUsdc: hybridCommitted.toString(),
+        hybridContingentMicroUsdc: hybridContingent.toString(),
         availableMicroUsdc: (available > 0n ? available : 0n).toString(),
-        frozenTermsExposureMicroUsdc: (spent + reservedActive + verifiedUnpaid).toString(),
+        frozenTermsExposureMicroUsdc: (spent + reservedActive + verifiedUnpaid + hybridCommitted).toString(),
       },
       pace: pace
         ? { status: pace.paceStatus, targetProgressPct: pace.targetProgressPct, timeProgressPct: pace.timeProgressPct, projectedOutcomes: pace.projectedOutcomesAtCurrentPace }
@@ -507,6 +535,8 @@ export async function loadCfoSnapshot(
       committedMicroUsdc: sum((r) => r.financials.committedMicroUsdc),
       reservedMicroUsdc: sum((r) => r.financials.reservedMicroUsdc),
       verifiedUnpaidMicroUsdc: sum((r) => r.financials.verifiedUnpaidMicroUsdc),
+      hybridCommittedMicroUsdc: sum((r) => r.financials.hybridCommittedMicroUsdc),
+      hybridContingentMicroUsdc: sum((r) => r.financials.hybridContingentMicroUsdc),
       availableMicroUsdc: sum((r) => r.financials.availableMicroUsdc),
     },
   };
@@ -520,6 +550,7 @@ function zeroFinancials(): CfoFinancials {
   return {
     fundedMicroUsdc: z, spentMicroUsdc: z, committedMicroUsdc: z, reservedMicroUsdc: z,
     verifiedUnpaidMicroUsdc: z, availableMicroUsdc: z, frozenTermsExposureMicroUsdc: z,
+    hybridCommittedMicroUsdc: z, hybridContingentMicroUsdc: z,
   };
 }
 
@@ -607,12 +638,19 @@ export async function buildCapitalPlan(
     });
     // Bounty coordination: the existing kernel decides, the CFO gates on liquidity.
     const bountyDecision = await decideCfoBounty(deps.store, row, deps.growthPolicy, available, now, spend.action);
+    const hybridWarnings: string[] = [];
+    if (BigInt(row.financials.hybridCommittedMicroUsdc) > 0n) {
+      hybridWarnings.push(`Hybrid obligations committed: ${row.financials.hybridCommittedMicroUsdc} micro-USDC base/awards (payable, settlement-unsupported where noted).`);
+    }
+    if (BigInt(row.financials.hybridContingentMicroUsdc) > 0n) {
+      hybridWarnings.push(`Contingent hybrid exposure: ${row.financials.hybridContingentMicroUsdc} micro-USDC unverified base + unearned milestones (not yet payable).`);
+    }
     decisions.push({
       campaignId: row.campaignId,
       capitalScore: score.capitalScore,
       confidence: score.confidence,
       reasons: score.reasons,
-      warnings: score.warnings,
+      warnings: [...score.warnings, ...hybridWarnings],
       spendAction: spend.action,
       spendReason: spend.reason,
       capitalAction: capital.action,

@@ -31,6 +31,28 @@ function offerLine(offered: Opportunity["offered"]): string {
   return `${formatUsdc(offered.bountyMicroUsdc)} USDC per ${unit}`;
 }
 
+interface FrozenDealView {
+  structure: string;
+  baseAmountMicroUsdc: string;
+  deliverable: { title: string; verification: string } | null;
+  performanceBountyMicroUsdc: string;
+  milestones: { threshold: number; amountMicroUsdc: string }[];
+}
+
+function frozenDeal(bonus: Record<string, unknown> | undefined): FrozenDealView | null {
+  const d = (bonus as { deal?: unknown } | undefined)?.deal;
+  if (!d || typeof d !== "object") return null;
+  const v = d as Record<string, unknown>;
+  if (typeof v.structure !== "string" || v.structure === "PERFORMANCE_ONLY") return null;
+  return {
+    structure: v.structure,
+    baseAmountMicroUsdc: typeof v.baseAmountMicroUsdc === "string" ? v.baseAmountMicroUsdc : "0",
+    deliverable: (v.deliverable ?? null) as FrozenDealView["deliverable"],
+    performanceBountyMicroUsdc: typeof v.performanceBountyMicroUsdc === "string" ? v.performanceBountyMicroUsdc : "0",
+    milestones: Array.isArray(v.milestones) ? (v.milestones as FrozenDealView["milestones"]) : [],
+  };
+}
+
 /** Creator opportunity inbox: frozen org offers with human Accept / Decline. */
 export function OpportunityInbox() {
   const [items, setItems] = useState<Opportunity[]>([]);
@@ -91,7 +113,6 @@ export function OpportunityInbox() {
       )}
       {items.map((o) => {
         const open = o.status === "INVITED";
-        const bonusKeys = Object.keys(o.offered.bonus ?? {});
         return (
           <div key={o.id} className={styles.panelEmpty} style={{ borderStyle: "solid" }}>
             <strong style={{ display: "block", fontSize: 14 }}>
@@ -109,11 +130,40 @@ export function OpportunityInbox() {
               {o.offered.holdSeconds ? `Eligible payout is held for ${formatDuration(o.offered.holdSeconds * 1000)} before settlement. ` : ""}
               {o.campaign.deadline ? `Campaign ends ${formatDate(o.campaign.deadline)}.` : ""}
             </span>
-            {bonusKeys.length > 0 && (
-              <span style={{ display: "block", fontSize: 12.5, marginTop: 2, color: "var(--ink-2)" }}>
-                Bonus terms: {bonusKeys.join(", ")}
-              </span>
-            )}
+            {(() => {
+              const deal = frozenDeal(o.offered.bonus);
+              if (!deal) return null;
+              const max = deal.milestones.reduce((s, m) => s + BigInt(m.amountMicroUsdc), BigInt(deal.baseAmountMicroUsdc));
+              return (
+                <span style={{ display: "block", fontSize: 12.5, marginTop: 8, borderTop: "1px solid var(--line, #e5e5e5)", paddingTop: 8 }}>
+                  <strong>YOU CAN EARN (max {formatUsdc(max.toString())} USDC)</strong>
+                  {BigInt(deal.baseAmountMicroUsdc) > 0n && (
+                    <span style={{ display: "block", color: "var(--ink-2)" }}>
+                      · {formatUsdc(deal.baseAmountMicroUsdc)} USDC base for “{deal.deliverable?.title ?? "the deliverable"}”
+                    </span>
+                  )}
+                  {BigInt(deal.performanceBountyMicroUsdc) > 0n && (
+                    <span style={{ display: "block", color: "var(--ink-2)" }}>
+                      · {formatUsdc(deal.performanceBountyMicroUsdc)} USDC per verified outcome
+                    </span>
+                  )}
+                  {deal.milestones.map((m) => (
+                    <span key={m.threshold} style={{ display: "block", color: "var(--ink-2)" }}>
+                      · {formatUsdc(m.amountMicroUsdc)} USDC bonus at {m.threshold} verified outcomes
+                    </span>
+                  ))}
+                  <strong style={{ display: "block", marginTop: 4 }}>WHAT QUALIFIES</strong>
+                  <span style={{ display: "block", color: "var(--ink-2)" }}>
+                    Base pays only after the deliverable is verified — never for accepting. Milestones count verified outcomes only, never clicks.
+                  </span>
+                  <strong style={{ display: "block", marginTop: 4 }}>WHEN YOU GET PAID</strong>
+                  <span style={{ display: "block", color: "var(--ink-2)" }}>
+                    Performance pays through the verified-outcome path. Verified base and milestone bonuses are recorded payable; onchain settlement is not
+                    supported for these in this slice.
+                  </span>
+                </span>
+              );
+            })()}
             <span style={{ display: "block", fontSize: 12.5, marginTop: 8 }}>
               <strong>Thesma Scout · {o.match.confidence} match ({o.match.score})</strong>
               <span style={{ display: "block", color: "var(--ink-2)" }}>{o.match.reasons.join(" · ") || "Matched on campaign fit."}</span>

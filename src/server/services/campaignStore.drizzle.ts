@@ -7,8 +7,10 @@ import {
   campaignPolicyVersions,
   campaigns,
   checkoutIntents,
+  hybridDeals,
   marketDecisions,
   marketStates,
+  milestoneAwards,
   negotiationDecisions,
   negotiations,
   supplyCommitments,
@@ -30,18 +32,21 @@ import type {
   AuditSink,
   CampaignStore,
   FundingStore,
+  HybridBaseStatus,
   InvitationStatus,
   MarketStore,
   NewCampaign,
   NewFunding,
   StoredFunding,
+  StoredHybridDeal,
   StoredInvitation,
+  StoredMilestoneAward,
   StoredPolicyVersion,
   StoreMembership,
   StorePartner,
   StoreWorkspace,
 } from "./campaignStore";
-import type { DbCreatorInvitation } from "../db/schema";
+import type { DbCreatorInvitation, DbHybridDeal, DbMilestoneAward } from "../db/schema";
 import { isUniqueViolation, uniqueViolation } from "./campaignStore";
 import type { CampaignState } from "../domain/enums";
 
@@ -84,6 +89,37 @@ function toStoredInvitation(row: DbCreatorInvitation): StoredInvitation {
     respondedAt: row.respondedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toStoredHybridDeal(row: DbHybridDeal): StoredHybridDeal {
+  return {
+    id: row.id,
+    termsId: row.termsId,
+    campaignId: row.campaignId,
+    partnerId: row.partnerId,
+    invitationId: row.invitationId,
+    structure: row.structure,
+    baseAmountMicroUsdc: row.baseAmountMicroUsdc,
+    baseStatus: row.baseStatus as HybridBaseStatus,
+    deliverableJson: row.deliverableJson,
+    performanceBountyMicroUsdc: row.performanceBountyMicroUsdc,
+    milestonesJson: row.milestonesJson,
+    maximumTotalExposureMicroUsdc: row.maximumTotalExposureMicroUsdc,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toStoredMilestoneAward(row: DbMilestoneAward): StoredMilestoneAward {
+  return {
+    id: row.id,
+    dealId: row.dealId,
+    milestoneIndex: row.milestoneIndex,
+    threshold: row.threshold,
+    amountMicroUsdc: row.amountMicroUsdc,
+    status: row.status,
+    createdAt: row.createdAt,
   };
 }
 
@@ -504,6 +540,59 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
       if (!row) throw new Error("Invitation not found");
       return toStoredInvitation(row);
     },
+    async insertHybridDeal(d) {
+      const [row] = await db.insert(hybridDeals).values({
+        id: d.id,
+        termsId: d.termsId,
+        campaignId: d.campaignId,
+        partnerId: d.partnerId,
+        invitationId: d.invitationId,
+        structure: d.structure,
+        baseAmountMicroUsdc: d.baseAmountMicroUsdc,
+        baseStatus: d.baseStatus,
+        deliverableJson: d.deliverableJson as Record<string, unknown>,
+        performanceBountyMicroUsdc: d.performanceBountyMicroUsdc,
+        milestonesJson: d.milestonesJson as Record<string, unknown>[],
+        maximumTotalExposureMicroUsdc: d.maximumTotalExposureMicroUsdc,
+      }).returning();
+      return toStoredHybridDeal(row);
+    },
+    async getHybridDeal(id) {
+      const [row] = await db.select().from(hybridDeals).where(eq(hybridDeals.id, id)).limit(1);
+      return row ? toStoredHybridDeal(row) : null;
+    },
+    async getHybridDealByTerms(termsId) {
+      const [row] = await db.select().from(hybridDeals).where(eq(hybridDeals.termsId, termsId)).limit(1);
+      return row ? toStoredHybridDeal(row) : null;
+    },
+    async getHybridDealByCampaignAndPartner(campaignId, partnerId) {
+      const [row] = await db.select().from(hybridDeals).where(and(eq(hybridDeals.campaignId, campaignId), eq(hybridDeals.partnerId, partnerId))).limit(1);
+      return row ? toStoredHybridDeal(row) : null;
+    },
+    async listHybridDealsByCampaign(campaignId) {
+      const rows = await db.select().from(hybridDeals).where(eq(hybridDeals.campaignId, campaignId));
+      return rows.map(toStoredHybridDeal);
+    },
+    async updateHybridDealBase(id, status) {
+      const [row] = await db.update(hybridDeals).set({ baseStatus: status, updatedAt: new Date() }).where(eq(hybridDeals.id, id)).returning();
+      if (!row) throw new Error("Hybrid deal not found");
+      return toStoredHybridDeal(row);
+    },
+    async insertMilestoneAward(a) {
+      const [row] = await db.insert(milestoneAwards).values({
+        id: a.id,
+        dealId: a.dealId,
+        milestoneIndex: a.milestoneIndex,
+        threshold: a.threshold,
+        amountMicroUsdc: a.amountMicroUsdc,
+        status: a.status,
+      }).returning();
+      return toStoredMilestoneAward(row);
+    },
+    async listMilestoneAwardsByDeal(dealId) {
+      const rows = await db.select().from(milestoneAwards).where(eq(milestoneAwards.dealId, dealId));
+      return rows.map(toStoredMilestoneAward);
+    },
     async updateMarket(campaignId, expectedVersion, patch) {
       const [row] = await db
         .update(marketStates)
@@ -724,6 +813,13 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
         .select({ n: count() })
         .from(outcomes)
         .where(and(eq(outcomes.campaignId, campaignId), eq(outcomes.status, "VERIFIED")));
+      return row?.n ?? 0;
+    },
+    async countVerifiedOutcomesForPartner(campaignId, partnerId) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(outcomes)
+        .where(and(eq(outcomes.campaignId, campaignId), eq(outcomes.partnerId, partnerId), eq(outcomes.status, "VERIFIED")));
       return row?.n ?? 0;
     },
     async insertAttributionSession(s) {

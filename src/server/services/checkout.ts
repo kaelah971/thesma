@@ -12,6 +12,7 @@ import { customerKeyFor, outcomeProofFor, serializeCheckoutIntent, serializeOutc
 import { newId } from "../auth/session";
 import type { AuditSink, MarketStore, StoredCheckoutIntent, StoredOutcome } from "./campaignStore";
 import { isUniqueViolation } from "./campaignStore";
+import { awardMilestones } from "./deals";
 import { evaluateTargetSettled } from "./markets";
 
 export interface CheckoutDeps {
@@ -445,6 +446,13 @@ export async function verifyCheckoutIntent(deps: CheckoutDeps, params: { intentI
     };
     await audit({ actorType: "SYSTEM", actorId: null, workspaceId, partnerId: intent.partnerId, action: "checkout.confirmed", targetType: "checkout_intent", targetId: intent.id, metadata: base });
     await audit({ actorType: "SYSTEM", actorId: null, workspaceId, partnerId: intent.partnerId, action: "outcome.verified", targetType: "outcome", targetId: outcome.id, metadata: base });
+    // Slice 6: milestone evaluation from canonical VERIFIED counts. Never
+    // fails verification; awards are idempotent and settlement-unsupported.
+    try {
+      await awardMilestones(ms, audit, { campaignId: intent.campaignId, partnerId: intent.partnerId });
+    } catch {
+      // Verification integrity comes first.
+    }
     return { intent: serializeCheckoutIntent(nextIntent), outcome: serializeOutcome(nextOutcome), verified: true as const, alreadyVerified: false as const };
   });
 }

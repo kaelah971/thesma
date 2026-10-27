@@ -12,6 +12,74 @@ interface InviteState {
   byCreator: Record<string, InvitationDto>;
 }
 
+interface HybridForm {
+  structure: string;
+  baseUsdc: string;
+  deliverableKind: string;
+  deliverableTitle: string;
+  milestones: string;
+  allocationCount: string;
+}
+
+const EMPTY_HYBRID: HybridForm = {
+  structure: "PERFORMANCE_ONLY",
+  baseUsdc: "",
+  deliverableKind: "content",
+  deliverableTitle: "",
+  milestones: "",
+  allocationCount: "5",
+};
+
+/** Client-side max-exposure preview (server re-validates exactly). */
+function previewMaxTotal(f: HybridForm, bountyMicro: string): string | null {
+  try {
+    const toMicro = (usdc: string) => BigInt(Math.round(Number(usdc) * 1_000_000));
+    const bounty = BigInt(bountyMicro);
+    const alloc = f.allocationCount.trim() === "" ? null : Number(f.allocationCount);
+    if (f.structure === "PERFORMANCE_ONLY") return bountyMicro;
+    if (alloc === null || !Number.isInteger(alloc) || alloc <= 0) return null;
+    let total = bounty * BigInt(alloc);
+    if (f.structure === "BASE_PLUS_PERFORMANCE" || f.structure === "HYBRID_FULL") {
+      if (f.baseUsdc.trim() === "") return null;
+      total += toMicro(f.baseUsdc);
+    }
+    if (f.structure === "MILESTONE_PLUS_PERFORMANCE" || f.structure === "HYBRID_FULL") {
+      for (const line of f.milestones.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        const [th, amt] = t.split(":");
+        if (!th || !amt || !Number.isInteger(Number(th)) || Number(th) <= 0 || Number(amt) <= 0) return null;
+        total += toMicro(amt);
+      }
+    }
+    return total.toString();
+  } catch {
+    return null;
+  }
+}
+
+function buildDealPayload(f: HybridForm, bountyMicro: string): Record<string, unknown> | undefined {
+  if (f.structure === "PERFORMANCE_ONLY") return undefined;
+  const toMicro = (usdc: string) => String(Math.round(Number(usdc) * 1_000_000));
+  const deal: Record<string, unknown> = { structure: f.structure, performanceBountyMicroUsdc: bountyMicro };
+  if (f.structure === "BASE_PLUS_PERFORMANCE" || f.structure === "HYBRID_FULL") {
+    deal.baseAmountMicroUsdc = toMicro(f.baseUsdc);
+    deal.deliverable = { kind: f.deliverableKind, title: f.deliverableTitle.trim() };
+  }
+  if (f.structure === "MILESTONE_PLUS_PERFORMANCE" || f.structure === "HYBRID_FULL") {
+    deal.milestones = f.milestones
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [threshold, amount] = l.split(":");
+        return { threshold: Number(threshold), amountMicroUsdc: toMicro(amount) };
+      });
+  }
+  deal.allocationCount = f.allocationCount.trim() === "" ? null : Number(f.allocationCount);
+  return deal;
+}
+
 /**
  * Organization creator discovery. Ranking comes only from the Slice 1
  * match service (deterministic, server-side); this panel filters and
@@ -23,6 +91,7 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
   const [inviteRows, setInviteRows] = useState<InvitationDto[]>([]);
   const [tab, setTab] = useState<Tab>("recommended");
   const [selected, setSelected] = useState<string[]>([]);
+  const [hybrid, setHybrid] = useState<HybridForm>(EMPTY_HYBRID);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -61,9 +130,12 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
     setPending("bulk");
     setError(null);
     setNotice(null);
+    const deal = buildDealPayload(hybrid, report?.publicBountyMicroUsdc ?? "0");
     const res = await postJson<{ invited: number; results: { creatorUserId: string; status: string; reason: string | null }[] }>(
       `/api/campaigns/${campaignId}/invitations`,
-      creatorUserIds.length === 1 ? { creatorUserId: creatorUserIds[0] } : { creatorUserIds },
+      creatorUserIds.length === 1
+        ? { creatorUserId: creatorUserIds[0], ...(deal ? { deal } : {}) }
+        : { creatorUserIds, ...(deal ? { deal } : {}) },
     ).catch(() => null);
     setPending(null);
     if (!res || !res.ok) {
@@ -207,6 +279,60 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
           </button>
         </div>
       )}
+      <details style={{ fontSize: 12.5, border: "1px solid var(--line, #e5e5e5)", borderRadius: 12, padding: "8px 12px" }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Hybrid deal (optional)</summary>
+        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+          <label style={{ display: "grid", gap: 4 }}>
+            Structure
+            <select value={hybrid.structure} onChange={(e) => setHybrid({ ...hybrid, structure: e.target.value })}>
+              <option value="PERFORMANCE_ONLY">Performance only</option>
+              <option value="BASE_PLUS_PERFORMANCE">Base + performance</option>
+              <option value="MILESTONE_PLUS_PERFORMANCE">Milestones + performance</option>
+              <option value="HYBRID_FULL">Base + milestones + performance</option>
+            </select>
+          </label>
+          {(hybrid.structure === "BASE_PLUS_PERFORMANCE" || hybrid.structure === "HYBRID_FULL") && (
+            <>
+              <label style={{ display: "grid", gap: 4 }}>
+                Base (USDC) — paid only for a verified deliverable, never on accept
+                <input value={hybrid.baseUsdc} inputMode="decimal" placeholder="25" onChange={(e) => setHybrid({ ...hybrid, baseUsdc: e.target.value })} />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                Deliverable kind
+                <select value={hybrid.deliverableKind} onChange={(e) => setHybrid({ ...hybrid, deliverableKind: e.target.value })}>
+                  <option value="content">Content (human review)</option>
+                  <option value="tutorial">Tutorial (human review)</option>
+                  <option value="community">Community (human review)</option>
+                  <option value="verified-outcome">Verified outcome (automatic)</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                Deliverable title
+                <input value={hybrid.deliverableTitle} placeholder="Launch video" onChange={(e) => setHybrid({ ...hybrid, deliverableTitle: e.target.value })} />
+              </label>
+            </>
+          )}
+          {(hybrid.structure === "MILESTONE_PLUS_PERFORMANCE" || hybrid.structure === "HYBRID_FULL") && (
+            <label style={{ display: "grid", gap: 4 }}>
+              Milestones — one “threshold:USDC” per line, from verified counts only
+              <textarea value={hybrid.milestones} rows={2} placeholder={"10:20\n25:50"} onChange={(e) => setHybrid({ ...hybrid, milestones: e.target.value })} />
+            </label>
+          )}
+          {hybrid.structure !== "PERFORMANCE_ONLY" && (
+            <label style={{ display: "grid", gap: 4 }}>
+              Allocation cap (bounds maximum exposure)
+              <input value={hybrid.allocationCount} inputMode="numeric" onChange={(e) => setHybrid({ ...hybrid, allocationCount: e.target.value })} />
+            </label>
+          )}
+          <span style={{ opacity: 0.75 }}>
+            Maximum exposure:{" "}
+            {(() => {
+              const max = previewMaxTotal(hybrid, report?.publicBountyMicroUsdc ?? "0");
+              return max === null ? "incomplete — fill every hybrid field" : `${formatUsdc(max)} USDC (frozen at invite)`;
+            })()}
+          </span>
+        </div>
+      </details>
       {inviteRows.length > 0 && (
         <div>
           <h4 style={{ fontSize: 13, margin: "4px 0 8px" }}>Invitations</h4>
@@ -214,6 +340,12 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
             {inviteRows.map((row) => (
               <li key={row.id} style={{ fontSize: 12.5, display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center" }}>
                 <strong>{row.creatorHandle ? `@${row.creatorHandle}` : row.creatorUserId.slice(0, 8)}</strong>
+                {(row.offered.bonus as { deal?: { structure?: string } } | undefined)?.deal?.structure &&
+                  (row.offered.bonus as { deal: { structure: string } }).deal.structure !== "PERFORMANCE_ONLY" && (
+                    <span style={{ fontSize: 12, opacity: 0.7 }}>
+                      {(row.offered.bonus as { deal: { structure: string } }).deal.structure.replaceAll("_", " ")}
+                    </span>
+                  )}
                 <span>
                   {row.status === "ACCEPTED"
                     ? row.acceptedBy === "AGENT"
