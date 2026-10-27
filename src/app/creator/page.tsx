@@ -6,6 +6,7 @@ import { HomeShell } from "@/components/start/HomeShell";
 import { CreatorCampaignActions } from "@/components/start/CreatorCampaignActions";
 import { CreatorPreferencesForm, RunScoutButton } from "@/components/start/CreatorPreferencesForm";
 import { AutoJoinToggle } from "@/components/start/AutoJoinToggle";
+import { CreatorAutonomyPanel } from "@/components/start/CreatorAutonomyPanel";
 import { CreatorNotificationsPanel } from "@/components/start/CreatorNotificationsPanel";
 import { OpportunityInbox } from "@/components/start/OpportunityInbox";
 import { getSessionUser } from "@/server/auth/guard";
@@ -121,6 +122,7 @@ export default async function CreatorHomePage() {
               }}
             />
           )}
+          <CreatorAutonomyPanel />
           {scoutCards.length === 0 ? (
             <div className={styles.panelEmpty}>
               {!scout
