@@ -24,6 +24,7 @@
 - [x] Slice 10A: Integration rehearsal + activation readiness (this session)
 - [x] Slice 10B: Production migration + deployment (ACTIVATED this session — see below; 10C still pending)
 - [x] Slice 10C: Real production proof + judge/demo capture (SHIPPED_WITH_MANUAL_CHECKPOINTS — see below; no fake users, no fake activity, no mainnet tx)
+- [x] Slice 10D: Owner campaign activation fix + pre-funding matching/invitations (1c5518e, deployed; Northstar can proceed)
 
 ## Current slice
 - Slice 10C SHIPPED_WITH_MANUAL_CHECKPOINTS: production verified live + healthy (all public routes 200, auth gates correct, cron Hobby-compatible); onchain vault read matches DB+docs; relay ledger + CFO + reliability + quality proven on REAL prod numbers locally (read-only mirror); demo script + judge narrative + README loop/status block written; MANUAL_CHECKPOINTs recorded (org/creator auth smoke, live invite/accept/customer, screenshots — all require real sessions the sandbox must not fabricate); auto-join live proof NOT_EXERCISED_USER_SETTING_OFF (valid); zero prod mutations; one real bug fixed (escalation sibling-resolution) with regression test; full suite green twice (515).
@@ -117,6 +118,11 @@
 
 ## Next action
 - Milestone COMPLETE (SHIPPED_WITH_MANUAL_CHECKPOINTS). Next human steps: ORG_SMOKE / CREATOR_SMOKE / LIVE_INVITE / LIVE_ACCEPT / LIVE_CUSTOMER / SCREENSHOTS per docs/demo-final.md; then judge submission.
+
+## Slice 10D — owner campaign activation fix (1c5518e, deployed)
+- Owner direct approve from DRAFT (no self-review); non-owner review flow intact; 403s preserved.
+- Pre-funding creator matching (advisory, policy floor) + invitations with explicit org offer (floor≤offer≤ceiling, capacity-gated, frozen); accept stays funding-gated; auto-accept stays INVITED pre-funding.
+- No migration, no schema change, no mainnet tx. Full suite green (530 passed).
 
 ## Appendix A — Slice-9 decision systems audit (source of mapping truth)
 - CREATOR_SCOUT: scoreCandidate + evaluateAutoJoinAuthority (RECOMMEND/JOIN/REFUSE) + background runs; events: creator.autojoin.evaluated/executed, creator.scout.background.completed.
