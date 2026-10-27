@@ -658,7 +658,9 @@ const RESOLVED_STATES: ExecutionState[] = ["EXECUTED", "SETTLED", "REFUSED", "AU
 export function deriveEscalations(decisions: DecisionEnvelope[], nowMs: number = Date.now()): EscalationView[] {
   const bySubject = new Map<string, DecisionEnvelope[]>();
   for (const d of decisions) {
-    const key = [d.campaignId ?? "-", d.outcomeId ?? "-", d.invitationId ?? "-", d.provenance.auditId].join("|");
+    // Grouped by subject, NOT by audit id: a later terminal envelope for the
+    // same campaign/outcome/invitation resolves an earlier escalation.
+    const key = [d.campaignId ?? "-", d.outcomeId ?? "-", d.invitationId ?? "-"].join("|");
     const list = bySubject.get(key) ?? [];
     list.push(d);
     bySubject.set(key, list);
@@ -667,14 +669,14 @@ export function deriveEscalations(decisions: DecisionEnvelope[], nowMs: number =
   for (const d of decisions) {
     if (d.executionState !== "ESCALATED" && d.executionState !== "WAITING" && d.executionState !== "AMBIGUOUS") continue;
     if (d.decision === "APPROVED") continue;
-    const key = [d.campaignId ?? "-", d.outcomeId ?? "-", d.invitationId ?? "-", d.provenance.auditId].join("|");
+    const key = [d.campaignId ?? "-", d.outcomeId ?? "-", d.invitationId ?? "-"].join("|");
     const siblings = (bySubject.get(key) ?? []).filter((x) => x.id !== d.id);
     const resolvedBy = siblings.find((x) => RESOLVED_STATES.includes(x.executionState) && (x.proposedAt ?? "") >= (d.proposedAt ?? ""));
     if (d.decision === "REJECTED") {
       out.push(toEscalation(d, "REJECTED"));
       continue;
     }
-    if (resolvedBy && (d.executionState === "ESCALATED" || d.executionState === "WAITING")) {
+    if (resolvedBy && (d.executionState === "ESCALATED" || d.executionState === "WAITING" || d.executionState === "AMBIGUOUS")) {
       out.push(toEscalation(d, "RESOLVED"));
       continue;
     }

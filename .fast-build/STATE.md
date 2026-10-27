@@ -23,10 +23,10 @@
 - [x] Slice 9: Autonomy ladder + unified decision ledger (87dc757)
 - [x] Slice 10A: Integration rehearsal + activation readiness (this session)
 - [x] Slice 10B: Production migration + deployment (ACTIVATED this session — see below; 10C still pending)
-- [ ] Slice 10C: Real production proof (NOT STARTED — needs real users)
+- [x] Slice 10C: Real production proof + judge/demo capture (SHIPPED_WITH_MANUAL_CHECKPOINTS — see below; no fake users, no fake activity, no mainnet tx)
 
 ## Current slice
-- Slice 10B ACTIVATED (controlled, verified): Neon Postgres 18.6 thesma_mainnet reachable read-only; recovery = local full logical backup (28 tables/173 rows, MANIFEST 2026-10-27T16:22Z, row-verified); __drizzle_migrations absent (never run db:migrate); zero drift; 0014→0015→0016→0017 applied byte-for-byte in per-file transactions (hashes recorded in runbook); per-file verification passed; invariants hold (@bgirl intact, counts identical, new tables empty); production auto-deploys on push — live dpl_EXPkA7r26zZWFqN5Pac7Ta24bVUq already serves a076e3f (verified via new-route 401s + public health); cron daily×3 Hobby-compatible; worker auth gates correct (supply POST 503 = pre-existing fail-closed for unset optional secret; cron GETs 401); env audit complete (procurement vars correctly absent); Aster/Beaconfield 200 with proof content; no user/campaign/economic changes; no mainnet tx. Docker: image pull reverted, daemon restored to down, no containers/volumes/files left behind.
+- Slice 10C SHIPPED_WITH_MANUAL_CHECKPOINTS: production verified live + healthy (all public routes 200, auth gates correct, cron Hobby-compatible); onchain vault read matches DB+docs; relay ledger + CFO + reliability + quality proven on REAL prod numbers locally (read-only mirror); demo script + judge narrative + README loop/status block written; MANUAL_CHECKPOINTs recorded (org/creator auth smoke, live invite/accept/customer, screenshots — all require real sessions the sandbox must not fabricate); auto-join live proof NOT_EXERCISED_USER_SETTING_OFF (valid); zero prod mutations; one real bug fixed (escalation sibling-resolution) with regression test; full suite green twice (515).
 
 ## Files (slice 10A)
 - tests/slice10a-rehearsal.test.ts (10 tests: Slices 1–9 E2E on memory store, legacy compat, Aster/Beaconfield-style legacy rendering, auth matrix, privacy scan, unconfigured procurement)
@@ -116,7 +116,7 @@
 - Circle Gateway/nanopayments: no repo integration exists (README explicitly disclaims it); boundary left as env config, no provisioning in this slice.
 
 ## Next action
-- Slice 10C: Real production proof + judge/demo capture (needs real users; runbook docs/production-activation-s10.md).
+- Milestone COMPLETE (SHIPPED_WITH_MANUAL_CHECKPOINTS). Next human steps: ORG_SMOKE / CREATOR_SMOKE / LIVE_INVITE / LIVE_ACCEPT / LIVE_CUSTOMER / SCREENSHOTS per docs/demo-final.md; then judge submission.
 
 ## Appendix A — Slice-9 decision systems audit (source of mapping truth)
 - CREATOR_SCOUT: scoreCandidate + evaluateAutoJoinAuthority (RECOMMEND/JOIN/REFUSE) + background runs; events: creator.autojoin.evaluated/executed, creator.scout.background.completed.

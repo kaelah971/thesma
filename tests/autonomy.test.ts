@@ -212,6 +212,12 @@ describe("ledger query, escalations, metrics", () => {
     expect(deriveEscalations([open], Date.parse("2026-06-02T00:00:00Z"))[0].status).toBe("OPEN");
     const old = normalizeAuditRow({ ...row("operator.decision", { decision: "ESCALATE_APPROVAL", campaignId: "c-9" }), createdAt: "2026-01-01T00:00:00.000Z" })!;
     expect(deriveEscalations([old], Date.parse("2026-06-02T00:00:00Z"))[0].status).toBe("EXPIRED");
+    // A later terminal envelope for the SAME outcome resolves the earlier ambiguity.
+    const amb = normalizeAuditRow({ ...row("payout.ambiguous", { campaignId: "c-1", outcomeId: "o-x" }), id: "e-amb", createdAt: "2026-06-01T12:00:00.000Z" })!;
+    const settled = normalizeAuditRow({ ...row("payout.settled", { campaignId: "c-1", outcomeId: "o-x", amountMicroUsdc: "900000" }), id: "e-set", createdAt: "2026-06-02T12:00:00.000Z" })!;
+    const resolved = deriveEscalations([amb, settled], Date.parse("2026-06-03T00:00:00Z"));
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].status).toBe("RESOLVED");
   });
 
   it("pure readers mutate nothing and leak no secrets", () => {

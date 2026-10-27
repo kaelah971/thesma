@@ -23,6 +23,18 @@
 - Procurement smoke: NOT_CONFIGURED confirmed (no policy rows, no env, no local-test execution in prod); no spend possible.
 - No source changes were required or made in 10B (docs + STATE + .gitignore scratch-guard only).
 
+## 10C real-production proof (2026-10-27, read-only except ledger-neutral reads)
+
+- Production health: `/`, `/start`, `/markets`, `/@bgirl`, `/security`, Beaconfield + Aster market pages all 200, zero error markers; new API routes return auth-gated 401s (not 404s), proving the unified build is live.
+- Live deployment: thesma-o1y2jrbpi (Ready, auto-deploy of bd5fe62 docs-only commit on top of a076e3f code); previous deployment retained for rollback.
+- Production truth recorded (no writes): 9 users / 6 workspaces / 7 campaigns (2 LIVE w/ CLOSED markets, 2 APPROVED, 3 DRAFT) / 2 VERIFIED outcomes / 2 SETTLED payouts (1.9 USDC) / 2 fundings CONFIRMED / 0 invitations / 0 hybrid / 0 procurement / 93 audit events.
+- Relay ledger: 93 real rows → 30 decision envelopes (63 lifecycle rows correctly skipped); metrics 9 autonomous decisions / 10 executions / 2 settled (1.9 USDC) / 0 refusals / 0 open escalations; SUBMITTED≠SETTLED preserved with real tx hashes; the one historical AMBIGUOUS payout later reconciled to SETTLED (ledger shows both).
+- Onchain (Arc mainnet, read-only): block 0x1adc429; Aster campaign funded=spent=1,000,000, not paused/closed/returned; bounty ceiling 1,000,000 — matches DB + docs exactly.
+- Sibling-resolution bug found + fixed in deriveEscalations during 10C (group by subject, not audit id) with regression test; full suite re-greened (515 passed).
+- MANUAL_CHECKPOINTs (no session fabrication, no fake users): ORG_SMOKE, CREATOR_SMOKE, LIVE_INVITE, LIVE_ACCEPT, LIVE_CUSTOMER, SCREENSHOTS. Auto-join proof: NOT_EXERCISED_USER_SETTING_OFF (accepted as valid). Hybrid live offer: not performed (no genuine deliverable; PENDING semantics already proven in tests). No new mainnet activity of any kind.
+- Screenshots: none captured (no headless browser in repo/sandbox; authenticated sessions unavailable). Capture manually during 10C playback per docs/demo-final.md.
+- No production mutation of any kind in 10C (final invariant check: all new tables 0, audit still 93, economics unchanged).
+
 ---
 
 # Slice 10B — Production Migration + Deployment Runbook (plan; actuals above)

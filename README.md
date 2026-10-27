@@ -29,7 +29,7 @@
 <img src="https://img.shields.io/badge/settlement-USDC-66F2A2?style=flat-square" alt="Settlement: USDC" />
 <img src="https://img.shields.io/badge/proof-reconciled-66F2A2?style=flat-square" alt="Proof: reconciled" />
 <img src="https://img.shields.io/badge/safety-no_double_pay-66F2A2?style=flat-square" alt="Safety: no double pay" />
-<img src="https://img.shields.io/badge/tests-246_passing-66F2A2?style=flat-square" alt="Tests: 182 passing" />
+<img src="https://img.shields.io/badge/tests-515_passing-66F2A2?style=flat-square" alt="Tests: 515 passing" />
 <img src="https://img.shields.io/badge/next.js-16-111111?style=flat-square" alt="Next.js 16" />
 <img src="https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square" alt="TypeScript strict" />
 </p>
@@ -45,6 +45,36 @@
 </p>
 
 </div>
+
+---
+
+## Autonomous growth-finance operator
+
+Most business agents automate bills. **Thesma autonomously buys verified growth**: it answers — *given the cash I have, which outcomes should I buy, from whom, at what price, how confidently can I verify them, and should I keep spending?*
+
+```
+ORGANIZATION AGENT          CREATOR AGENT               QUALITY AGENT
+finds creators ──► invites  finds/accepts inside         measures verified
+with frozen economics        creator Scout rules          outcome quality
+        │                          │                              │
+        ▼                          ▼                              ▼
+              Campaign CFO allocates prospective capital
+                              │
+VERIFICATION AGENT ──► is an external check economically worth buying?
+                              │
+FINANCIAL OPERATOR ──► pays only when policy + liquidity + proof agree
+                              │
+DECISION LEDGER ──► shows why every important action occurred
+```
+
+**What runs live today** (production, `thesma.vercel.app`):
+
+| Status | Capability |
+|---|---|
+| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger |
+| LIVE but NOT CONFIGURED | External verification procurement (no provider, no funded signer — fails closed to `NOT_CONFIGURED`) |
+| SUPPORTED LOCALLY / PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness; real provider interop unproven) |
+| KNOWN UNSUPPORTED | Cross-campaign onchain fund transfer; autonomous settlement of hybrid base/milestone obligations (recorded truthfully as payable without an onchain path) |
 
 ---
 
