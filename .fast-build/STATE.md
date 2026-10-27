@@ -2,292 +2,53 @@
 
 ## Product
 - Name: THESMA
-- Outcome: Autonomous market for verified business outcomes (verified paid customer → USDC payout inside hard limits)
-- Primary demo path (Target): Policy → Fund → Market → Refer → Purchase → Verify → Reprice → Pay → Reconcile
+- Outcome: Autonomous growth marketplace — orgs buy verified outcomes, creators earn inside rules.
+- Primary demo path: Campaign → Match creators → Invite → Accept → Join → Verify → Settle → Proof profile.
 
-## MVP slices
-- [x] S0: Foundation (backend-first: app, auth, Postgres/Drizzle, audit, minimal API, tests)
-- [x] S1: Campaign Intent + Policy Engine
-- [x] S2: ThesmaMarketVault + Arc campaign funding (contract + local verification; chain exercise LOCAL ONLY)
-- [x] S3: Live market + Partner rules + join + referral routes
-- [x] S4: Customer Arc purchase + attribution consumption + outcome verifier (LOCAL ONLY chain exercise)
-- [x] S5: Automatic payout + reservation + reconciliation (LOCAL ONLY chain exercise)
-- [x] S6: Dynamic demand agent + pricing kernel + pace + reprice/pause (deterministic, LOCAL ONLY)
-- [x] S7: Supply agent + negotiation (deterministic kernel, LOCAL ONLY)
-- [x] S7.1: Accepted negotiation commitment safety (LOCAL ONLY)
-- [ ] S6: Dynamic Demand Agent (pricing kernel)
-- [ ] S7: Supply Agent + negotiation
-- [ ] S8: Demo + traction polish
+## Existing capabilities (trusted)
+- Creator Scout (score/decision/confidence), auto-join authority, idempotent joinCampaign, referrals, frozen terms.
+- Background Scout + creator_notifications (dedupe, daily Hobby cron), public /@handle profiles, follows.
+- Growth kernel (pace, bounty optimization, allocation, liquidity), payouts + reconciliation, auditEvents.
+- Persona onboarding (POST /api/persona), partner rules API, org workspaces/memberships.
+
+## MVP slices (autonomous growth marketplace)
+- [x] Slice 1: Creator capability graph + org match engine (332cd11)
+- [x] Slice 2: Org creator discovery + invitations (02bd4df)
+- [x] Slice 3: Creator opportunity inbox + accept/decline (914263e)
+- [x] Slice 4: Creator agent invitation auto-accept (f2084da + toggle-copy fix this session)
+- [ ] Slice 5: Campaign CFO + cross-campaign capital allocator
+- [ ] Slice 6: Hybrid creator deals + expanded outcome economics
+- [ ] Slice 7: Creator reliability + outcome quality/retention
+- [ ] Slice 8: Verification procurement agent
+- [ ] Slice 9: Autonomy ladder + unified decision ledger
+- [ ] Slice 10: Integrated testing, production migration/activation, proof, README/demo
 
 ## Current slice
-- Production autonomy + mainnet readiness (background supply worker, preflight gate, proof hardening) — Shipped (this session)
+- Slice 4 SHIPPED: invitation authority adapter reuses evaluateAutoJoinAuthority on frozen offer → AUTO_ACCEPT/REVIEW/REFUSE; immediate evaluation on invite (failure leaves INVITED); same acceptInvitation path (AGENT mode); background recovery via existing Scout worker (quiet/idempotent); agent UX on inbox + org panel; AUTO_JOINED dedupe + CAMPAIGN_INVITED read; agent_evaluated audit. REFUSE never declines; manual override preserved.
 
-## Completed (S7.1 this session)
-- supply_commitments: one ACTIVE unit (price x 1) + one capacity unit per ACCEPT; unique per negotiation; consumed once by first S5 reservation; released on withdraw/revoke
-- Free budget now = funded - settled - active reservations - active commitments (S5 + S6 pace + kernel all read the same helper)
-- ACCEPT revalidates + commits atomically; decision row written after commit (audit always matches outcome)
-- S5: consumes matching commitment in-reserve (own-commitment excluded from self-check), restores on release, rejects REVOKED terms
-- Read model exposes commitment; withdraw on ACCEPTED revokes terms + releases once
-- Tests: 7 new commitment tests (143 vitest total green); S0-S7 suites untouched and green; forge 34 unchanged
-- Migration 0008 (23 tables total). Chain exercise: LOCAL ONLY (no chain interaction)
+## Files (slice 4)
+- src/server/services/scout.ts (evaluateInvitationAuthority + recovery hook)
+- src/server/services/invitations.ts (evaluateAndAutoAccept, recoverCreatorInvitations, acceptedBy, agent assessment, AUTO_JOINED)
+- src/app/internal/agents/scout/run/route.ts (recovery wiring, no new cron)
+- src/components/start/OpportunityInbox.tsx + src/components/app/CreatorMatches.tsx (agent/status UX)
+- src/components/start/AutoJoinToggle.tsx (copy covers open campaigns + direct invitations)
+- tests/creator-invitations.test.ts (26 tests)
 
-## Completed (S7 this session)
-- Kernel: pure evaluateNegotiationOffer (solvency cap, pace-widened band, counter-at-cap, 5% min-lift, 3-round stop, urgency from margin); corrupt/over-ceiling/insolvent fail closed
-- Lifecycle: propose (auto-evaluates) -> COUNTERED/ACCEPTED/REJECTED, HOLD on market moves, EXPIRED via worker, WITHDRAWN by supplier; one active row per pair (partial unique index)
-- Accept freezes NEGOTIATED terms + referral atomically; S5 pays the negotiated price through the unchanged pipeline; no second settlement path
-- Safety: supplier/category/wallet gates mirror join; paused markets + expired offers cannot accept; MARKET_MOVED holds for fresh input
-- Worker: processNegotiationEvaluations (per-row isolation, idempotent re-eval); read API + propose/withdraw routes; deterministic narrator, no LLM
-- S6 interplay proven: reprice never touches negotiated terms; HOLD-then-reconfirm flows work
-- Tables: negotiations, negotiation_decisions (migration 0007, 22 tables total)
-- Tests: 7 kernel + 11 service (136 vitest total green); S0-S6 suites untouched and green; forge 34 unchanged
-- Chain exercise: LOCAL ONLY (no chain interaction in S7)
+## Files (slice 3)
+- src/server/services/invitations.ts (accept/decline + inbox read model)
+- src/app/api/creator/invitations/* (inbox + accept/decline routes)
+- src/app/creator/page.tsx + src/components/start/OpportunityInbox.tsx
 
-## Completed (S6 this session)
-- Kernel: pure evaluatePricing (integer pace ratio, tolerance 15%, step <=25%, min-change 5%, 1h cooldown, 24h demand window); pace UNDER/ON/OVER/EXHAUSTED; corrupt states fail closed to PAUSE
-- Agent: evaluateMarket (persist+execute atomically, unique inputs-hash idempotency, STALE loser returns winner) + processPricingEvaluations (per-market isolation) + deterministic explanation template (no LLM wired)
-- Market mutation via optimistic updateMarket (version++ on reprice/pause); joins/feed already gate on OPEN so pause blocks participation with zero S3 changes
-- Read model: GET market/pricing (price, live pace, last decision/reasons, cooldown, window metrics)
-- Table: market_decisions (migration 0006, 20 tables total)
-- Tests: 6 kernel + 6 agent (118 vitest total green); S0-S5 suites untouched and green; forge 34 unchanged
-- Chain exercise: LOCAL ONLY (no chain interaction at all in S6)
-
-## Completed (S5 this session)
-- Reservation: transactional VERIFIED+hold+policy/terms/wallet/ceiling/allocation/budget gate; one pair per outcome for life; idempotent repeats; in-place retry after release
-- Execution: full revalidation, isolated EIP-712 signer, single broadcast, SUBMITTED persistence; recipient rotation/allocation/vault mismatches release safely pre-broadcast
-- Reconciliation: SETTLED only on matching OutcomePaid; FAILED+release on revert/wrong-vault/no-event with evidence; AMBIGUOUS never resends; crash-before-hash detected via consumption check
-- Worker: processEligiblePayouts (reserve->execute->reconcile, per-item isolation, duplicate-safe) behind PAYOUT_WORKER_SECRET; reconcile-one endpoint; truthful receipt API
-- Signer/executor adapters: provider-neutral interfaces, viem local-key impls, env address-match fail-closed; Circle remains a clean future swap
-- EIP-712: exact contract shape (viim signTypedData), digest determinism tests, onchain acceptance proven in Anvil E2E
-- Tables: spend_reservations, payouts (migration 0005, 19 tables total)
-- Tests: 15 payout unit + 1 anvil full-loop (106 unit green incl. 91 prior; forge 34 unchanged)
-- Chain exercise: LOCAL ONLY (fake-reader units + anvil fund->join->purchase->verify->hold->reserve->sign->execute->SETTLED->no-double-pay)
-
-## Completed (S4 this session)
-- Attribution portability: attribution_sessions (opaque single-use handle in ?thesma_attribution=); /r/:code keeps signed cookie + appends handle
-- Checkout: account-free intent (unsigned transfer calldata, exact micro-USDC), submit (SUBMITTED + PENDING, hash never trusted), public receipt state
-- Verifier: VerifierChainReader (sender/block-time/Transfer logs) + 15 ordered checks (chain, receipt, token, payer, merchant, amount, minimum, deadline/intent/terms on canonical time, self-dealing, funded-policy pin, 3 uniqueness scopes); AMBIGUOUS on uncertainty, idempotent terminals
-- Outcome/proof: VERIFIED + proofHash (keccak binding for S5 reuse) + customerKeyHash (salted, never raw wallet) + holdUntil = verifiedAt + refundHold (hold timer only, no refund detection)
-- Internal verify route behind VERIFIER_INTERNAL_SECRET bearer; accepts no facts
-- Tables: attribution_sessions, checkout_intents, outcomes (migration 0004, 17 tables total)
-- Tests: 13 checkout + 1 anvil E2E (+4 secret-gate asserts inside); 91 unit green + anvil green; forge 34 unchanged
-- Chain exercise: LOCAL ONLY (fake-reader units + opt-in anvil transfer->VERIFIED)
-
-## Completed (S3 this session)
-- Market domain: MarketState reuse, strict PartnerRules (canonical + S0-legacy normalize), pure eligibility matrix, destination-URL guard, opaque referral codes
-- Market service: openMarket (LIVE+APPROVED+CONFIRMED binding, floor/ceiling/affordability, single-open), public feed (PUBLIC/LIVE/OPEN/unexpired, no policy JSON), join (snapshot + idempotent + stale-version + row-locked active cap), private invites (hash-only, expiry, max-uses), referral resolve (attributable flag, money-free)
-- Attribution: HMAC-signed v1 cookie tokens (referral/campaign/partner/exp/nonce only), 32-char secret minimum, /r/:code records CLICK + redirects stored destination
-- Tables: market_states, partner_terms (unique pair), referrals (unique code), referral_events, private_invites (migration 0003, 14 tables total)
-- Routes: market/open, market, markets (public), partners/me/rules, join, partners/me/campaigns, invites, /r/:code
-- Tests: 17 market + 4 attribution (78 vitest total green); S0-S2 suites untouched and green; forge 34 still green
-- Bootstrap bounty documented as temporary S3 seam (S6 owns strategy); no agent-pricing claims
-
-## Completed (S2 this session)
-- S1 hardening: CampaignStore.atomic (Drizzle transactions; in-memory snapshot/restore + buffered audit); all S1 ops + funding transitions atomic; FUNDING/LIVE blocks policy mutation; FAILED confirmation returns campaign to APPROVED
-- Contract: ThesmaMarketVault (create/fund/pause/close/returnUnspent + EIP-712 payoutVerifiedOutcome, non-upgradeable, OZ v5.7.0, no withdraw backdoor) + MockUSDC + Deploy.s.sol (explicit --broadcast only)
-- Canonical bindings: campaignKey/policyHash (ABI-encoded, stable rules JSON), cross-stack vector pin in KeyVector.t.sol
-- Backend Arc boundary: ArcConfig/env, ViemArcReader, unsigned buildFundingIntent, fail-closed chain check; arc:doctor (NOT_CONFIGURED honest, never signs)
-- Funding model: campaign_fundings + status enum (migration 0002); service prepare/submit/status/confirm + company-wallet register; 5 routes; 7 audit actions
-- Tests: 34 forge (31 vault unit+fuzz + 1 invariant + 2 cross-stack vector pins) + 21 new vitest (4 keys + 17 funding); 57 vitest total green; S0/S1 suites untouched and green
-- Deployment status: DEPLOYED Arc mainnet S8.1B — vault 0x0fA826256a58F19Ad24Fc9384d81D313f2266F79, tx 0xe3c153…711c558, block 26454958, fee 0.03294 USDC (record: contracts/deployments/arc-mainnet.json)
-
-## Completed (S1 prior session)
-- Campaign domain: MarketVisibility, PolicyVersionStatus, pure analyzePolicyFields, S1 transition guard (DRAFT->REVIEW->APPROVED; FUNDING/LIVE rejected)
-- Tables: campaigns, campaign_policy_versions (migration 0001, unique (campaignId, version))
-- Intent boundary: CampaignIntentInterpreter + LocalIntentInterpreter (canonical demo sentence -> exact draft; relative dates never guessed)
-- Service: createDraft/reviseDraft/moveToReview/approvePolicy/getCampaign/listWorkspaceCampaigns (store interface + in-memory for tests, Drizzle impl for routes)
-- API: POST /api/campaigns/draft, GET /api/campaigns, GET /api/campaigns/:id, PATCH /api/campaigns/:id/draft, POST .../review, POST .../approve
-- Approval: owner-only; member may draft/review; approved immutable (revision -> new version); stale writes 409; repeat approval idempotent
-- Audit: campaign.created/draft_revised/review_requested/policy_approved/policy_revision_created
-- Tests: 19 new (36 total, all green); S0 suite untouched and green
-
-## Completed (S0 prior session)
-- Next.js 16 + React 19 + TS strict + Drizzle + Zod + Vitest + ESLint scaffold
-- Domain enums/types/money (micro-USDC bigint) + Zod boundaries
-- Tables: users, workspaces, workspace_members, partners, sessions, audit_events
-- Email/password auth (bcryptjs + opaque sessions), workspace isolation, partner ownership
-- API: health, me, auth/*, workspaces, partners; audit on S0 mutations
-- Tests: validation, money, authz, audit/session, health
-- README + .env.example; adapter stubs reserved for S1+
-
-## Architectural decisions
-- Provider-neutral DATABASE_URL; no Neon/Supabase/Circle/Arc SDK coupling
-- App-generated UUID text PKs (no pgcrypto dependency)
-- Custom session auth over full auth framework (documented in README; swappable at src/server/auth/*)
-- Money as integer micro-USDC decimal-strings on wire, bigint in code; no floats
-- Adapters reserved, not implemented (arc/vault/verifier/agents/policy/market-state)
-
-## Schema created
-- S7.1: supply_commitments (unique negotiation, ACTIVE/CONSUMED/RELEASED/EXPIRED, consumed-by links, release reasons)
-- S7: negotiations (partial unique on active pair states), negotiation_decisions (unique negotiation+inputsHash)
-- S6: market_decisions (unique campaign+inputsHash, old/new bounty, autoExecuted, reason codes)
-- S5: spend_reservations (unique outcome, RESERVED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS/RELEASED), payouts (unique reservation/outcome/tx, PREPARED/SUBMITTED/SETTLED/FAILED/AMBIGUOUS)
-- S4: attribution_sessions (opaque handle PK, single-use, expiry), checkout_intents (unique order/tx, PREPARED/SUBMITTED/CONFIRMED/REJECTED/AMBIGUOUS), outcomes (unique intent/tx/customer-per-campaign/proof, PENDING/VERIFIED/REJECTED, holdUntil)
-- S3: market_states (campaign PK, bounty, OPEN status, destination, v1, policyVersion), partner_terms (unique campaign+partner, PUBLIC snapshot, expiry=deadline), referrals (unique opaque code), referral_events (CLICK + visitor hash), private_invites (token hash, expiry, max uses)
-- users, workspaces, workspace_members, partners, sessions, audit_events (+ indexes, FKs, uniques)
-- S1: campaigns (workspace FK cascade, state enum, currentPolicyVersionId, createdBy FK restrict), campaign_policy_versions (18 cols, micro-USDC bigint, deadline nullable, status/visibility enums, unique (campaignId, version), approvedBy/approvedAt nullable)
-- S2: campaign_fundings (22 cols, unique (campaignId, policyVersion), unique nullable fundingTxHash, chain/vault/usdc/owner addresses, expected/observed micro-USDC, PREPARED/SUBMITTED/CONFIRMED/FAILED/AMBIGUOUS)
-
-## Commands verified (S7.1)
-- npm install: pass (no new deps)
-- npm run db:generate: pass (drizzle/0008_past_loki.sql, 23 tables total; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors)
-- npm test: pass (143 tests + 2 anvil-skips; S0-S7 all green)
-- npm run build: pass (19/19 pages)
-- forge fmt --check / build / test: pass, 34 unchanged
-- secrets scan: clean; no .env
-
-## Commands verified (S7)
-- npm install: pass (no new deps)
-- npm run db:generate: pass (drizzle/0007_harsh_shiva.sql, 22 tables total incl. partial unique index; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors)
-- npm test: pass (14 files, 136 tests + 2 anvil-skips; S0-S6 all green)
-- npm run build: pass (19/19 pages incl. 4 new negotiation routes)
-- forge fmt --check / build / test: pass, 34 unchanged
-- secrets scan: clean; no .env
-
-## Commands verified (S6)
-- npm install: pass (no new deps)
-- npm run db:generate: pass (drizzle/0006_premium_nightmare.sql, 20 tables total; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors)
-- npm test: pass (13 files, 118 tests + 2 anvil-skips; S0-S5 all green)
-- npm run build: pass (18/18 routes incl. internal pricing + market pricing read)
-- forge fmt --check / build / test: pass, 34 unchanged
-- secrets scan: clean; no .env
-
-## Commands verified (S5)
-- npm install: pass (no new deps)
-- npm run db:generate: pass (drizzle/0005_odd_dark_phoenix.sql, 19 tables total; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors)
-- npm test: pass (12 files, 106 tests + 2 anvil-skips; S0-S4 all green)
-- ARC_ANVIL_TESTS=1: payout E2E 1/1 pass (fund->join->purchase->verify->hold->reserve->sign->execute->SETTLED, exact bounty, no double-pay)
-- npm run build: pass (17/17 routes incl. internal payouts + receipt)
-- forge fmt --check / build / test: pass, 34 unchanged
-- npm run arc:doctor: NOT_CONFIGURED (honest, nothing contacted)
-- secrets scan: clean; no .env; signing keys only in .env.example (commented)
-
-## Commands verified (S4)
-- npm install: pass (no new deps)
-- npm run db:generate: pass (drizzle/0004_cynical_mad_thinker.sql, 17 tables total; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors)
-- npm test: pass (11 files, 91 tests + 1 anvil-skip; S0-S3 all green)
-- ARC_ANVIL_TESTS=1: 1/1 pass (real ERC20 transfer -> receipt -> VERIFIED + onchain company balance)
-- npm run build: pass (16/16 routes incl. checkout + internal verify)
-- forge fmt --check / build / test: pass, 34 unchanged
-- npm run arc:doctor: NOT_CONFIGURED (honest, nothing contacted)
-- secrets scan: clean; no .env; VERIFIER_INTERNAL_SECRET only in .env.example (commented)
-
-## Commands verified (S3)
-- npm install: pass (no new deps)
-- npm run db:generate: pass (drizzle/0003_common_runaways.sql, 14 tables total; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors)
-- npm test: pass (10 files, 78 tests: 57 S0-S2 + 21 S3)
-- npm run build: pass (15/15 routes incl. markets/join/invites/r)
-- forge fmt --check / build / test: pass, 34 unchanged
-- secrets scan: clean; no .env; ATTRIBUTION_SECRET only in .env.example (commented)
-
-## Commands verified (S2)
-- npm install: pass (added viem 2.57.7; "type": "module" for tsx ESM)
-- foundryup: forge/anvil/cast 1.8.5; OZ v5.7.0 + forge-std vendored
-- npm run db:generate: pass (drizzle/0002_nostalgic_stranger.sql, 9 tables total; NOT applied, no live DB)
-- npm run typecheck: pass; npm run lint: pass (0 errors, lib/ excluded)
-- npm test: pass (8 files, 57 tests: 36 S0/S1 + 21 S2)
-- npm run build: pass (all funding routes live)
-- forge fmt --check: pass; forge build: pass; forge test: 34 pass
-- npm run arc:doctor: NOT_CONFIGURED (honest, nothing contacted)
-- secrets scan: clean; no .env; Deploy.s.sol dry-run only
-
-## Commands verified (S1)
-- npm install: pass (no new deps; lockfile unchanged)
-- npm run db:generate: pass (drizzle/0001_tough_callisto.sql, 8 tables total)
-- npm run typecheck: pass (incl. jsonb unknown->record mapper fix)
-- npm run lint: pass (0 errors, 0 warnings)
-- npm test: pass (6 files, 36 tests: 17 S0 + 19 S1)
-- npm run build: pass (all 6 campaign routes live)
-- secrets scan: clean; only .env.example (placeholder), no .env committed
+## Files (slice 1+2)
+- Slice 1: matching.ts, personas.ts, schema.ts, 0014_creator_capability.sql, persona route, OnboardingForms, creator-matching.test.ts (13 tests)
+- Slice 2: invitations.ts, matches/invitations routes, CreatorMatches.tsx, campaignStore persistence, 0015_creator_invitations.sql
 
 ## Blockers
-- No local Postgres in this environment (psql/pg_isready missing); migration applied against DATABASE_URL when configured
+- Migrations 0014/0015 committed but NOT applied to prod; no prod deploy/migration/mutation until slice 10.
+- Arc Showcase/Mainnet submission complete (b7f4c6a, accd972) — preserved, untouched; no contract redeploy, no mainnet tx, no Sourcify changes.
 
-## S2 architecture
-- Money paths: customer revenue never enters the vault; vault holds only pre-funded acquisition budget; backend keyless (prepares + verifies, never signs)
-- Funding state machine: APPROVED -> FUNDING (prepare) -> LIVE (confirm w/ full-budget onchain proof); FAILED -> APPROVED (retry); AMBIGUOUS holds for re-check; CONFIRMED idempotent
-- RPC/funding adapter boundary: src/server/chain/* (viem contained); domain sees plain values; Deploy.s.sol requires explicit env + --broadcast; tests never touch mainnet
-- Contract invariants: spent <= funded <= budgetCap (fuzz + handler invariant); payout binds key/policy/outcome/recipient/amount/proof/times to verifier signature; occurredAt<=deadline decides eligibility, not settlement time
-
-## Known limitations (S2)
-- Arc exercise is LOCAL ONLY (forge EVM + fake-reader backend tests); testnet/mainnet deployment + funding NOT EXERCISED
-- Company wallet is registered, not cryptographically verified
-- Payout primitive contract-tested but deliberately unwired from the backend (S5)
-- Multi-tx funding (create+approve+fund) confirmed via the funding tx receipt + vault state, not per-action receipts
-
-## Known limitations (S1)
-- Interpreter is heuristic regex, not an LLM; unusual phrasing yields missing fields (by design, never guesses)
-- Deadlines require explicit ISO dates; relative dates always reported missing
-- Multi-write service transitions are sequential awaits, not a single DB transaction (single-node correctness holds; harden with transactions in S2 if funding races appear)
-- In-memory store timestamps fixed; wall-clock only via injected now() for deadline checks
-
-## S3 concurrency notes
-- Market open: check-then-insert inside atomic + campaignId PK unique backs the race (409)
-- Join: partner row SELECT FOR UPDATE serializes active-cap count-then-insert per Partner; unique (campaign,partner) + referral-code unique with retry make losers deterministic/idempotent
-- Stale marketVersion rejected explicitly; terms snapshot frozen at join
-
-## S4 verifier notes
-- Canonical block timestamp decides timing; client time/webhooks never trusted
-- VERIFIED = evidence passed, NOT paid; S5 must respect holdUntil (refund detection NOT shipped)
-- Single-use attribution handles; conflicting submission hashes 409; unknown receipts stay AMBIGUOUS and recover
-- Anvil E2E is opt-in (ARC_ANVIL_TESTS=1), skipped by default, never mainnet
-
-## S5 payout notes
-- VERIFIED != PAID, SUBMITTED != SETTLED; payout authority is campaign-scoped (funded policy), never treasury access
-- Server signer isolated from model/client; keys server-only, address-matched, never logged/returned
-- Uncertain broadcast state resolves via reconciliation, never resend; FAILED releases only with no-payment evidence
-- Anvil E2E opt-in (ARC_ANVIL_TESTS=1), skipped by default, never mainnet
-
-## S6 pricing notes
-- Future participation only: frozen terms/outcomes/reservations/payouts never rewritten by repricing or pause
-- PAUSE is terminal in S6 (resume is a future slice); cooldown never blocks safety pauses
-- Memory-store fixed row clock vs injectable service clock: cooldown tests use long-cooldown policy to prove the rule with disagreeing clocks (production clocks agree)
-
-## S7 negotiation notes
-- Terms freeze at the supplier's ASK when inside the band (cheaper for the campaign than the bounty); counters sit at the solvency/urgency cap
-- Negotiation creates allocation-free budget locks: NOTHING moves until S5 reservation; concurrent accepts serialize safely at reservation time
-- autoNegotiate flags remain stored-only; the worker evaluates explicitly proposed rows
-
-## S7.1 notes
-- Changed S7 semantic (intended): second competing ACCEPT now REJECTs at negotiation time instead of failing later at reservation
-- Terms allocation caps still enforced at reservation; commitments cover the first unit only (documented limitation)
-- Dead allocations bounded by terms expiry; no background sweeper yet (future slice may reclaim)
-
-## Completed (S8.1B this session)
-- Independently verified owner deployment on Arc mainnet (chain, tx, receipt, from, vault, code, USDC getter, decimals, nonce) — all match
-- Runtime bytecode matches local build except the immutable USDC slot (correctly 0x3600…0000)
-- Exactly one deployment tx (deployer nonce 0 → 1); no setup txs required or observed
-- Canonical record: contracts/deployments/arc-mainnet.json + README; fee 0.03293860972715287 USDC
-- No broadcasts/signing by this session; no runtime behavior changed
-
-## Completed (public markets + supply agent this session)
-- Public discovery: GET /api/markets?status=live (unchanged default) + ?status=completed (PUBLIC, no-longer-live, never deleted after close/expiry); /markets (login-free live + completed cards) + /markets/[campaignId] judge detail (safe fields only, PRIVATE 404s, explorer links when configured, no fabricated metrics)
-- Detail reuses existing store reads (reservations->outcomes->payouts chain); no store changes, no migrations, no state mutation for presentation
-- Supply Agent: pure domain parser (free text -> typed PartnerRules, exact micro-USDC, progressive questions, confirmation card) + services (status/matches/run/ask over real state, runAgent reuses joinCampaign inside rules) + 6 authed routes (status/matches/onboard/confirm/run/ask)
-- Honest boundaries: chat never persists (confirm required); autoNegotiate stored-only with explicit "automation not available" answer; no background daemon — auto-join executes on explicit run; no social publishing
-- Tests: 7 public-markets + 8 supply-agent (197 vitest total green); typecheck/lint/build green; forge unavailable in this environment (contracts untouched)
-
-## Completed (production autonomy + mainnet readiness this session)
-- Background supply worker: POST /internal/agents/supply/run (SUPPLY_AGENT_WORKER_SECRET; cron GET via CRON_SECRET) + runSupplyAgentWorker (autoJoin Partners only, wallet/rules revalidated, live-PUBLIC markets only, expectedMarketVersion staleness guard, per-market try/catch, per-Partner supply_agent.run audit); Vercel cron added at daily 06:30 UTC cadence (Hobby-compatible; worker itself supports higher-frequency invocation, current Hobby infra does not); no daemon/Redis, no domain-layer Vercel types
-- Idempotency/concurrency: repeats + concurrent runs cannot duplicate joins (unique (campaign, partner) authoritative; lockPartnerRow serializes per-Partner caps in Drizzle); expired/closed/private never joined by the runner; one Partner failure never aborts others; summary carries partners/markets/joined/skipped/failed + reason codes
-- Mainnet preflight: npm run mainnet:preflight (tsx, read-only, never signs/broadcasts/prints secrets) — DB reachable + 17 tables, 4 worker secrets present, RPC chain match, USDC/vault bytecode, funded-campaign vault cross-check, signer derivation vs configured addresses, app URL + explorer WARNs; exit 0 only when zero FAIL
-- Proof hardening: completed detail now shows purchase txs + settled payout total + SUBMITTED!=SETTLED and VERIFIED!=PAID notes; permanent /markets/[id] URLs unchanged; no fake metrics
-- Smoke: full local flow org->policy->funding->LIVE->discovery->autoJoin->referral->checkout->VERIFIED->payout scan->completed proof (1 test, fixtures only, no mainnet)
-- Tests: 8 supply-worker + 2 preflight + 1 lifecycle (210 vitest total green, 2 Anvil-skipped); typecheck/lint/build green; forge unavailable in this environment (contracts untouched, prior 34 green)
-- PRODUCTION TRUTH (not blockers): Neon/Postgres provisioned and migrated; app live at thesma.vercel.app; Arc Mainnet 5042 live; canonical vault deployed; owner funding UI funded a second real campaign; public checkout completed a real 0.90 USDC purchase (VERIFIED + proof hash + 1h hold); executor previously confirmed gas-ready; deliverable docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md exists; Run #1 SETTLED; Run #2 progressing through payout automation. A LOCAL shell without production secrets reports NOT_CONFIGURED/FAIL — that is local-environment state, never a production-blocked claim.
-- TARGET / NOT YET EXERCISED: lower-latency scheduler/plan if sub-daily payout cadence is ever required
-
-## Completed (S8.2A this session)
-- Runbook: docs/MAINNET_RUNBOOK.md (DB commands, env template PUBLIC/SECRET, signer plan, worker checklist, isolation proof, 12-step execution manifest, deliverable gate, abort rules)
-- Verified: 5/5 internal routes secret-gated, no schedulers, no NEXT_PUBLIC secrets, chainId pinned per money record + asserted on every chain touch + EIP-712 domain (no schema change needed)
-- Signer status: owner stays browser-held; customer/executor/verifier fresh dedicated (owner-generated offline); recipient keyless; all keys/secrets currently ABSENT (correct fail-closed state)
-- S8.2 stays BLOCKED on: owner keys/env/DB, $1 deliverable definition
-- Tests: 143 unit + 34 forge green; no runtime behavior changed
+## Verification
+- typecheck clean + lint clean + 39 targeted (matching + invitations) + 54 scout/autojoin/ux regression green (this session).
 
 ## Next action
-- S8.2 — TINY ARC MAINNET END-TO-END PROOF, only after owner provisions signers + DB + deliverable (do NOT start in this session)
+- Slice 5: Campaign CFO + cross-campaign capital allocator.

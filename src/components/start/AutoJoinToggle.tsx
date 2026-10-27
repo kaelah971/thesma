@@ -64,8 +64,8 @@ export function AutoJoinToggle({ initial }: { initial: CreatorRulesInput }) {
       </button>
       <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
         {autoJoin
-          ? "Thesma only joins campaigns that satisfy your rules."
-          : "Scout can recommend campaigns, but won't join them automatically."}
+          ? "Thesma may automatically join eligible open campaigns or accept direct campaign invitations when every Scout rule is satisfied."
+          : "Thesma can still recommend opportunities and surface invitations, but you approve participation yourself."}
       </span>
       {error && (
         <span className="form-error" role="alert" style={{ fontSize: 12 }}>
