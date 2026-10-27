@@ -89,6 +89,16 @@ export interface PublicCreatorProfile {
     activeCampaigns: number;
     completedCampaigns: number;
     verificationRate: number | null;
+    /** Slice 7: proof-first counts (public campaigns only). No scores, no anomaly internals. */
+    campaignsWithVerified: number;
+    retention: {
+      d7Qualified: number;
+      d7Matured: number;
+      d7Rate: number | null;
+      d30Qualified: number;
+      d30Matured: number;
+      d30Rate: number | null;
+    } | null;
   };
   live: CreatorLiveCampaignCard[];
   history: CompletedCollaboration[];
@@ -289,6 +299,39 @@ export async function getPublicCreatorProfile(
 
   // Verification rate is withheld: outcomes carry no honest attempt
   // denominator, and inventing one would fabricate precision.
+  // Slice 7: retention from public-campaign VERIFIED rows only. Counts and
+  // rates — never scores, anomaly internals, customer data or private notes.
+  let campaignsWithVerified = 0;
+  let retention: PublicCreatorProfile["metrics"]["retention"] = null;
+  if (partnerId) {
+    try {
+      const { evaluateRetention } = await import("./reliability");
+      const publicCampaigns = new Set(history.map((h) => h.campaignId));
+      campaignsWithVerified = publicCampaigns.size;
+      const verified = await deps.store.listOutcomesByStatus("VERIFIED", 10_000).catch(() => []);
+      const rows = verified
+        .filter((o) => o.partnerId === partnerId && publicCampaigns.has(o.campaignId))
+        .map((o) => ({
+          id: o.id,
+          campaignId: o.campaignId,
+          subjectRef: o.customerKeyHash ?? null,
+          status: "VERIFIED",
+          verifiedAtMs: o.verifiedAt?.getTime() ?? null,
+        }));
+      const { summary } = evaluateRetention(rows, Date.now());
+      const d7 = summary.find((s) => s.window === "D7")!;
+      const d30 = summary.find((s) => s.window === "D30")!;
+      const matured = d7.qualified + d7.missed + d30.qualified + d30.missed;
+      retention = matured > 0
+        ? {
+            d7Qualified: d7.qualified, d7Matured: d7.qualified + d7.missed, d7Rate: d7.rate,
+            d30Qualified: d30.qualified, d30Matured: d30.qualified + d30.missed, d30Rate: d30.rate,
+          }
+        : null;
+    } catch {
+      // Public proof stays available even when retention cannot be computed.
+    }
+  }
   return {
     displayName: user.name ?? `@${handle}`,
     handle,
@@ -304,6 +347,8 @@ export async function getPublicCreatorProfile(
       activeCampaigns: live.length,
       completedCampaigns: history.filter((h) => !live.some((l) => l.campaignId === h.campaignId)).length,
       verificationRate: null,
+      campaignsWithVerified,
+      retention,
     },
     live,
     history,

@@ -19,6 +19,15 @@ interface Briefing {
     availableLiquidityMicroUsdc: string; currentReserveMicroUsdc: string; confidence: string; basis: string;
   };
   plan: { situation: string; recommendedAction: string; why: string; expectedEffect: string; confidence: string; policyStatus: string };
+  quality?: {
+    evaluated: boolean;
+    verifiedAcquisitions?: number;
+    d7?: { qualified: number; matured: number; rate: number | null; pending: number; review: number };
+    d30?: { qualified: number; matured: number; rate: number | null; pending: number; review: number };
+    overallConfidence?: string;
+    anomalySignals?: { type: string; severity: string; partnerId: string | null; evidenceRefCount: number; reason: string }[];
+    readiness?: { recommendedAction: string; reason: string };
+  };
 }
 
 /** Growth intelligence: pace, bounty decision, allocation, forecast — real numbers only. */
@@ -102,6 +111,23 @@ export function GrowthPanel({ workspaceId, campaignId, isOwner }: { workspaceId:
             Next 24h {formatUsdc(brief.forecast.next24hExpectedObligationsMicroUsdc)} · 7d{" "}
             {formatUsdc(brief.forecast.next7dExpectedObligationsMicroUsdc)} USDC · {brief.forecast.basis}
           </p>
+          {brief.quality?.evaluated && (
+            <>
+              <span className={styles.ctxLabel}>Outcome quality · {brief.quality.overallConfidence}</span>
+              <p className={styles.summary}>
+                {brief.quality.verifiedAcquisitions} verified acquisitions · D7{" "}
+                {brief.quality.d7?.matured ? `${brief.quality.d7.qualified}/${brief.quality.d7.matured} retained${brief.quality.d7.rate !== null ? ` (${brief.quality.d7.rate}%)` : ""}` : "window still maturing"} · D30{" "}
+                {brief.quality.d30?.matured ? `${brief.quality.d30.qualified}/${brief.quality.d30.matured} retained${brief.quality.d30.rate !== null ? ` (${brief.quality.d30.rate}%)` : ""}` : "window still maturing"}
+              </p>
+              {(brief.quality.anomalySignals?.length ?? 0) > 0 && (
+                <p className={styles.muted} style={{ marginTop: 4 }}>
+                  {brief.quality.anomalySignals!.length} review signal(s):{" "}
+                  {brief.quality.anomalySignals!.slice(0, 3).map((a) => a.type.replaceAll("_", " ")).join(" · ")}
+                  {brief.quality.readiness ? ` — next step: ${brief.quality.readiness.recommendedAction}` : ""}
+                </p>
+              )}
+            </>
+          )}
           <p className={styles.muted} style={{ marginTop: 8 }}>
             {brief.plan.policyStatus} Recent growth actions are in the workspace activity log.
           </p>

@@ -83,6 +83,22 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
           <strong className="tnum">{profile.metrics.activeCampaigns}</strong>
           <small>Live right now</small>
         </div>
+        <div className={styles.kpi}>
+          <span>Campaigns with verified results</span>
+          <strong className="tnum">{profile.metrics.campaignsWithVerified}</strong>
+          <small>Proof across more than one campaign</small>
+        </div>
+        <div className={styles.kpi}>
+          <span>D7 retained outcomes</span>
+          <strong className="tnum">
+            {profile.metrics.retention ? `${profile.metrics.retention.d7Qualified}/${profile.metrics.retention.d7Matured}` : "—"}
+          </strong>
+          <small>
+            {profile.metrics.retention
+              ? `Repeat verified action inside the D7 window${profile.metrics.retention.d7Rate !== null ? ` · ${profile.metrics.retention.d7Rate}%` : ""}`
+              : "Not enough retention history yet."}
+          </small>
+        </div>
       </div>
 
       <div className={styles.homeGrid}>

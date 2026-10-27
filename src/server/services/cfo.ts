@@ -101,6 +101,11 @@ export interface CfoCampaignRow {
   nextDueMicroUsdc: string;
   hardConflict: string | null;
   ambiguous: string | null;
+  /** Slice 7: D7 retention rate from verified trails (null = no matured history). */
+  retentionD7Rate: number | null;
+  retainedD7: number;
+  /** Slice 7: campaign economics explicitly reward volume/durability. */
+  hasMilestoneDeals: boolean;
 }
 
 export interface CfoSnapshot {
@@ -420,6 +425,9 @@ export async function loadCfoSnapshot(
         nextDueMicroUsdc: "0",
         hardConflict: null,
         ambiguous: "Campaign is missing market or policy truth.",
+        retentionD7Rate: null,
+        retainedD7: 0,
+        hasMilestoneDeals: false,
       });
       continue;
     }
@@ -488,6 +496,26 @@ export async function loadCfoSnapshot(
     const remaining = target !== null ? Math.max(0, target - mine.length) : null;
     const estRequired = remaining !== null ? BigInt(remaining) * market.publicBountyMicroUsdc : 0n;
     const headroom = version.budgetMicroUsdc !== null ? version.budgetMicroUsdc - funded : null;
+    // Slice 7: retention from verified trails only (ambiguous trails excluded
+    // and flagged; documented approximation for the capital gate).
+    let retentionD7Rate: number | null = null;
+    let retainedD7 = 0;
+    try {
+      const { evaluateRetention } = await import("./reliability");
+      const { summary } = evaluateRetention(
+        mine.map((o) => ({
+          id: o.id, campaignId: o.campaignId, subjectRef: o.customerKeyHash ?? null,
+          status: "VERIFIED", verifiedAtMs: o.verifiedAt?.getTime() ?? null,
+        })),
+        now.getTime(),
+      );
+      const d7 = summary.find((s) => s.window === "D7")!;
+      retentionD7Rate = d7.rate;
+      retainedD7 = d7.qualified;
+    } catch {
+      retentionD7Rate = null;
+    }
+    const hasMilestoneDeals = hybridDeals.some((d) => Array.isArray(d.milestonesJson) && (d.milestonesJson as unknown[]).length > 0);
     rows.push({
       campaignId: campaign.id,
       objective: version.intentText,
@@ -522,6 +550,9 @@ export async function loadCfoSnapshot(
       nextDueMicroUsdc: verifiedUnpaid.toString(),
       hardConflict,
       ambiguous: pace ? null : "Pace truth unavailable.",
+      retentionD7Rate,
+      retainedD7,
+      hasMilestoneDeals,
     });
   }
   const sum = (pick: (r: CfoCampaignRow) => string) => rows.reduce((s, r) => s + BigInt(pick(r)), 0n).toString();
@@ -645,11 +676,32 @@ export async function buildCapitalPlan(
     if (BigInt(row.financials.hybridContingentMicroUsdc) > 0n) {
       hybridWarnings.push(`Contingent hybrid exposure: ${row.financials.hybridContingentMicroUsdc} micro-USDC unverified base + unearned milestones (not yet payable).`);
     }
+    // Slice 7: retention-aware capital reasoning. Only campaigns whose
+    // economics explicitly reward volume/durability (milestone deals) move
+    // the score; first-purchase campaigns get info-only reasoning.
+    let qualityAdjustedScore = score.capitalScore;
+    const qualityNotes: string[] = [];
+    if (row.retentionD7Rate !== null) {
+      const spendForRetained = BigInt(row.financials.spentMicroUsdc) + BigInt(row.financials.reservedMicroUsdc);
+      const costPerRetained = row.retainedD7 > 0
+        ? `Quality-adjusted CAC: ${(spendForRetained / BigInt(row.retainedD7)).toString()} micro-USDC per retained outcome (${row.retainedD7} retained).`
+        : `No retained outcomes yet — quality-adjusted CAC unavailable.`;
+      if (row.hasMilestoneDeals) {
+        if (row.retentionD7Rate < 50) {
+          qualityAdjustedScore = Math.max(0, qualityAdjustedScore - 10);
+          hybridWarnings.push(`Low D7 retention (${row.retentionD7Rate}%) against volume economics — capital score reduced. ${costPerRetained}`);
+        } else {
+          qualityNotes.push(`D7 retention ${row.retentionD7Rate}% supports volume economics. ${costPerRetained}`);
+        }
+      } else {
+        qualityNotes.push(`D7 retention ${row.retentionD7Rate}% (info only — first-purchase objective unchanged).`);
+      }
+    }
     decisions.push({
       campaignId: row.campaignId,
-      capitalScore: score.capitalScore,
+      capitalScore: qualityAdjustedScore,
       confidence: score.confidence,
-      reasons: score.reasons,
+      reasons: [...score.reasons, ...qualityNotes],
       warnings: [...score.warnings, ...hybridWarnings],
       spendAction: spend.action,
       spendReason: spend.reason,

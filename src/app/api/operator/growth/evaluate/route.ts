@@ -117,7 +117,37 @@ export async function POST(req: Request) {
       campaignId,
       metadata: { allocation: allocation.map((a) => ({ partnerId: a.partnerId, priority: a.priority, sharePct: a.sharePct, confidence: a.confidence })) },
     });
-    return Response.json({ pace: pace.paceStatus, bounty, plan, execution });
+    // Slice 7: quality review flags (bounded, audited — never auto-rejecting).
+    // Signals are REVIEW FIRST, never verdicts; payout paths are untouched.
+    let quality: Record<string, unknown> = { evaluated: false };
+    try {
+      const { loadCampaignQuality } = await import("@/server/services/reliability");
+      const q = await loadCampaignQuality(wired.deps.store, campaignId, now);
+      quality = {
+        evaluated: true,
+        verifiedAcquisitions: q.verifiedAcquisitions,
+        d7: { qualified: q.d7.qualified, matured: q.d7.qualified + q.d7.missed, rate: q.d7.rate, pending: q.d7.pending, review: q.d7.review },
+        d30: { qualified: q.d30.qualified, matured: q.d30.qualified + q.d30.missed, rate: q.d30.rate, pending: q.d30.pending, review: q.d30.review },
+        anomalyCount: q.anomalySignals.length,
+        readiness: q.readiness.recommendedAction,
+      };
+      for (const signal of q.anomalySignals.slice(0, 10)) {
+        await recordGrowthEvent(db, workspaceId, "outcome.quality.review_flagged", {
+          campaignId,
+          metadata: {
+            campaignId,
+            type: signal.type,
+            severity: signal.severity,
+            partnerId: signal.partnerId,
+            evidenceRefs: signal.evidenceRefs.slice(0, 10),
+            reason: signal.reason,
+          },
+        });
+      }
+    } catch {
+      // Quality evidence never breaks the growth evaluation.
+    }
+    return Response.json({ pace: pace.paceStatus, bounty, plan, execution, quality });
   } catch (err) {
     if ((err as { status?: number }).status === 401) return Response.json({ error: "Unauthorized" }, { status: 401 });
     return toApiError(err);

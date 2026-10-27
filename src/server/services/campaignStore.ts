@@ -565,6 +565,8 @@ export interface MarketStore extends FundingStore {
   consumeAttributionSession(id: string): Promise<StoredAttributionSession | null>;
   insertCheckoutIntent(i: NewCheckoutIntent): Promise<StoredCheckoutIntent>;
   getCheckoutIntent(id: string): Promise<StoredCheckoutIntent | null>;
+  listCheckoutIntentsByCampaign(campaignId: string): Promise<StoredCheckoutIntent[]>;
+  countCheckoutIntentsForPartner(partnerId: string): Promise<number>;
   updateCheckoutIntent(
     id: string,
     patch: Partial<Pick<StoredCheckoutIntent, "status" | "txHash" | "submittedAt" | "confirmedAt" | "failureCode">>,
@@ -1298,6 +1300,12 @@ export function createMemoryCampaignStore(seed?: {
     },
     async getCheckoutIntent(id) {
       return intents.get(id) ?? null;
+    },
+    async listCheckoutIntentsByCampaign(campaignId) {
+      return [...intents.values()].filter((r) => r.campaignId === campaignId);
+    },
+    async countCheckoutIntentsForPartner(partnerId) {
+      return [...intents.values()].filter((r) => r.partnerId === partnerId).length;
     },
     async updateCheckoutIntent(id, patch) {
       const row = intents.get(id);

@@ -58,6 +58,8 @@ export interface ScoutCandidateFacts {
   creatorVerifiedTotal: number;
   creatorVerifiedRecent: number;
   creatorActions: number;
+  /** Slice 7: D7-qualified retained outcomes for this campaign (evidence signal, not a score override). */
+  creatorRetainedOutcomes?: number;
   creatorSettledTotalMicroUsdc: bigint;
   paceStatus: PaceStatus | null;
 }
@@ -146,6 +148,8 @@ export function scoreCandidate(params: {
   remainingTarget: number | null;
   msUntilDeadline: number | null;
   paceStatus: PaceStatus | null;
+  /** Slice 7: retained-outcome evidence (raises signal, never lowers confidence alone). */
+  retainedOutcomes?: number;
 }): { score: number; breakdown: ScoreBreakdown; confidence: ScoutConfidence; evidenceUsed: string[] } {
   const evidenceUsed: string[] = [];
   let fit = 0;
@@ -163,6 +167,7 @@ export function scoreCandidate(params: {
   const evidence = Math.min(30, Math.round(evidenceRaw * 10) / 10);
   if (params.verifiedTotal > 0 || params.actions > 0) evidenceUsed.push(`${params.verifiedTotal}-verified/${params.actions}-actions`);
   else evidenceUsed.push("no-history");
+  if ((params.retainedOutcomes ?? 0) > 0) evidenceUsed.push(`${params.retainedOutcomes}-retained`);
   let economics = 10;
   if (params.minBountyMicroUsdc !== null && params.bountyMicroUsdc >= params.minBountyMicroUsdc) {
     economics = 18;
@@ -887,6 +892,24 @@ export async function loadScoutSnapshot(
   const settledSum = allPayouts.filter((p) => p.state === "SETTLED").reduce((s, p) => s + p.amountMicroUsdc, 0n);
   const weekAgo = now.getTime() - 7 * 86_400_000;
   const recentVerified = allOutcomes.filter((o) => o.status === "VERIFIED" && o.verifiedAt && o.verifiedAt.getTime() >= weekAgo).length;
+  // Slice 7: retained-outcome evidence per campaign from the same rows
+  // (no new queries). Only VERIFIED same-subject repeats qualify.
+  const retainedByCampaign = new Map<string, number>();
+  try {
+    const { evaluateRetention } = await import("./reliability");
+    const byCampaign = new Map<string, { id: string; campaignId: string; subjectRef: string | null; status: string; verifiedAtMs: number | null }[]>();
+    for (const o of allOutcomes.filter((x) => x.status === "VERIFIED")) {
+      const list = byCampaign.get(o.campaignId) ?? [];
+      list.push({ id: o.id, campaignId: o.campaignId, subjectRef: o.customerKeyHash ?? null, status: "VERIFIED", verifiedAtMs: o.verifiedAt?.getTime() ?? null });
+      byCampaign.set(o.campaignId, list);
+    }
+    for (const [cid, rows] of byCampaign) {
+      const { records } = evaluateRetention(rows, now.getTime());
+      retainedByCampaign.set(cid, records.filter((r) => r.status === "QUALIFIED" && r.window === "D7").length);
+    }
+  } catch {
+    // Retention evidence is best-effort; Scout never fails on it.
+  }
 
   const scored: ScoredCandidate[] = [];
   for (const m of markets) {
@@ -962,6 +985,7 @@ export async function loadScoutSnapshot(
       remainingTarget: version.targetOutcomeCount,
       msUntilDeadline: version.deadline ? version.deadline.getTime() - now.getTime() : null,
       paceStatus,
+      retainedOutcomes: retainedByCampaign.get(m.campaignId) ?? 0,
     });
     const earnings = estimateEarnings({ bountyMicroUsdc: m.publicBountyMicroUsdc, actions, verifiedTotal: verifiedIds.size });
     const hasEvidence = verifiedIds.size > 0 || actions > 0;
@@ -992,6 +1016,7 @@ export async function loadScoutSnapshot(
         creatorVerifiedTotal: verifiedIds.size,
         creatorVerifiedRecent: recentVerified,
         creatorActions: actions,
+        creatorRetainedOutcomes: retainedByCampaign.get(m.campaignId) ?? 0,
         creatorSettledTotalMicroUsdc: settledSum.toString(),
         paceStatus,
       },

@@ -13,6 +13,7 @@ import { newId } from "../auth/session";
 import type { AuditSink, MarketStore, StoredCheckoutIntent, StoredOutcome } from "./campaignStore";
 import { isUniqueViolation } from "./campaignStore";
 import { awardMilestones } from "./deals";
+import { evaluateRetention, recordRetentionQualified } from "./reliability";
 import { evaluateTargetSettled } from "./markets";
 
 export interface CheckoutDeps {
@@ -450,6 +451,35 @@ export async function verifyCheckoutIntent(deps: CheckoutDeps, params: { intentI
     // fails verification; awards are idempotent and settlement-unsupported.
     try {
       await awardMilestones(ms, audit, { campaignId: intent.campaignId, partnerId: intent.partnerId });
+    } catch {
+      // Verification integrity comes first.
+    }
+    // Slice 7: retention qualification from canonical VERIFIED counts.
+    // This fresh verification may complete a D7/D30 window for its subject.
+    // Audit-only; never fails verification, never pays anything.
+    try {
+      const prior = await ms.listOutcomesByStatus("VERIFIED", 10_000).catch(() => []);
+      const rows = prior
+        .filter((o) => o.campaignId === intent.campaignId)
+        .map((o) => ({
+          id: o.id,
+          campaignId: o.campaignId,
+          subjectRef: o.customerKeyHash ?? null,
+          status: "VERIFIED",
+          verifiedAtMs: o.verifiedAt?.getTime() ?? null,
+        }));
+      const { records } = evaluateRetention(rows, verifiedAt.getTime());
+      for (const r of records) {
+        if (r.status === "QUALIFIED" && r.qualifyingOutcomeId === outcome.id) {
+          await recordRetentionQualified(audit, {
+            campaignId: intent.campaignId,
+            partnerId: intent.partnerId,
+            originalOutcomeId: r.originalOutcomeId,
+            qualifyingOutcomeId: outcome.id,
+            window: r.window,
+          });
+        }
+      }
     } catch {
       // Verification integrity comes first.
     }

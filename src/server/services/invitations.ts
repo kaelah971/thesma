@@ -282,6 +282,39 @@ export async function createInvitation(
       },
     })
     .catch(() => {});
+  // Slice 7: reliability snapshot at decision time (best-effort, bounded).
+  // The invitation is the evaluation point — never a page render.
+  try {
+    const { loadCreatorReliability } = await import("./reliability");
+    const rel = await loadCreatorReliability(deps.store, params.creatorUserId, now).catch(() => null);
+    if (rel) {
+      await deps
+        .audit({
+          actorType: "SYSTEM",
+          actorId: null,
+          workspaceId: ctx.workspace?.id ?? null,
+          partnerId: rel.partnerId,
+          action: "creator.reliability.evaluated",
+          targetType: "invitation",
+          targetId: row.id,
+          metadata: {
+            campaignId: params.campaignId,
+            creatorUserId: params.creatorUserId,
+            invitationId: row.id,
+            reliabilityScore: rel.reliabilityScore,
+            confidence: rel.confidence,
+            level: rel.level,
+            verifiedOutcomes: rel.verifiedOutcomes,
+            campaignsWithVerified: rel.campaignsWithVerified,
+            retainedOutcomes: rel.retainedOutcomes,
+            settledCollaborations: rel.settledCollaborations,
+          },
+        })
+        .catch(() => {});
+    }
+  } catch {
+    // Reliability evidence never blocks the invitation.
+  }
   // Slice 3 delivery: durable inbox alert, deduped on the invitation.
   // No email/push — dashboard only.
   try {

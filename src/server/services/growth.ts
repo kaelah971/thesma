@@ -662,7 +662,7 @@ export async function loadCreatorPerformance(
 export async function recordGrowthEvent(
   db: Db,
   workspaceId: string,
-  action: "operator.growth.evaluated" | "operator.bounty.changed" | "operator.bounty.escalated" | "operator.allocation.recommended",
+  action: "operator.growth.evaluated" | "operator.bounty.changed" | "operator.bounty.escalated" | "operator.allocation.recommended" | "outcome.quality.review_flagged",
   params: { campaignId: string; metadata: Record<string, unknown> },
 ): Promise<void> {
   await recordAuditEvent(db, {

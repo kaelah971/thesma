@@ -52,6 +52,30 @@ export async function GET(req: Request) {
       policy,
     });
     const allocation = recommendAllocation(performances);
+    // Slice 7: quality-adjusted view (read-only; no audit writes on render).
+    let quality: Record<string, unknown> = { evaluated: false };
+    try {
+      const { loadCampaignQuality } = await import("@/server/services/reliability");
+      const q = await loadCampaignQuality(wired.deps.store, campaignId);
+      const ser = (s: { window: string; eligible: number; matured: number; qualified: number; pending: number; missed: number; review: number; unsupported: number; rate: number | null }) => ({
+        window: s.window, eligible: s.eligible, matured: s.matured, qualified: s.qualified,
+        pending: s.pending, missed: s.missed, review: s.review, unsupported: s.unsupported, rate: s.rate,
+      });
+      quality = {
+        evaluated: true,
+        verifiedAcquisitions: q.verifiedAcquisitions,
+        d7: ser(q.d7),
+        d30: ser(q.d30),
+        overallConfidence: q.overallConfidence,
+        anomalySignals: q.anomalySignals.slice(0, 10).map((a) => ({
+          type: a.type, severity: a.severity, partnerId: a.partnerId,
+          evidenceRefCount: a.evidenceRefs.length, reason: a.reason,
+        })),
+        readiness: { recommendedAction: q.readiness.recommendedAction, reason: q.readiness.reason },
+      };
+    } catch {
+      // Quality evidence never breaks the briefing.
+    }
     const verifiedAtMs = await getDb()
       .select({ verifiedAt: outcomes.verifiedAt })
       .from(outcomes)
@@ -75,6 +99,7 @@ export async function GET(req: Request) {
       allocation,
       forecast,
       plan,
+      quality,
     });
   } catch (err) {
     if ((err as { status?: number }).status === 401) return Response.json({ error: "Unauthorized" }, { status: 401 });

@@ -283,7 +283,7 @@ describe("match service", () => {
     const all = [...report.invite, ...report.review, ...report.skip, ...report.notEligible];
     expect(all.length).toBe(1);
     expect(Object.keys(all[0]).sort()).toEqual(
-      ["availabilityScore", "confidence", "creatorType", "creatorUserId", "economicsScore", "eligibility", "eligibilityReason", "evidenceScore", "fitScore", "handle", "matchScore", "reasons", "recommendedAction", "warnings"].sort(),
+      ["availabilityScore", "confidence", "creatorType", "creatorUserId", "economicsScore", "eligibility", "eligibilityReason", "evidenceScore", "fitScore", "handle", "matchScore", "reasons", "recommendedAction", "reliability", "warnings"].sort(),
     );
     const serialized = JSON.stringify(all);
     expect(serialized).not.toMatch(/wallet|email|rulesJson|payout|secret|token|session/i);

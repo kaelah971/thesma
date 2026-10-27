@@ -18,13 +18,26 @@
 - [x] Slice 4: Creator agent invitation auto-accept (f2084da + toggle-copy fix this session)
 - [x] Slice 5: Campaign CFO + cross-campaign capital allocator (this session)
 - [x] Slice 6: Hybrid creator deals + expanded outcome economics (this session)
-- [ ] Slice 7: Creator reliability + outcome quality/retention
+- [x] Slice 7: Creator reliability + outcome quality/retention (this session)
 - [ ] Slice 8: Verification procurement agent
 - [ ] Slice 9: Autonomy ladder + unified decision ledger
 - [ ] Slice 10: Integrated testing, production migration/activation, proof, README/demo
 
 ## Current slice
-- Slice 6 SHIPPED: hybrid deals kernel (parse/validate 4 structures, deliverable classification, exact exposure, capacity gate, recommend, summarize) + migration 0016 (hybrid_deals, milestone_awards; committed NOT applied) + store impls (memory + drizzle) + frozen hybrid invitations (bonusJson deal, capacity-gated, bounty-consistent) + accept creates PENDING extension (no payout/reservation) + milestones from VERIFIED counts (idempotent, SETTLEMENT_NOT_SUPPORTED) + owner base-review endpoint + auto-accept REVIEW gate for hybrids + CFO hybrid committed/contingent accounting + inbox YOU CAN EARN + org hybrid composer. Settlement audit: performance SUPPORTED; base/milestone SETTLEMENT_NOT_SUPPORTED (vault has no deliverable registry / milestone schedule); no new contract.
+- Slice 7 SHIPPED: reliability kernel (scoreReliability with 5 components, fairness rule, PROVISIONAL/ESTABLISHED/STRONG_EVIDENCE) + retention model (D7/D30 windows from canonical VERIFIED trails, matured-denominator rates, UNSUPPORTED/REVIEW/PENDING/MISSED) + quality classification (6 states) + anomaly detector (4 signals, INFO/REVIEW, never auto-rejects) + verification readiness for Slice 8 (no purchasing) + loaders + retention.qualified audit on fresh VERIFIED + reliability audit at invite + review flags in growth evaluate + quality block in growth briefing + public profile proof-first retention + match evidence boost (capped, cold-start neutral) + match DTO reliability + Scout retained-evidence + CFO retention-gated scoring (milestone-deal campaigns only). No migration; no new contract; no external calls.
+
+## Files (slice 7)
+- src/server/services/reliability.ts (score/retention/quality/anomaly/readiness kernels + loaders + retention audit)
+- src/server/services/matching.ts (evidence boost, reliability DTO, defaultHistory consistency+retention)
+- src/server/services/scout.ts (retained-evidence per candidate)
+- src/server/services/checkout.ts (retention.qualified hook on fresh VERIFIED)
+- src/server/services/invitations.ts (creator.reliability.evaluated at invite)
+- src/server/services/cfo.ts (retention-gated capital score, milestone-deal campaigns only)
+- src/server/services/creatorProfiles.ts (public proof-first retention + campaignsWithVerified)
+- src/server/services/growth.ts (review_flagged audit action) + growth GET/evaluate routes (quality block + flags)
+- src/server/services/campaignStore.ts + .drizzle.ts (intent list/count accessors)
+- src/components/app/CreatorMatches.tsx + GrowthPanel.tsx + app/[handle]/page.tsx (reliability/quality UI)
+- tests/reliability.test.ts (19 tests)
 
 ## Files (slice 6)
 - src/server/services/deals.ts (kernel + milestone awards + base review + settlement audit)
@@ -65,7 +78,7 @@
 - Arc Showcase/Mainnet submission complete (b7f4c6a, accd972) — preserved, untouched; no contract redeploy, no mainnet tx, no Sourcify changes.
 
 ## Verification
-- typecheck clean + lint clean + build clean + 97 targeted (15 hybrid + 26 invitations + 13 cfo + 13 matching + checkout/buy-checkout/payout) green (this session). Shared kernels untouched (reuse only), no full-suite run.
+- typecheck clean + lint clean + build clean + 219 targeted green across 16 suites (19 reliability + match/scout/autojoin/background/ux/cfo/invitations/hybrid/checkout/buy-checkout/payout/growth/campaigns/profile/market) (this session). Shared kernels untouched (reuse only), no full-suite run.
 
 ## Next action
-- Slice 7: Creator reliability + outcome quality/retention.
+- Slice 8: Verification procurement agent.

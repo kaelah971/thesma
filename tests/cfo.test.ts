@@ -97,6 +97,9 @@ function handSnapshot(): CfoSnapshot {
     nextDueMicroUsdc: "0",
     hardConflict: null,
     ambiguous: null,
+    retentionD7Rate: null,
+    retainedD7: 0,
+    hasMilestoneDeals: false,
   });
   return {
     workspaceId: "ws-A",

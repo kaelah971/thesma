@@ -4,6 +4,7 @@ import { outcomes, payouts, userPersonas } from "../db/schema";
 import { checkJoinEligibility, parsePartnerRules, type PartnerRules } from "../domain/market";
 import type { AuditSink, MarketStore } from "./campaignStore";
 import type { CreatorType } from "./personas";
+import { evaluateRetention, scoreReliability } from "./reliability";
 
 /**
  * Organization-side Creator Match Engine (deterministic intelligence).
@@ -37,6 +38,9 @@ export interface MatchCandidateFacts {
   minBountyMicroUsdc: bigint | null;
   verifiedTotal: number;
   settledCollaborations: number;
+  /** Slice 7: multi-campaign consistency + retained outcomes feed evidence (default 0 = legacy behavior). */
+  campaignsWithVerified?: number;
+  retainedOutcomes?: number;
   activeTermsCount: number;
   maxActiveCampaigns: number | null;
   eligibility: MatchEligibility;
@@ -58,10 +62,45 @@ export interface CreatorMatch {
   reasons: string[];
   warnings: string[];
   recommendedAction: RecommendedAction;
+  /** Slice 7: compact reliability derived from the same match facts. */
+  reliability: {
+    score: number;
+    confidence: MatchConfidence;
+    level: string;
+    verifiedOutcomes: number;
+    campaignsWithVerified: number;
+    retainedOutcomes: number;
+    settledCollaborations: number;
+  };
 }
 
 const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
 const clampSub = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(v * 10) / 10));
+
+/** Compact reliability from the same match facts (full snapshot via loadCreatorReliability). */
+function toMatchReliability(f: MatchCandidateFacts): CreatorMatch["reliability"] {
+  const campaignsWithVerified = f.campaignsWithVerified ?? 0;
+  const retainedOutcomes = f.retainedOutcomes ?? 0;
+  const snap = scoreReliability({
+    attributedActions: f.verifiedTotal,
+    verifiedOutcomes: f.verifiedTotal,
+    rejectedOutcomes: 0,
+    settledCollaborations: f.settledCollaborations,
+    campaignsWithVerified,
+    retentionQualified: retainedOutcomes,
+    retentionMatured: retainedOutcomes > 0 ? retainedOutcomes : null,
+    recentVerified: 0,
+  });
+  return {
+    score: snap.reliabilityScore,
+    confidence: snap.confidence,
+    level: snap.level,
+    verifiedOutcomes: f.verifiedTotal,
+    campaignsWithVerified,
+    retainedOutcomes,
+    settledCollaborations: f.settledCollaborations,
+  };
+}
 
 function overlapCount(a: string[], b: string[]): number {
   const set = new Set(a.map(norm).filter(Boolean));
@@ -91,11 +130,20 @@ export function scoreCreatorMatch(f: MatchCandidateFacts): CreatorMatch {
   const fitScore = clampSub(fit, 30);
 
   // Evidence 30: log-damped verified history + settled collaboration bonus.
-  const evidenceRaw = Math.log10(1 + f.verifiedTotal) * 8 + Math.min(10, f.settledCollaborations * 2);
+  // Slice 7: verified history across MULTIPLE campaigns and retained
+  // outcomes strengthen evidence (capped). Thin samples stay capped by
+  // confidence below; cold-start zeros reproduce legacy scores exactly.
+  const campaignsWithVerified = f.campaignsWithVerified ?? 0;
+  const retainedOutcomes = f.retainedOutcomes ?? 0;
+  const evidenceRaw = Math.log10(1 + f.verifiedTotal) * 8 + Math.min(10, f.settledCollaborations * 2) +
+    Math.min(4, Math.max(0, campaignsWithVerified - 1) * 2) +
+    (retainedOutcomes > 0 ? 2 : 0);
   const evidenceScore = clampSub(evidenceRaw, 30);
   if (f.verifiedTotal > 0) reasons.push(`${f.verifiedTotal} historical verified outcome${f.verifiedTotal === 1 ? "" : "s"}`);
   else warnings.push("no verified history yet");
   if (f.settledCollaborations > 0) reasons.push(`${f.settledCollaborations} settled collaboration${f.settledCollaborations === 1 ? "" : "s"}`);
+  if (campaignsWithVerified > 1) reasons.push(`verified results across ${campaignsWithVerified} campaigns`);
+  if (retainedOutcomes > 0) reasons.push(`${retainedOutcomes} retained outcomes`);
 
   // Economics 25: creator minimum respected; unspecified minimum is neutral.
   let economicsScore: number;
@@ -155,6 +203,7 @@ export function scoreCreatorMatch(f: MatchCandidateFacts): CreatorMatch {
     economicsScore,
     availabilityScore,
     confidence,
+    reliability: toMatchReliability(f),
     eligibility: f.eligibility,
     eligibilityReason: f.eligibilityReason,
     reasons,
@@ -180,6 +229,16 @@ export interface OrganizationCreatorMatch {
   reasons: string[];
   warnings: string[];
   recommendedAction: RecommendedAction;
+  /** Slice 7: evidence-backed reliability (counts, never accusations). */
+  reliability: {
+    score: number;
+    confidence: MatchConfidence;
+    level: string;
+    verifiedOutcomes: number;
+    campaignsWithVerified: number;
+    retainedOutcomes: number;
+    settledCollaborations: number;
+  };
 }
 
 export interface MatchEngineReport {
@@ -213,6 +272,7 @@ function toOrganizationDto(m: CreatorMatch): OrganizationCreatorMatch {
     reasons: [...m.reasons],
     warnings: [...m.warnings],
     recommendedAction: m.recommendedAction,
+    reliability: { ...m.reliability },
   };
 }
 
@@ -317,6 +377,8 @@ export async function evaluateCreatorForCampaign(
     minBountyMicroUsdc: rules ? rules.minimumBountyMicroUsdc : null,
     verifiedTotal: history?.verifiedTotal ?? 0,
     settledCollaborations: history?.settledCollaborations ?? 0,
+    campaignsWithVerified: history?.campaignsWithVerified ?? 0,
+    retainedOutcomes: history?.retainedOutcomes ?? 0,
     activeTermsCount,
     maxActiveCampaigns: rules ? rules.maxActiveCampaigns : null,
     eligibility,
@@ -338,6 +400,10 @@ export interface HistorySeed {
   verifiedTotal: number;
   settledCollaborations: number;
   activeTermsCount: number;
+  /** Slice 7: distinct campaigns with ≥1 verified outcome (default 0). */
+  campaignsWithVerified?: number;
+  /** Slice 7: D7-qualified retained outcomes (default 0). */
+  retainedOutcomes?: number;
 }
 
 function fail(status: number, code: string, message: string): never {
@@ -390,18 +456,40 @@ async function defaultHistory(store: MarketStore, partnerId: string | null): Pro
   try {
     const db = getDb();
     const [verifiedOutcomes, settledPayouts, terms] = await Promise.all([
-      db.select({ id: outcomes.id }).from(outcomes).where(eq(outcomes.partnerId, partnerId)).catch(() => []),
+      db.select({ id: outcomes.id, campaignId: outcomes.campaignId, customerKeyHash: outcomes.customerKeyHash, verifiedAt: outcomes.verifiedAt, status: outcomes.status }).from(outcomes).where(eq(outcomes.partnerId, partnerId)).catch(() => []),
       db.select({ id: payouts.id }).from(payouts).where(eq(payouts.partnerId, partnerId)).catch(() => []),
       store.listPartnerTerms(partnerId).catch(() => []),
     ]);
+    const verifiedRows = verifiedOutcomes.filter((o) => (o as { status?: string }).status === "VERIFIED");
+    // Slice 7: consistency + retained outcomes from the same rows (no new queries).
+    const campaignsWithVerified = new Set(verifiedRows.map((o) => (o as { campaignId?: string }).campaignId ?? "")).size;
+    let retainedOutcomes = 0;
+    try {
+      const { evaluateRetention } = await import("./reliability");
+      const { records } = evaluateRetention(
+        verifiedRows.map((o) => ({
+          id: (o as { id: string }).id,
+          campaignId: (o as { campaignId: string }).campaignId,
+          subjectRef: ((o as { customerKeyHash?: string | null }).customerKeyHash ?? null) as string | null,
+          status: "VERIFIED",
+          verifiedAtMs: ((o as { verifiedAt?: Date | null }).verifiedAt ?? null)?.getTime() ?? null,
+        })),
+        Date.now(),
+      );
+      retainedOutcomes = records.filter((r) => r.status === "QUALIFIED" && r.window === "D7").length;
+    } catch {
+      retainedOutcomes = 0;
+    }
     return {
-      verifiedTotal: verifiedOutcomes.filter((o) => (o as { status?: string }).status === "VERIFIED").length,
+      verifiedTotal: verifiedRows.length,
       settledCollaborations: new Set(
         settledPayouts
           .filter((p) => (p as { state?: string }).state === "SETTLED")
           .map((p) => (p as { campaignId?: string }).campaignId ?? ""),
       ).size,
       activeTermsCount: terms.filter((t) => t.status === "ACTIVE").length,
+      campaignsWithVerified,
+      retainedOutcomes,
     };
   } catch {
     return zero;

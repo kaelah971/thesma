@@ -256,6 +256,18 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
                 <div style={{ fontSize: 12, opacity: 0.75 }}>
                   Fit {m.fitScore} · Evidence {m.evidenceScore} · Economics {m.economicsScore} · Availability {m.availabilityScore}
                 </div>
+                {m.reliability && (
+                  <div style={{ fontSize: 12.5 }}>
+                    <strong>
+                      Creator reliability: {m.reliability.score} ({m.reliability.confidence}) · {m.reliability.level.replace("_", " ")}
+                    </strong>
+                    <span style={{ display: "block", color: "var(--ink-2)" }}>
+                      {m.reliability.verifiedOutcomes} verified outcomes · {m.reliability.campaignsWithVerified} campaigns with verified results
+                      {m.reliability.retainedOutcomes > 0 ? ` · ${m.reliability.retainedOutcomes} retained` : ""} ·{" "}
+                      {m.reliability.settledCollaborations} settled collaborations
+                    </span>
+                  </div>
+                )}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {!isInvited ? (
                     <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => invite([m.creatorUserId])}>

@@ -872,6 +872,13 @@ function drizzleStoreFromDb(db: DbLike): MarketStore {
       const [row] = await db.select().from(checkoutIntents).where(eq(checkoutIntents.id, id)).limit(1);
       return row ?? null;
     },
+    async listCheckoutIntentsByCampaign(campaignId) {
+      return db.select().from(checkoutIntents).where(eq(checkoutIntents.campaignId, campaignId));
+    },
+    async countCheckoutIntentsForPartner(partnerId) {
+      const [row] = await db.select({ n: count() }).from(checkoutIntents).where(eq(checkoutIntents.partnerId, partnerId));
+      return row?.n ?? 0;
+    },
     async updateCheckoutIntent(id, patch) {
       return unique(async () => {
         const [row] = await db
