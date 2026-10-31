@@ -16,7 +16,7 @@ import {
   signAttribution,
 } from "@/server/attribution/tokens";
 import { newId } from "@/server/auth/session";
-import { formatDate, formatUsdc } from "@/lib/format";
+import { formatCalendarDate, formatUsdc } from "@/lib/format";
 import { eq } from "drizzle-orm";
 import styles from "@/components/start/start.module.css";
 
@@ -169,7 +169,7 @@ export default async function ReferralLandingPage({ params }: { params: Promise<
             {minPurchase !== null && (
               <p>Purchases of at least {formatUsdc(minPurchase.toString())} USDC qualify for this campaign.</p>
             )}
-            {version?.deadline && <p>Ends {formatDate(version.deadline.toISOString())}.</p>}
+            {version?.deadline && <p>Ends {formatCalendarDate(version.deadline.toISOString())}.</p>}
             {resolved.attributable ? (
               <div className={styles.panelActions}>
                 <a href={destination} className="btn btn-primary">

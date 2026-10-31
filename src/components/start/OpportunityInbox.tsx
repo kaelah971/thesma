@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { postJson, serverErrorMessage } from "@/lib/api";
-import { formatDate, formatDuration, formatUsdc } from "@/lib/format";
+import { formatCalendarDate, formatDuration, formatUsdc } from "@/lib/format";
 import styles from "./start.module.css";
 
 interface Opportunity {
@@ -128,7 +128,7 @@ export function OpportunityInbox() {
             <span style={{ display: "block", fontSize: 12.5, marginTop: 2, color: "var(--ink-2)" }}>
               {o.offered.minQualifyingMicroUsdc ? `Qualifies on purchases of ${formatUsdc(o.offered.minQualifyingMicroUsdc)} USDC or more. ` : "Every verified outcome qualifies. "}
               {o.offered.holdSeconds ? `Eligible payout is held for ${formatDuration(o.offered.holdSeconds * 1000)} before settlement. ` : ""}
-              {o.campaign.deadline ? `Campaign ends ${formatDate(o.campaign.deadline)}.` : ""}
+              {o.campaign.deadline ? `Campaign ends ${formatCalendarDate(o.campaign.deadline)}.` : ""}
             </span>
             {(() => {
               const deal = frozenDeal(o.offered.bonus);

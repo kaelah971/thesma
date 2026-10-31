@@ -17,7 +17,7 @@ import { getPersonaByUserId } from "@/server/services/personas";
 import { createDrizzleCampaignStore } from "@/server/services/campaignStore.drizzle";
 import { loadScoutAuthority, loadScoutSnapshot, type AutoJoinVerdict } from "@/server/services/scout";
 import { getPartnerRules } from "@/server/services/markets";
-import { formatDate, formatUsdc } from "@/lib/format";
+import { formatCalendarDate, formatUsdc } from "@/lib/format";
 import styles from "@/components/start/start.module.css";
 
 export const metadata: Metadata = { title: "Creator home" };
@@ -148,7 +148,7 @@ export default async function CreatorHomePage() {
                   <span style={{ display: "block", fontSize: 13, marginTop: 2 }}>{c.facts.objective || "Outcome campaign"}</span>
                   <span className="tnum" style={{ display: "block", fontSize: 12.5, marginTop: 6, color: "var(--ink-2)" }}>
                     {formatUsdc(c.facts.bountyMicroUsdc)} USDC per verified outcome
-                    {c.facts.deadline ? ` · ends ${formatDate(c.facts.deadline.toISOString())}` : ""}
+                    {c.facts.deadline ? ` · ends ${formatCalendarDate(c.facts.deadline.toISOString())}` : ""}
                   </span>
                   <span style={{ display: "block", fontSize: 12.5, marginTop: 4, color: "var(--ink-2)" }}>{c.reason}</span>
                   <span style={{ display: "block", fontSize: 12, marginTop: 2, color: "var(--ink-2)" }}>

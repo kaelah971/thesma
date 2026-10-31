@@ -3,7 +3,7 @@ import Link from "next/link";
 import { NoWorkspace } from "@/components/app/NoWorkspace";
 import { Card, EmptyState, PageHeader, Pill, ProgressBar } from "@/components/app/ui";
 import styles from "@/components/app/app.module.css";
-import { campaignName, formatDate, formatUsdc } from "@/lib/format";
+import { campaignName, formatCalendarDate, formatUsdc } from "@/lib/format";
 import { CAMPAIGN_STATE_TONE, campaignFinancials, verifiedCount } from "@/lib/readmodel";
 import { requireWorkspace } from "../data";
 
@@ -81,7 +81,7 @@ export default async function CampaignsPage() {
                         {c.floorMicro && c.ceilingMicro ? `${formatUsdc(c.floorMicro)} – ${formatUsdc(c.ceilingMicro)}` : "—"}
                       </td>
                       <td className={styles.num}>{f.funded > 0n ? `${formatUsdc(f.available)} USDC` : <span className={styles.muted}>Not funded</span>}</td>
-                      <td className={styles.muted}>{formatDate(c.deadline)}</td>
+                      <td className={styles.muted}>{formatCalendarDate(c.deadline)}</td>
                     </tr>
                   );
                 })}

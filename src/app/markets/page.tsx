@@ -8,7 +8,7 @@ import { PublicFooter } from "@/components/trust/PublicFooter";
 import { LifecycleStrip } from "@/components/proof/LifecycleStrip";
 import { deriveLifecycle } from "@/components/proof/lifecycle";
 import { shouldPromoteCompleted } from "@/lib/proof";
-import { formatDate, formatUsdc } from "@/lib/format";
+import { formatCalendarDate, formatUsdc } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Live markets" };
 
@@ -111,7 +111,7 @@ export default async function MarketsPage() {
                     }}
                   >
                     <p style={{ margin: 0, fontSize: 13, opacity: 0.7 }}>
-                      {m.category ? `${m.category} · ` : ""}Deadline {formatDate(m.deadline)}
+                      {m.category ? `${m.category} · ` : ""}Deadline {formatCalendarDate(m.deadline)}
                     </p>
                     <Link href={`/markets/${m.campaignId}`} className="btn btn-primary btn-sm">
                       View market

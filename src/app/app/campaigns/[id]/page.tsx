@@ -8,7 +8,7 @@ import { HoldList, OutcomeTable, PayoutTable, Pipeline } from "@/components/app/
 import { NoWorkspace } from "@/components/app/NoWorkspace";
 import { Card, EmptyState, Facts, Kpi, PageHeader, Pill } from "@/components/app/ui";
 import styles from "@/components/app/app.module.css";
-import { campaignName, formatDate, formatDateTime, formatHoldSeconds, formatUsdc, shortHash } from "@/lib/format";
+import { campaignName, formatCalendarDate, formatDateTime, formatHoldSeconds, formatUsdc, shortHash } from "@/lib/format";
 import { summarizeFunnel } from "@/server/services/markets";
 import { getDb } from "@/server/db/client";
 import { partnerTerms, partners, referralEvents, referrals, userPersonas, users } from "@/server/db/schema";
@@ -206,7 +206,7 @@ export default async function CampaignPage({
                 { label: "Price floor", value: usdc(campaign.floorMicro) },
                 { label: "Price ceiling", value: usdc(campaign.ceilingMicro) },
                 { label: "Minimum purchase", value: usdc(campaign.minPurchaseMicro) },
-                { label: "Deadline", value: campaign.deadline ? formatDate(campaign.deadline) : "Missing" },
+                { label: "Deadline", value: campaign.deadline ? formatCalendarDate(campaign.deadline) : "Missing" },
                 { label: "Safety hold", value: formatHoldSeconds(campaign.refundHoldSeconds) },
                 { label: "Visibility", value: campaign.visibility === "PUBLIC" ? "Public market" : "Private (invite only)" },
               ]}

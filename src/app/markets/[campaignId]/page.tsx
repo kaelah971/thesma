@@ -11,7 +11,7 @@ import { LifecycleStrip } from "@/components/proof/LifecycleStrip";
 import { deriveLifecycle } from "@/components/proof/lifecycle";
 import { TruthNote } from "@/components/proof/TruthNote";
 import { Card, PageHeader, Pill } from "@/components/app/ui";
-import { formatDate, formatDateTime, formatUsdc } from "@/lib/format";
+import { formatCalendarDate, formatDateTime, formatUsdc } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Market" };
 
@@ -210,7 +210,7 @@ export default async function MarketDetailPage({ params }: { params: Promise<{ c
               Partners <strong className="tnum">{detail.participatingPartners}</strong>
             </span>
             <span>
-              Deadline <strong>{detail.deadline ? formatDate(detail.deadline) : "—"}</strong>
+              Deadline <strong>{detail.deadline ? formatCalendarDate(detail.deadline) : "—"}</strong>
             </span>
           </div>
           <div style={{ borderTop: "1px solid var(--line, #e5e5e5)", paddingTop: 16 }}>

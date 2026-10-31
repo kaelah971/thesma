@@ -45,6 +45,28 @@ export function formatDate(iso: string | null | undefined): string {
   return iso ? dateFmt.format(new Date(iso)) : "—";
 }
 
+/**
+ * Calendar-date display for DATE-ONLY business values (campaign deadline).
+ *
+ * Deadlines are approved as a calendar day (YYYY-MM-DD) and stored as end
+ * of that day in UTC (T23:59:59.999Z). Rendering them in the viewer's local
+ * timezone shifts the day (e.g. Nov 30 UTC renders as Dec 1 in UTC+1), so
+ * date-only values MUST be formatted against UTC — the approved calendar.
+ *
+ * Do NOT use this for real instants (createdAt, settledAt, verifiedAt):
+ * those stay on formatDate/formatDateTime and remain timezone-aware.
+ */
+const calendarDateFmt = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+export function formatCalendarDate(iso: string | null | undefined): string {
+  return iso ? calendarDateFmt.format(new Date(iso)) : "—";
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   return iso ? dateTimeFmt.format(new Date(iso)) : "—";
 }
