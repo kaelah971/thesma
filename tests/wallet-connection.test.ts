@@ -160,10 +160,10 @@ describe("connection states", () => {
       const connected = await connectWallet(found!.provider);
       expect(connected).toEqual({ account: ACCOUNT });
       const typedData = buildCompanyWalletTypedData({
-        workspaceId: "ws-A", wallet: normalizeAddress(ACCOUNT), nonce: "n",
+        workspaceId: "ws-A", nonce: "n",
         issuedAt: "2026-06-01T12:00:00.000Z", expiresAt: "2026-06-01T12:10:00.000Z",
       });
-      const signed = await signCompanyWalletTypedData(found!.provider, typedData.message.wallet, typedData);
+      const signed = await signCompanyWalletTypedData(found!.provider, normalizeAddress(ACCOUNT), typedData);
       expect("signature" in signed).toBe(true);
       expect(otherCalls).toEqual([]);
       expect(metaCalls).not.toContain("eth_sendTransaction");

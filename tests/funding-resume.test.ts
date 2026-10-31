@@ -121,7 +121,7 @@ async function approvedCampaign(deps: FundingDeps, campaignDeps: CampaignDeps) {
 
 async function preparedFlow() {
   const ctx = setup();
-  await registerTestWallet(ctx.deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+  await registerTestWallet(ctx.deps, { workspaceId: "ws-A", userId: "owner-1" });
   const a = await approvedCampaign(ctx.deps, ctx.campaignDeps);
   const intent = await prepareFundingIntent(ctx.deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 1 });
   return { ...ctx, campaignId: a.campaign.id, intent };

@@ -343,7 +343,6 @@ export const COMPANY_WALLET_DOMAIN = {
 export const COMPANY_WALLET_REGISTRATION_TYPES = {
   CompanyWalletRegistration: [
     { name: "workspaceId", type: "string" },
-    { name: "wallet", type: "string" },
     { name: "purpose", type: "string" },
     { name: "nonce", type: "string" },
     { name: "issuedAt", type: "string" },
@@ -356,7 +355,6 @@ export const COMPANY_WALLET_PURPOSE =
 
 export interface CompanyWalletTypedMessage {
   workspaceId: string;
-  wallet: string;
   purpose: string;
   nonce: string;
   issuedAt: string;
@@ -370,10 +368,16 @@ export interface CompanyWalletTypedData {
   message: CompanyWalletTypedMessage;
 }
 
-/** Canonical typed-data payload. Frontend and server MUST build it here. */
+/**
+ * Canonical typed-data payload. Frontend and server MUST build it here.
+ *
+ * Deliberately NOT wallet-bound: the cryptographic signer IS the identity.
+ * Binding the message to a client-selected address reintroduced the
+ * accounts[0] mismatch loop, so the server recovers the actual signer and
+ * the user confirms THAT wallet explicitly before anything is stored.
+ */
 export function buildCompanyWalletTypedData(args: {
   workspaceId: string;
-  wallet: string;
   nonce: string;
   issuedAt: string;
   expiresAt: string;
@@ -384,7 +388,6 @@ export function buildCompanyWalletTypedData(args: {
     primaryType: "CompanyWalletRegistration",
     message: {
       workspaceId: args.workspaceId,
-      wallet: args.wallet,
       purpose: COMPANY_WALLET_PURPOSE,
       nonce: args.nonce,
       issuedAt: args.issuedAt,
@@ -477,12 +480,12 @@ export function resolveAccountChange(previousAccounts: string[], nextAccounts: s
  * Frozen-challenge selector: the server-issued payload is the single source
  * of truth and is returned VERBATIM — never rebuilt, never recomputed.
  *
- * The client must not reconstruct wallet/nonce/issuedAt/expiresAt (a raw
- * account can differ in checksum case from the normalized challenge wallet,
- * which falsely trips equality checks). Before returning the payload, this
- * asserts the explicitly selected account is still permitted AND still
- * equals the challenge wallet; otherwise the caller must restart (fresh
- * challenge), never silently re-issue or silently switch accounts.
+ * The client must not reconstruct nonce/issuedAt/expiresAt. Before returning
+ * the payload, this asserts the explicitly selected account is still
+ * permitted; otherwise the caller must restart with a fresh challenge,
+ * never silently re-issue or silently switch accounts. (There is no wallet
+ * field to compare: the recovered signer, not the selection, becomes the
+ * registration identity at confirm time.)
  */
 export function selectChallengePayload(args: {
   challenge: RegistrationChallengePayload | null;
@@ -493,7 +496,6 @@ export function selectChallengePayload(args: {
   if (!args.challenge) return { error: "NO_CHALLENGE" };
   if (args.challenge.typedData.message.workspaceId !== args.workspaceId) return { error: "WORKSPACE_MISMATCH" };
   if (!args.availableAccounts.some((a) => sameAccount(a, args.selectedAccount))) return { error: "ACCOUNT_CHANGED" };
-  if (!sameAccount(args.selectedAccount, args.challenge.typedData.message.wallet)) return { error: "ACCOUNT_CHANGED" };
   return { typedData: args.challenge.typedData };
 }
 

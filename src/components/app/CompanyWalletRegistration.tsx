@@ -16,7 +16,7 @@ import {
   type DiscoveredWallet,
 } from "@/lib/wallet";
 
-type Phase = "idle" | "working" | "connected" | "done" | "error";
+type Phase = "idle" | "working" | "connected" | "verified" | "done" | "error";
 
 /**
  * Owner-only company-wallet registration with EIP-712 ownership proof.
@@ -44,6 +44,7 @@ export function CompanyWalletRegistration({
   const [account, setAccount] = useState<string | null>(null);
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
   const [confirmChange, setConfirmChange] = useState(false);
+  const [proof, setProof] = useState<{ nonce: string; provedWallet: string } | null>(null);
   const availableRef = useRef<string[]>([]);
 
   function commitAccounts(list: string[]) {
@@ -138,10 +139,10 @@ export function CompanyWalletRegistration({
         throw new Error("Your active wallet changed. Re-select the company wallet.");
       }
       commitAccounts(fresh);
-      setNote("Requesting a single-use registration challenge…");
+      setNote("Requesting a workspace-bound registration challenge…");
       const ch = await postJson<{
         challenge: { typedData: CompanyWalletTypedData; nonce: string; issuedAt: string; expiresAt: string };
-      }>(`/api/workspaces/${workspaceId}/company-wallet/challenge`, { address: selected });
+      }>(`/api/workspaces/${workspaceId}/company-wallet/challenge`, {});
       if (!ch.ok || !ch.data?.challenge) {
         throw new Error((ch as { error?: string }).error ?? "Could not start registration. Try again.");
       }
@@ -165,29 +166,21 @@ export function CompanyWalletRegistration({
       }
       const { typedData } = frozen;
       const nonce = ch.data.challenge.nonce;
-      // The signer param is EXACTLY the frozen challenge wallet — MetaMask
-      // is never asked to choose implicitly.
-      const signer = typedData.message.wallet;
+      // The signer param is the explicitly selected account. Whatever key
+      // MetaMask actually uses becomes the proved identity server-side —
+      // the client never asserts which wallet will be registered.
       setNote(`Waiting for ${wallet.name} — review and sign the registration request. It never moves funds.`);
-      const signed = await signCompanyWalletTypedData(wallet.provider, signer, typedData);
+      const signed = await signCompanyWalletTypedData(wallet.provider, selected, typedData);
       if ("failure" in signed) {
         if (signed.failure === "USER_REJECTED") throw new Error("Signature request was rejected. Nothing was registered.");
         throw new Error(`${wallet.name} could not sign. Try again.`);
       }
-      const res = await postJson<{ workspace: { companyWallet: string | null } }>(
-        `/api/workspaces/${workspaceId}/company-wallet`,
-        { address: signer, nonce, signature: signed.signature, signingAccount: signer, ...(confirmChange ? { confirmChange: true } : {}) },
+      const proof = await postJson<{ provedWallet: string }>(
+        `/api/workspaces/${workspaceId}/company-wallet/prove`,
+        { nonce, signature: signed.signature },
       );
-      if (!res.ok) {
-        const body = res as { error?: string; code?: string; details?: { recovered?: string } };
-        if (body.code === "WALLET_CHANGE_REQUIRES_CONFIRMATION") {
-          setError("A different company wallet is already registered. Tick the replacement confirmation to proceed.");
-          setPhase("connected");
-          return;
-        }
-        if (body.code === "SIGNER_MISMATCH") {
-          throw new Error("MetaMask signed with a different account than the one selected. Switch to the wallet you want to register, then restart.");
-        }
+      if (!proof.ok || !proof.data?.provedWallet) {
+        const body = proof as { error?: string; code?: string };
         if (body.code === "CHALLENGE_EXPIRED") {
           throw new Error("Registration request expired. Start again.");
         }
@@ -195,13 +188,16 @@ export function CompanyWalletRegistration({
           throw new Error("Registration request already used or not found. Start again.");
         }
         if (body.code === "CHALLENGE_MISMATCH") {
-          throw new Error("Registration request does not match this workspace or wallet. Start over.");
+          throw new Error("Registration request does not match this workspace or user. Start over.");
         }
-        throw new Error(body.error ?? "Registration failed. Try again.");
+        throw new Error(body.error ?? "Ownership proof failed. Try again.");
       }
-      setPhase("done");
+      // Phase A complete: the SERVER recovered this wallet. Nothing is
+      // registered yet — the user now explicitly confirms THAT wallet.
+      setProof({ nonce, provedWallet: proof.data.provedWallet });
+      setConfirmChange(false);
+      setPhase("verified");
       setNote(null);
-      router.refresh();
     } catch (e) {
       fail(e instanceof Error ? e.message : "Registration failed. Try again.");
     } finally {
@@ -214,9 +210,58 @@ export function CompanyWalletRegistration({
     setAccount(null);
     setWallet(null);
     setConfirmChange(false);
+    setProof(null);
     setError(null);
     setNote(null);
     setPhase("idle");
+  }
+
+  function cancelProof() {
+    setProof(null);
+    setConfirmChange(false);
+    setError(null);
+    setNote(null);
+    setPhase(account ? "connected" : "idle");
+  }
+
+  async function confirm() {
+    if (!proof) return fail("Sign the ownership proof first.");
+    setError(null);
+    setPhase("working");
+    setNote("Registering the verified wallet…");
+    try {
+      // The recovered signer travels server-side only: the client sends no
+      // address, so substitution is structurally impossible.
+      const res = await postJson<{ workspace: { companyWallet: string | null } }>(
+        `/api/workspaces/${workspaceId}/company-wallet`,
+        { nonce: proof.nonce, ...(confirmChange ? { confirmChange: true } : {}) },
+      );
+      if (!res.ok) {
+        const body = res as { error?: string; code?: string };
+        if (body.code === "WALLET_CHANGE_REQUIRES_CONFIRMATION") {
+          setError("A different company wallet is already registered. Tick the replacement confirmation to proceed.");
+          setPhase("verified");
+          return;
+        }
+        if (body.code === "CHALLENGE_EXPIRED") {
+          throw new Error("Registration request expired. Start again.");
+        }
+        if (body.code === "CHALLENGE_USED" || body.code === "CHALLENGE_NOT_FOUND") {
+          throw new Error("Registration request already used or not found. Start again.");
+        }
+        if (body.code === "PROOF_REQUIRED") {
+          throw new Error("Ownership proof is missing. Sign again to restart.");
+        }
+        throw new Error(body.error ?? "Registration failed. Try again.");
+      }
+      setAccount(proof.provedWallet);
+      setProof(null);
+      setPhase("done");
+      setNote(null);
+      router.refresh();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : "Registration failed. Try again.");
+    }
   }
 
   if (phase === "done") {
@@ -278,15 +323,36 @@ export function CompanyWalletRegistration({
               <li>× authorize a campaign payment</li>
             </ul>
           </div>
-          {currentWallet && (
-            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-              <input type="checkbox" checked={confirmChange} onChange={(e) => setConfirmChange(e.target.checked)} />
-              Replace the currently registered wallet ({truncateAddress(currentWallet)})
-            </label>
-          )}
           <div>
             <button type="button" className="btn btn-primary btn-sm" onClick={register}>
-              Sign registration message
+              Sign ownership proof
+            </button>
+          </div>
+        </>
+      )}
+      {phase === "verified" && proof && (
+        <>
+          <div style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 6 }}>
+            <strong style={{ fontSize: 14 }}>Wallet ownership verified</strong>
+            <span style={{ fontSize: 13 }}>MetaMask proved control of:</span>
+            <span className="mono" style={{ fontSize: 13, overflowWrap: "anywhere" }} title={proof.provedWallet}>{proof.provedWallet}</span>
+            <span style={{ fontSize: 13 }}>Register this wallet as {workspaceName}&apos;s company wallet?</span>
+            {currentWallet && currentWallet.toLowerCase() !== proof.provedWallet.toLowerCase() && (
+              <span style={{ fontSize: 12.5 }}>Current: <span className="mono" title={currentWallet}>{truncateAddress(currentWallet)}</span> · Verified new wallet: <span className="mono" title={proof.provedWallet}>{truncateAddress(proof.provedWallet)}</span></span>
+            )}
+          </div>
+          {currentWallet && currentWallet.toLowerCase() !== proof.provedWallet.toLowerCase() && (
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+              <input type="checkbox" checked={confirmChange} onChange={(e) => setConfirmChange(e.target.checked)} />
+              Confirm wallet change — replace the currently registered wallet
+            </label>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={confirm}>
+              Register wallet
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={cancelProof}>
+              Cancel
             </button>
           </div>
         </>

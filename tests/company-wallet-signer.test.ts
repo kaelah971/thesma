@@ -8,6 +8,7 @@ import {
   type FundingStore,
 } from "@/server/services/campaignStore";
 import {
+  proveCompanyWalletChallenge,
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
@@ -24,7 +25,7 @@ import {
   type InjectedProvider,
 } from "@/lib/wallet";
 import { normalizeAddress } from "@/server/chain/arc";
-import { signWalletRegistration, TEST_OWNER_PRIVATE_KEY } from "./wallet-fixtures";
+import { registerTestWallet, signWalletRegistration, TEST_OWNER_PRIVATE_KEY } from "./wallet-fixtures";
 
 vi.mock("@/server/auth/guard", () => ({ getSessionUser: vi.fn(), requireUser: vi.fn() }));
 vi.mock("@/server/api/campaignDeps", () => ({ marketDepsOr503: vi.fn() }));
@@ -122,21 +123,25 @@ describe("explicit account selection", () => {
 
   it("selected account outside the permitted list aborts", () => {
     const typedData = buildCompanyWalletTypedData({
-      workspaceId: "ws-A", wallet: OWNER_ADDR, nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
+      workspaceId: "ws-A", nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
     });
     const challenge = { typedData, nonce: "n", issuedAt: "", expiresAt: "" };
-    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: SECOND_ADDR, availableAccounts: [OWNER_ADDR, SECOND_ADDR] }))
+    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: SECOND_ADDR, availableAccounts: [OWNER_ADDR] }))
       .toEqual({ error: "ACCOUNT_CHANGED" });
-    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, availableAccounts: [SECOND_ADDR] }))
-      .toEqual({ error: "ACCOUNT_CHANGED" });
+    expect(selectChallengePayload({ challenge, workspaceId: "ws-B", selectedAccount: OWNER_ADDR, availableAccounts: [OWNER_ADDR] }))
+      .toEqual({ error: "WORKSPACE_MISMATCH" });
+    expect(selectChallengePayload({ challenge: null, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, availableAccounts: [OWNER_ADDR] }))
+      .toEqual({ error: "NO_CHALLENGE" });
   });
 });
 
 describe("active signer end-to-end", () => {
   it("non-first permitted account registers when explicitly selected", async () => {
     const { deps, store } = setup();
+    // The second key signs; the recovered signer (not any UI selection) is
+    // what gets registered.
     const signed = await signWalletRegistration(deps, {
-      workspaceId: "ws-A", userId: "owner-1", address: SECOND_ADDR, privateKey: SECOND_KEY,
+      workspaceId: "ws-A", userId: "owner-1", privateKey: SECOND_KEY,
     });
     const sel = selectChallengePayload({
       challenge: { typedData: signed.typedData, nonce: signed.nonce, issuedAt: "", expiresAt: "" },
@@ -145,9 +150,11 @@ describe("active signer end-to-end", () => {
       availableAccounts: [OWNER_ADDR, SECOND_ADDR],
     });
     expect("typedData" in sel).toBe(true);
-    const r = await registerCompanyWallet(deps, {
-      workspaceId: "ws-A", userId: "owner-1", address: SECOND_ADDR, nonce: signed.nonce, signature: signed.signature,
+    const proved = await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce, signature: signed.signature,
     });
+    expect(proved.provedWallet).toBe(SECOND_ADDR);
+    const r = await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce });
     expect(r.workspace.companyWallet).toBe(SECOND_ADDR);
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBe(SECOND_ADDR);
   });
@@ -185,10 +192,10 @@ describe("active signer end-to-end", () => {
       const connected = await connectWallet(found!.provider);
       expect(connected).toEqual({ account: OWNER_ADDR });
       const typedData = buildCompanyWalletTypedData({
-        workspaceId: "ws-A", wallet: normalizeAddress(OWNER_ADDR), nonce: "n",
+        workspaceId: "ws-A", nonce: "n",
         issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
       });
-      const signed = await signCompanyWalletTypedData(found!.provider, typedData.message.wallet, typedData);
+      const signed = await signCompanyWalletTypedData(found!.provider, OWNER_ADDR, typedData);
       expect("signature" in signed).toBe(true);
       expect(otherCalls).toEqual([]);
       expect(metaCalls).toContain("eth_signTypedData_v4");
@@ -197,7 +204,7 @@ describe("active signer end-to-end", () => {
     }
   });
 
-  it("signer param is exactly the frozen challenge wallet", async () => {
+  it("signer param is the explicitly selected account (never implicit)", async () => {
     const params: unknown[][] = [];
     const paramsProvider: InjectedProvider = {
       isMetaMask: true,
@@ -210,31 +217,31 @@ describe("active signer end-to-end", () => {
       },
     } as InjectedProvider;
     const typedData = buildCompanyWalletTypedData({
-      workspaceId: "ws-A", wallet: normalizeAddress(OWNER_ADDR.toLowerCase()), nonce: "n",
+      workspaceId: "ws-A", nonce: "n",
       issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
     });
-    await signCompanyWalletTypedData(paramsProvider, typedData.message.wallet, typedData);
+    // The selected account is passed explicitly — the challenge carries no
+    // wallet, so nothing here can silently substitute an identity.
+    await signCompanyWalletTypedData(paramsProvider, SECOND_ADDR, typedData);
     expect(params).toHaveLength(1);
-    expect(params[0][0]).toBe(typedData.message.wallet);
-    expect(JSON.parse(String(params[0][1])).message.wallet).toBe(typedData.message.wallet);
+    expect(params[0][0]).toBe(SECOND_ADDR);
+    expect(JSON.parse(String(params[0][1])).message).not.toHaveProperty("wallet");
   });
 
-  it("wrong signer still fails closed with zero transactions", async () => {
+  it("confirmation without proof fails closed with zero transactions", async () => {
     const calls: string[] = [];
     const { deps, store } = setup();
-    // Challenge for SECOND_ADDR but signed with the fixture key (recovers to
-    // OWNER_ADDR): structurally valid, wrong signer.
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: SECOND_ADDR });
+    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: SECOND_ADDR, nonce: signed.nonce, signature: signed.signature }),
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce }),
     );
-    expect(err.status).toBe(403);
-    expect(err.code).toBe("SIGNER_MISMATCH");
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("PROOF_REQUIRED");
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBeNull();
     // The mock-provider signing path itself only ever calls eth_signTypedData_v4.
     const other = signingMock(SECOND_KEY, calls);
     const typedData = buildCompanyWalletTypedData({
-      workspaceId: "ws-A", wallet: SECOND_ADDR, nonce: "n",
+      workspaceId: "ws-A", nonce: "n",
       issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
     });
     const res = await signCompanyWalletTypedData(other, SECOND_ADDR, typedData);
@@ -252,5 +259,10 @@ describe("active signer end-to-end", () => {
     expect(src).toContain("company-wallet-account");
     expect(src).toContain("Restart registration");
     expect(src).toContain("selectChallengePayload");
+    // Two-phase flow: prove first, explicit confirm registers.
+    expect(src).toContain("/company-wallet/prove");
+    expect(src).toContain("Register wallet");
+    expect(src).toContain("Cancel");
+    expect(src).not.toContain("SIGNER_MISMATCH");
   });
 });

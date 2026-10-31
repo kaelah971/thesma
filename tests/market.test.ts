@@ -121,7 +121,7 @@ async function liveCampaign(
   });
   await moveToReview(ctx.campaignDeps, { campaignId: d.campaign.id, userId, expectedVersion: 1 });
   await approvePolicy(ctx.campaignDeps, { campaignId: d.campaign.id, userId, expectedVersion: 1 });
-  await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId, address: OWNER_W });
+  await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId });
   const p = await prepareFundingIntent(ctx.fundingDeps, { campaignId: d.campaign.id, userId, expectedVersion: 1 });
   await recordFundingSubmitted(ctx.fundingDeps, { campaignId: d.campaign.id, userId, expectedVersion: 1, fundingTxHash: txFor(tag) });
   ctx.reader.receipts.set(txFor(tag).toLowerCase(), {
@@ -192,7 +192,7 @@ describe("market open (owner-approved bootstrap bounty)", () => {
     });
     await moveToReview(ctx.campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
     await approvePolicy(ctx.campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
-    await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
+    await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1" });
     const tooEarly = await fails(
       openMarket(ctx.marketDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedPolicyVersion: 1, openingBountyMicroUsdc: "2000000", destinationUrl: DEST }),
     );

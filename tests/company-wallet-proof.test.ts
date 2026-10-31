@@ -7,6 +7,7 @@ import {
   type FundingStore,
 } from "@/server/services/campaignStore";
 import {
+  proveCompanyWalletChallenge,
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
@@ -27,17 +28,18 @@ vi.mock("@/server/auth/guard", () => ({ getSessionUser: vi.fn(), requireUser: vi
 vi.mock("@/server/api/campaignDeps", () => ({ marketDepsOr503: vi.fn() }));
 
 /**
- * EIP-712 company-wallet ownership proof (production high-risk-warning fix).
+ * Recovered-signer ownership proof (no client-selected identity).
  *
- * The old opaque personal_sign blob triggered MetaMask high-risk warnings
- * and failed recovery; registration now signs structured typed data against
- * a server-issued single-use challenge. Every test uses throwaway dev keys
- * and mocked providers — no transaction, approval, permit, or mainnet call.
+ * The challenge binds (user, workspace) only. Whatever key signs becomes
+ * the proved identity; confirmation registers ONLY the stored recovered
+ * signer, so no selected-vs-recovered mismatch loop can exist — there is no
+ * selected identity to mismatch. Throwaway dev keys and mocked providers;
+ * no transaction, approval, permit, or mainnet call.
  */
 
 const OWNER_ADDR = privateKeyToAccount(TEST_OWNER_PRIVATE_KEY).address;
 const OTHER_KEY = "0x6061243ad54fe37befb72e5dbff3eb7aa1ad825e45f9c20508f72a01d372dcc9" as const;
-const OTHER_ADDR = "0x9C92Aee7336C0f7521AE41659D19415E9e978fC4";
+const OTHER_ADDR = privateKeyToAccount(OTHER_KEY).address;
 const FIXED_NOW = new Date("2026-06-01T12:00:00.000Z");
 
 function setup() {
@@ -69,7 +71,7 @@ async function fails(promise: Promise<unknown>) {
     throw new Error("expected rejection");
   } catch (e) {
     if ((e as Error).message === "expected rejection") throw e;
-    return e as { status?: number; code?: string; message: string; details?: { recovered?: string } };
+    return e as { status?: number; code?: string; message: string };
   }
 }
 
@@ -100,10 +102,10 @@ function signingMockProvider(privateKey: `0x${string}`, calls: string[] = []): I
   } as InjectedProvider;
 }
 
-describe("EIP-712 ownership proof", () => {
-  it("selected account signs and the recovered signer equals the selected wallet", async () => {
+describe("recovered-signer ownership proof", () => {
+  it("prove recovers the actual signer, which confirmation registers", async () => {
     const { deps, store } = setup();
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
+    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const recovered = await recoverTypedDataAddress({
       domain: { ...signed.typedData.domain },
       types: signed.typedData.types,
@@ -112,52 +114,79 @@ describe("EIP-712 ownership proof", () => {
       signature: signed.signature as `0x${string}`,
     });
     expect(recovered.toLowerCase()).toBe(OWNER_ADDR.toLowerCase());
-    const r = await registerCompanyWallet(deps, {
-      workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: signed.nonce, signature: signed.signature,
+    const proved = await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce, signature: signed.signature,
     });
+    expect(proved.provedWallet).toBe(OWNER_ADDR);
+    const r = await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce });
     expect(r.workspace.companyWallet).toBe(OWNER_ADDR);
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBe(OWNER_ADDR);
   });
 
-  it("wrong-wallet signature is rejected as SIGNER_MISMATCH (identity proven, authorization denied)", async () => {
+  it("different keys prove different identities (signer IS the identity)", async () => {
+    const { deps } = setup();
+    const mine = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    const theirs = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", privateKey: OTHER_KEY });
+    const a = await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: mine.nonce, signature: mine.signature,
+    });
+    const b = await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: theirs.nonce, signature: theirs.signature,
+    });
+    expect(a.provedWallet).toBe(OWNER_ADDR);
+    expect(b.provedWallet).toBe(OTHER_ADDR);
+    expect(a.provedWallet).not.toBe(b.provedWallet);
+  });
+
+  it("confirmation without proof fails closed (no address parameter exists)", async () => {
     const { deps, store } = setup();
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR });
-    const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR, nonce: signed.nonce, signature: signed.signature }),
-    );
-    expect(err.status).toBe(403);
-    expect(err.code).toBe("SIGNER_MISMATCH");
+    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    const err = await fails(registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce }));
+    expect(err.code).toBe("PROOF_REQUIRED");
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBeNull();
   });
 
-  it("workspace A challenge cannot register workspace B", async () => {
+  it("workspace A proof cannot register workspace B", async () => {
     const { deps, store } = setup();
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
-    const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-B", userId: "owner-1", address: OWNER_ADDR, nonce: signed.nonce, signature: signed.signature }),
-    );
+    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce, signature: signed.signature,
+    });
+    const err = await fails(registerCompanyWallet(deps, { workspaceId: "ws-B", userId: "owner-1", nonce: signed.nonce }));
     expect(err.code).toBe("CHALLENGE_MISMATCH");
     expect((await store.getWorkspace("ws-B"))?.companyWallet).toBeNull();
   });
 
-  it("expired challenges are rejected", async () => {
+  it("expired challenges are rejected at prove and at confirm", async () => {
     const ctx = setup();
-    const signed = await signWalletRegistration(ctx.deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
+    const signed = await signWalletRegistration(ctx.deps, { workspaceId: "ws-A", userId: "owner-1" });
     const late = {
       ...ctx.deps,
       now: () => new Date(FIXED_NOW.getTime() + 11 * 60 * 1000),
     };
     const err = await fails(
-      registerCompanyWallet(late, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: signed.nonce, signature: signed.signature }),
+      proveCompanyWalletChallenge(late, { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce, signature: signed.signature }),
     );
     expect(err.status).toBe(410);
     expect(err.code).toBe("CHALLENGE_EXPIRED");
+    // Prove in time, confirm late.
+    const fresh = await signWalletRegistration(ctx.deps, { workspaceId: "ws-A", userId: "owner-1" });
+    await proveCompanyWalletChallenge(ctx.deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: fresh.nonce, signature: fresh.signature,
+    });
+    const lateConfirm = await fails(
+      registerCompanyWallet(late, { workspaceId: "ws-A", userId: "owner-1", nonce: fresh.nonce }),
+    );
+    expect(lateConfirm.code).toBe("CHALLENGE_EXPIRED");
   });
 
-  it("a challenge cannot be replayed", async () => {
+  it("a proof cannot be replayed after confirmation", async () => {
     const { deps } = setup();
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
-    const params = { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: signed.nonce, signature: signed.signature };
+    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce, signature: signed.signature,
+    });
+    const params = { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce };
     await registerCompanyWallet(deps, params);
     const err = await fails(registerCompanyWallet(deps, params));
     expect(err.status).toBe(409);
@@ -167,7 +196,7 @@ describe("EIP-712 ownership proof", () => {
   it("unknown nonces fail closed", async () => {
     const { deps } = setup();
     const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: "nope", signature: "0x00" }),
+      proveCompanyWalletChallenge(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: "nope", signature: "0x00" }),
     );
     expect(err.status).toBe(404);
     expect(err.code).toBe("CHALLENGE_NOT_FOUND");
@@ -187,7 +216,7 @@ describe("EIP-712 ownership proof", () => {
       },
     } as InjectedProvider;
     const typed = buildCompanyWalletTypedData({
-      workspaceId: "ws-A", wallet: OWNER_ADDR, nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
+      workspaceId: "ws-A", nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
     });
     const res = await signCompanyWalletTypedData(rejecting, OWNER_ADDR, typed);
     expect(res).toEqual({ failure: "USER_REJECTED" });
@@ -197,7 +226,7 @@ describe("EIP-712 ownership proof", () => {
     const calls: string[] = [];
     const provider = signingMockProvider(TEST_OWNER_PRIVATE_KEY, calls);
     const typed = buildCompanyWalletTypedData({
-      workspaceId: "ws-A", wallet: normalizeAddress(OWNER_ADDR), nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
+      workspaceId: "ws-A", nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
     });
     const res = await signCompanyWalletTypedData(provider, OWNER_ADDR, typed);
     expect("signature" in res).toBe(true);
@@ -236,7 +265,7 @@ describe("EIP-712 ownership proof", () => {
       expect(found?.isMetaMask).toBe(true);
       expect(found?.source).toBe("eip6963");
       const typed = buildCompanyWalletTypedData({
-        workspaceId: "ws-A", wallet: normalizeAddress(OWNER_ADDR), nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
+        workspaceId: "ws-A", nonce: "n", issuedAt: FIXED_NOW.toISOString(), expiresAt: FIXED_NOW.toISOString(),
       });
       const signed = await signCompanyWalletTypedData(found!.provider, OWNER_ADDR, typed);
       expect("signature" in signed).toBe(true);
@@ -246,21 +275,21 @@ describe("EIP-712 ownership proof", () => {
     }
   });
 
-  it("address casing never falsely fails (lowercase input registers checksummed)", async () => {
-    const { deps, store } = setup();
-    const r = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR.toLowerCase() });
-    expect(r.workspace.companyWallet).toBe(OWNER_ADDR);
-    expect((await store.getWorkspace("ws-A"))?.companyWallet).toBe(OWNER_ADDR);
+  it("recovered signer is always checksummed", async () => {
+    const { deps } = setup();
+    const r = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    expect(r.workspace.companyWallet).toBe(normalizeAddress(OWNER_ADDR));
+    expect(r.provedWallet).toBe(normalizeAddress(OWNER_ADDR));
   });
 
   it("client and server enforce the exact same typed-data schema", () => {
-    const args = { workspaceId: "ws-A", wallet: OWNER_ADDR, nonce: "fixed-nonce", issuedAt: "2026-06-01T12:00:00.000Z", expiresAt: "2026-06-01T12:10:00.000Z" };
+    const args = { workspaceId: "ws-A", nonce: "fixed-nonce", issuedAt: "2026-06-01T12:00:00.000Z", expiresAt: "2026-06-01T12:10:00.000Z" };
     const clientSide = buildCompanyWalletTypedData(args);
     const serverSide = buildCompanyWalletTypedData(args);
     expect(JSON.stringify(clientSide)).toBe(JSON.stringify(serverSide));
     expect(clientSide.domain).toMatchObject({ name: "Thesma", version: "1", chainId: 5042 });
     expect(clientSide.primaryType).toBe("CompanyWalletRegistration");
-    expect(Object.keys(clientSide.message)).toEqual(["workspaceId", "wallet", "purpose", "nonce", "issuedAt", "expiresAt"]);
+    expect(Object.keys(clientSide.message)).toEqual(["workspaceId", "purpose", "nonce", "issuedAt", "expiresAt"]);
     expect(COMPANY_WALLET_DOMAIN.chainId).toBe(5042);
   });
 

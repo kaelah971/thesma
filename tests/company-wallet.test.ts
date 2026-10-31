@@ -16,12 +16,14 @@ import {
 } from "@/server/services/campaignStore";
 import {
   prepareFundingIntent,
+  proveCompanyWalletChallenge,
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
 import type { ArcConfig } from "@/server/chain/arc";
 import { THESMA_VAULT_ADDRESS } from "@/lib/proof";
 import { buildCompanyWalletTypedData, fundingEntryState } from "@/lib/wallet";
+import { createMemoryCompanyWalletChallengeStore } from "@/server/services/companyWalletChallenges";
 import { registerTestWallet, signWalletRegistration, TEST_OWNER_PRIVATE_KEY } from "./wallet-fixtures";
 
 vi.mock("@/server/auth/guard", () => ({ getSessionUser: vi.fn(), requireUser: vi.fn() }));
@@ -69,7 +71,14 @@ function setup() {
   });
   const { sink, events } = createMemoryAuditSink();
   const fundingStore = store as unknown as FundingStore;
-  const deps: FundingDeps = { store: fundingStore, audit: sink, config: CONFIG, reader: null, now: () => FIXED_NOW };
+  const deps: FundingDeps = {
+    store: fundingStore,
+    audit: sink,
+    config: CONFIG,
+    reader: null,
+    now: () => FIXED_NOW,
+    challenges: createMemoryCompanyWalletChallengeStore(),
+  };
   const campaignDeps: CampaignDeps = { store, audit: sink, now: () => FIXED_NOW };
   return { store, events, deps, campaignDeps };
 }
@@ -136,34 +145,33 @@ describe("company wallet registration", () => {
     expect((await store.getWorkspace("ws-B"))?.companyWallet).toBeNull();
   });
 
-  it("arbitrary pasted addresses never register without a valid signature", async () => {
+  it("arbitrary input never registers without a valid proof", async () => {
     const { deps, store } = setup();
     // Malformed signature on a real challenge.
-    const bad = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
+    const bad = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const garbage = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: bad.nonce, signature: "0x00" }),
+      proveCompanyWalletChallenge(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: bad.nonce, signature: "0x00" }),
     );
     expect(garbage.status).toBe(400);
     expect(garbage.code).toBe("INVALID_SIGNATURE");
-    // Structurally valid signature from a DIFFERENT key (wrong-key proof).
-    const wrong = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR });
-    const wrongKey = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR, nonce: wrong.nonce, signature: wrong.signature }),
-    );
-    expect(wrongKey.status).toBe(403);
-    expect(wrongKey.code).toBe("SIGNER_MISMATCH");
-    // Signature bound to another workspace does not transfer.
-    const other = await signWalletRegistration(deps, { workspaceId: "ws-B", userId: "owner-1", address: OWNER_ADDR });
+    // Proof bound to another workspace does not transfer.
+    const other = await signWalletRegistration(deps, { workspaceId: "ws-B", userId: "owner-1" });
     const replay = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: other.nonce, signature: other.signature }),
+      proveCompanyWalletChallenge(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: other.nonce, signature: other.signature }),
     );
     expect(replay.code).toBe("CHALLENGE_MISMATCH");
+    // Confirmation without proof fails closed.
+    const fresh = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    const unproved = await fails(
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: fresh.nonce }),
+    );
+    expect(unproved.code).toBe("PROOF_REQUIRED");
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBeNull();
   });
 
   it("valid ownership proof registers the canonical checksummed address + audit", async () => {
     const { deps, events, store } = setup();
-    const r = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR.toLowerCase() });
+    const r = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
     expect(r.workspace.companyWallet).toBe(getAddress(OWNER_ADDR));
     expect(events.some((e) => e.action === "workspace.company_wallet_registered")).toBe(true);
     const meta = events.find((e) => e.action === "workspace.company_wallet_registered")?.metadata as Record<string, unknown>;
@@ -182,13 +190,13 @@ describe("company wallet registration", () => {
     const { deps, store } = setup();
     await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const blocked = await fails(
-      registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR, privateKey: OTHER_KEY }),
+      registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", privateKey: OTHER_KEY }),
     );
     expect(blocked.status).toBe(409);
     expect(blocked.code).toBe("WALLET_CHANGE_REQUIRES_CONFIRMATION");
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBe(getAddress(OWNER_ADDR));
     const changed = await registerTestWallet(deps, {
-      workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR, privateKey: OTHER_KEY, confirmChange: true,
+      workspaceId: "ws-A", userId: "owner-1", privateKey: OTHER_KEY, confirmChange: true,
     });
     expect(changed.workspace.companyWallet).toBe(getAddress(OTHER_ADDR));
   });
@@ -232,13 +240,13 @@ describe("company wallet registration", () => {
     expect(CONFIG.vaultAddress).not.toBe(OWNER_ADDR);
   });
 
-  it("typed-data challenge binds workspace + address + domain", () => {
-    const base = { wallet: OWNER_ADDR, nonce: "n-1", issuedAt: "2026-06-01T12:00:00.000Z", expiresAt: "2026-06-01T12:10:00.000Z" };
+  it("typed-data challenge binds workspace + domain, never a wallet", () => {
+    const base = { nonce: "n-1", issuedAt: "2026-06-01T12:00:00.000Z", expiresAt: "2026-06-01T12:10:00.000Z" };
     const a = buildCompanyWalletTypedData({ workspaceId: "ws-A", ...base });
     const b = buildCompanyWalletTypedData({ workspaceId: "ws-B", ...base });
     expect(a.domain).toMatchObject({ name: "Thesma", version: "1", chainId: 5042 });
     expect(a.message.workspaceId).toBe("ws-A");
-    expect(a.message.wallet).toBe(OWNER_ADDR);
+    expect(a.message).not.toHaveProperty("wallet");
     expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
   });
 });

@@ -97,7 +97,7 @@ async function liveCampaignId(ctx: ReturnType<typeof setup>, tag = 11) {
   });
   await moveToReview(deps as CampaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
   await approvePolicy(deps as CampaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
-  await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
+  await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1" });
   const p = await prepareFundingIntent(ctx.fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
   await recordFundingSubmitted(ctx.fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1, fundingTxHash: txFor(tag) });
   ctx.reader.receipts.set(txFor(tag).toLowerCase(), {

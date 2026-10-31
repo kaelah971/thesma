@@ -23,7 +23,7 @@ All wallet RPCs in `src/` (nothing else touches a provider):
 | `eth_accounts` (silent, no prompt) | `getWalletState`, registration consistency checks | read-only, no prompt |
 | `eth_chainId` (silent) | network checks | read-only |
 | `wallet_switchEthereumChain` | "Switch to Arc Mainnet" button | explicit click; `CHAIN_NOT_ADDED` surfaces manual-add guidance, never invents RPC URLs |
-| `eth_signTypedData_v4` | company-wallet registration only | explicit "Sign registration message" click after a review panel |
+| `eth_signTypedData_v4` | company-wallet registration only | explicit "Sign ownership proof" click, then an explicit "Register wallet" confirmation |
 | `eth_sendTransaction` | exactly 3 call sites: `CampaignFunding.execute` (1), `BuyCheckout` (2) | each behind an explicit confirmation click AND a pre-signature preview (amount, network, asset, destination); receipts awaited, reverts recorded, never retried silently |
 
 Explicitly absent from `src/`: `personal_sign`, `eth_sign`, `wallet_watchAsset`,
@@ -39,10 +39,11 @@ no `unsafe-eval`, no wildcard origins; `connect-src 'self'`; no analytics SDKs).
   (structured registration proof). No transaction method exists on that path
   (asserted in `tests/company-wallet-proof.test.ts` and browser smoke).
 - The EIP-712 payload registers identity only: domain `Thesma/1/5042`,
-  fields `workspaceId, wallet, purpose, nonce, issuedAt, expiresAt` — no
+  fields `workspaceId, purpose, nonce, issuedAt, expiresAt` — no wallet,
   token, amount, spender, or deadline-for-funds fields exist to approve.
+  The recovered signer IS the identity; confirmation registers only that.
 - The server stores only the public address; the challenge is single-use
-  with a 10-minute expiry and binds user + workspace + wallet.
+  with a 10-minute expiry and binds user + workspace.
 - No private keys, seed phrases, or signing secrets are ever requested,
   logged, or stored (asserted in `tests/security-trust.test.ts`).
 

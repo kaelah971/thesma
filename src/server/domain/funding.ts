@@ -3,20 +3,18 @@ import { expectedVersionSchema } from "./campaign";
 
 const txHashSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Must be a 0x 32-byte transaction hash");
 
-export const companyWalletChallengeRequestSchema = z.object({
-  /** Candidate wallet address; normalized server-side. Nothing is registered yet. */
-  address: z.string().trim().min(1).max(100),
+export const companyWalletChallengeRequestSchema = z.object({});
+
+export const companyWalletProveRequestSchema = z.object({
+  /** Server-issued single-use challenge nonce. */
+  nonce: z.string().trim().min(1).max(100),
+  /** Owner's EIP-712 signature over the workspace-bound challenge typed data (ownership proof, never a tx). */
+  signature: z.string().trim().min(1).max(500),
 });
 
 export const companyWalletRequestSchema = z.object({
-  /** Raw address text; normalized + validated server-side (malformed -> 400). */
-  address: z.string().trim().min(1).max(100),
-  /** Server-issued single-use challenge nonce (binds user + workspace + wallet). */
+  /** Server-issued single-use nonce of an already-PROVED challenge. The stored recovered signer is registered; the client sends no address. */
   nonce: z.string().trim().min(1).max(100),
-  /** Owner's EIP-712 signature over the challenge typed data (ownership proof, never a tx). */
-  signature: z.string().trim().min(1).max(500),
-  /** Address the client passed as the eth_signTypedData_v4 signer (diagnostic echo only, never trusted). */
-  signingAccount: z.string().trim().min(1).max(100).optional(),
   /** Required only when replacing an already-registered DIFFERENT wallet. */
   confirmChange: z.boolean().optional(),
 });

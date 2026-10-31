@@ -97,7 +97,7 @@ describe("market detail fast path (no N+1, no duplicate reads)", () => {
     });
     await moveToReview(campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
     await approvePolicy(campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
-    await registerTestWallet(fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
+    await registerTestWallet(fundingDeps, { workspaceId: "ws-A", userId: "owner-1" });
     const id = d.campaign.id;
     const reader = fundingDeps.reader as FakeReader;
     const p = await prepareFundingIntent(fundingDeps, { campaignId: id, userId: "owner-1", expectedVersion: 1 });

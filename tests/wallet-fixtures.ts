@@ -1,21 +1,20 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { buildCompanyWalletTypedData } from "@/lib/wallet";
-import { normalizeAddress } from "@/server/chain/arc";
 import {
   issueCompanyWalletChallenge,
+  proveCompanyWalletChallenge,
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
 import { createMemoryCompanyWalletChallengeStore } from "@/server/services/companyWalletChallenges";
 
 /**
- * Signing fixtures for company-wallet registration tests.
+ * Signing fixtures for recovered-signer company-wallet registration.
  *
- * Registration requires a server-issued challenge + EIP-712 signature, so
- * this helper performs the full client flow: challenge → canonical
- * typed-data build (byte-checked like the UI) → viem signTypedData →
- * register. Always uses an in-memory challenge store — never touches a
- * real database. Keys are throwaway dev keys, never mainnet keys.
+ * Flow: issue workspace-bound challenge → sign typed data with a throwaway
+ * dev key → prove (server recovers the ACTUAL signer) → confirm (registers
+ * ONLY the recovered signer; the client never sends an address). Always
+ * uses an in-memory challenge store — never touches a real database.
  */
 export const TEST_OWNER_PRIVATE_KEY =
   "0x96d8b4d4a3d1e17a76d1c8114237cc46fb89196fe4db85aae2f9f14c8ba560d7" as const;
@@ -32,20 +31,14 @@ function ensureMemoryChallenges(deps: FundingDeps) {
 /** Issue a challenge and sign its typed data (mirrors the client exactly). */
 export async function signWalletRegistration(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address: string; privateKey?: string },
+  params: { workspaceId: string; userId: string; privateKey?: string },
 ) {
   ensureMemoryChallenges(deps);
   const key = (params.privateKey ?? TEST_OWNER_PRIVATE_KEY) as `0x${string}`;
   const account = privateKeyToAccount(key);
-  const normalized = normalizeAddress(params.address);
-  const ch = await issueCompanyWalletChallenge(deps, {
-    workspaceId: params.workspaceId,
-    userId: params.userId,
-    address: normalized,
-  });
+  const ch = await issueCompanyWalletChallenge(deps, { workspaceId: params.workspaceId, userId: params.userId });
   const expected = buildCompanyWalletTypedData({
     workspaceId: params.workspaceId,
-    wallet: normalized,
     nonce: ch.nonce,
     issuedAt: ch.issuedAt,
     expiresAt: ch.expiresAt,
@@ -54,39 +47,34 @@ export async function signWalletRegistration(
     throw new Error("typed-data schema drift between server and client builder");
   }
   const signature = await account.signTypedData({
-    domain: { ...expected.domain },
-    types: expected.types,
+    domain: { ...ch.typedData.domain },
+    types: ch.typedData.types,
     primaryType: "CompanyWalletRegistration",
-    message: { ...expected.message },
+    message: { ...ch.typedData.message },
   });
-  return { address: params.address, normalized, nonce: ch.nonce, signature, typedData: ch.typedData };
+  return { nonce: ch.nonce, signature, typedData: ch.typedData };
 }
 
-/**
- * Full client flow with ownership proof. Defaults to the fixture keypair;
- * pass address (any case) and the signature is computed over the normalized
- * form, exactly like production.
- */
+/** Full client flow: issue → sign → prove → confirm. Returns the registration. */
 export async function registerTestWallet(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address?: string; privateKey?: string; confirmChange?: boolean },
+  params: { workspaceId: string; userId: string; privateKey?: string; confirmChange?: boolean },
 ) {
   ensureMemoryChallenges(deps);
-  const key = (params.privateKey ?? TEST_OWNER_PRIVATE_KEY) as `0x${string}`;
-  const account = privateKeyToAccount(key);
-  const address = params.address ?? account.address;
-  const { nonce, signature } = await signWalletRegistration(deps, {
+  const signed = await signWalletRegistration(deps, params);
+  const proved = await proveCompanyWalletChallenge(deps, {
     workspaceId: params.workspaceId,
     userId: params.userId,
-    address,
-    privateKey: key,
+    nonce: signed.nonce,
+    signature: signed.signature,
   });
-  return registerCompanyWallet(deps, {
-    workspaceId: params.workspaceId,
-    userId: params.userId,
-    address,
-    nonce,
-    signature,
-    ...(params.confirmChange !== undefined ? { confirmChange: params.confirmChange } : {}),
-  });
+  return {
+    ...(await registerCompanyWallet(deps, {
+      workspaceId: params.workspaceId,
+      userId: params.userId,
+      nonce: signed.nonce,
+      ...(params.confirmChange !== undefined ? { confirmChange: params.confirmChange } : {}),
+    })),
+    provedWallet: proved.provedWallet,
+  };
 }

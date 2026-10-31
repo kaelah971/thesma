@@ -123,21 +123,16 @@ export function serializeFunding(f: StoredFunding) {
 }
 
 /**
- * Register (not verify) the expected company Arc address. Owner-only.
- * Funding evidence later must come FROM this exact address; typing it here
- * proves nothing cryptographic by itself.
- */
-/**
- * Issue a single-use registration challenge for (user, workspace, wallet).
- * The client signs the returned typed data; the nonce binds that exact
- * triple for CHALLENGE_TTL_MS. No private material is stored.
+ * Phase 0 — workspace-bound challenge. The typed data binds (workspace,
+ * purpose, nonce, expiry) and deliberately NO wallet: the cryptographic
+ * signer IS the identity, recovered server-side in the prove step. Any
+ * client-selected address is only ever an RPC signing hint, never trusted.
  */
 export async function issueCompanyWalletChallenge(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address: string },
+  params: { workspaceId: string; userId: string },
 ): Promise<{ typedData: CompanyWalletTypedData; nonce: string; issuedAt: string; expiresAt: string }> {
   await ownerOrFail(deps, params.workspaceId, params.userId);
-  const normalized = normalizeAddress(params.address);
   const workspace = await deps.store.getWorkspace(params.workspaceId);
   if (!workspace) fail(404, "NOT_FOUND", "Workspace not found");
   const now = deps.now?.() ?? new Date();
@@ -147,7 +142,6 @@ export async function issueCompanyWalletChallenge(
   await challengeStore(deps).issue({
     nonce,
     workspaceId: params.workspaceId,
-    wallet: normalized,
     userId: params.userId,
     issuedAt,
     expiresAt,
@@ -155,7 +149,6 @@ export async function issueCompanyWalletChallenge(
   return {
     typedData: buildCompanyWalletTypedData({
       workspaceId: params.workspaceId,
-      wallet: normalized,
       nonce,
       issuedAt,
       expiresAt,
@@ -166,34 +159,30 @@ export async function issueCompanyWalletChallenge(
   };
 }
 
-export async function registerCompanyWallet(
+/**
+ * Phase A — PROVE. Verifies the EIP-712 signature over the stored challenge
+ * and records the ACTUAL recovered signer. Registers nothing. The caller
+ * shows the recovered wallet and only proceeds on explicit confirmation.
+ */
+export async function proveCompanyWalletChallenge(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address: string; nonce: string; signature: string; signingAccount?: string; confirmChange?: boolean },
-) {
+  params: { workspaceId: string; userId: string; nonce: string; signature: string },
+): Promise<{ provedWallet: string }> {
   await ownerOrFail(deps, params.workspaceId, params.userId);
-  const normalized = normalizeAddress(params.address);
-  const current = await deps.store.getWorkspace(params.workspaceId);
-  if (!current) fail(404, "NOT_FOUND", "Workspace not found");
-  // Freshness + binding: the nonce must exist, belong to this caller +
-  // workspace + wallet, be unexpired, and be unused.
   const now = deps.now?.() ?? new Date();
   const challenge = await challengeStore(deps).find(params.nonce);
   if (!challenge) fail(404, "CHALLENGE_NOT_FOUND", "Registration challenge not found. Request a fresh one.");
   if (challenge.workspaceId !== params.workspaceId || challenge.userId !== params.userId) {
     fail(403, "CHALLENGE_MISMATCH", "This challenge was issued for a different workspace or user.");
   }
-  if (challenge.wallet.toLowerCase() !== normalized.toLowerCase()) {
-    fail(400, "CHALLENGE_MISMATCH", "This challenge was issued for a different wallet address.");
-  }
   if (Number.isNaN(Date.parse(challenge.expiresAt)) || Date.parse(challenge.expiresAt) <= now.getTime()) {
     fail(410, "CHALLENGE_EXPIRED", "Registration challenge expired. Request a fresh one.");
   }
-  // Ownership proof: EIP-712 typed data must recover to the claimed wallet.
-  // The exact schema is shared with the client (lib/wallet) — any drift
-  // fails closed here.
+  if (challenge.status === "CONSUMED") {
+    fail(409, "CHALLENGE_USED", "Registration challenge already used. Request a fresh one.");
+  }
   const typedData = buildCompanyWalletTypedData({
     workspaceId: challenge.workspaceId,
-    wallet: challenge.wallet,
     nonce: challenge.nonce,
     issuedAt: challenge.issuedAt,
     expiresAt: challenge.expiresAt,
@@ -213,30 +202,42 @@ export async function registerCompanyWallet(
   if (!recovered) {
     fail(400, "INVALID_SIGNATURE", "Signature is malformed. Sign the registration request shown by the app.");
   }
-  if (recovered!.toLowerCase() !== normalized.toLowerCase()) {
-    // Owner-only diagnostic payload: four PUBLIC addresses that SHOULD match.
-    // Never includes the signature, nonce, session data, or key material.
-    const safeAddress = (value: unknown, fallback: string): string => {
-      try {
-        return normalizeAddress(String(value));
-      } catch {
-        return fallback;
-      }
-    };
-    const recoveredSigner = safeAddress(recovered, String(recovered));
-    fail(403, "SIGNER_MISMATCH", "Signature came from a different wallet. Sign with the wallet you want to register.", {
-      selectedWallet: normalized,
-      challengeWallet: safeAddress(challenge.wallet, normalized),
-      signingAccount: params.signingAccount ? safeAddress(params.signingAccount, normalized) : normalized,
-      recoveredSigner,
-    });
+  const provedWallet = normalizeAddress(recovered as string);
+  const proved = await challengeStore(deps).prove(params.nonce, params.workspaceId, provedWallet);
+  if (!proved) fail(409, "CHALLENGE_USED", "Registration challenge already used. Request a fresh one.");
+  return { provedWallet };
+}
+
+export async function registerCompanyWallet(
+  deps: FundingDeps,
+  params: { workspaceId: string; userId: string; nonce: string; confirmChange?: boolean },
+) {
+  await ownerOrFail(deps, params.workspaceId, params.userId);
+  const current = await deps.store.getWorkspace(params.workspaceId);
+  if (!current) fail(404, "NOT_FOUND", "Workspace not found");
+  // Confirm ONLY a proved challenge: the stored recovered signer is the
+  // registration identity. The client sends no address — substitution is
+  // structurally impossible.
+  const now = deps.now?.() ?? new Date();
+  const challenge = await challengeStore(deps).find(params.nonce);
+  if (!challenge) fail(404, "CHALLENGE_NOT_FOUND", "Registration challenge not found. Request a fresh one.");
+  if (challenge.workspaceId !== params.workspaceId || challenge.userId !== params.userId) {
+    fail(403, "CHALLENGE_MISMATCH", "This challenge was issued for a different workspace or user.");
   }
-  // Single-use: the nonce dies here even though replay would be harmless
-  // (it binds one address), so a captured signature can never re-register.
+  if (Number.isNaN(Date.parse(challenge.expiresAt)) || Date.parse(challenge.expiresAt) <= now.getTime()) {
+    fail(410, "CHALLENGE_EXPIRED", "Registration challenge expired. Request a fresh one.");
+  }
+  if (challenge.status === "CONSUMED") {
+    fail(409, "CHALLENGE_USED", "Registration challenge already used. Request a fresh one.");
+  }
+  if (challenge.status !== "PROVED" || !challenge.provedWallet) {
+    fail(409, "PROOF_REQUIRED", "Sign the ownership proof first, then confirm registration.");
+  }
+  const provedWallet = challenge.provedWallet;
   const firstUse = await challengeStore(deps).consume(params.nonce, params.workspaceId);
   if (!firstUse) fail(409, "CHALLENGE_USED", "Registration challenge already used. Request a fresh one.");
   const existing = current.companyWallet ?? null;
-  if (existing && existing.toLowerCase() !== normalized.toLowerCase() && !params.confirmChange) {
+  if (existing && existing.toLowerCase() !== provedWallet.toLowerCase() && !params.confirmChange) {
     fail(
       409,
       "WALLET_CHANGE_REQUIRES_CONFIRMATION",
@@ -244,7 +245,7 @@ export async function registerCompanyWallet(
     );
   }
   const workspace = await deps.store.atomic(deps.audit, async ({ store, audit }) => {
-    const ws = await store.setCompanyWallet(params.workspaceId, normalized);
+    const ws = await store.setCompanyWallet(params.workspaceId, provedWallet);
     await audit({
       actorType: "USER",
       actorId: params.userId,
@@ -254,8 +255,8 @@ export async function registerCompanyWallet(
       targetId: params.workspaceId,
       metadata: {
         workspaceId: params.workspaceId,
-        companyWallet: normalized,
-        changed: existing !== null && existing.toLowerCase() !== normalized.toLowerCase(),
+        companyWallet: provedWallet,
+        changed: existing !== null && existing.toLowerCase() !== provedWallet.toLowerCase(),
       },
     });
     return ws;

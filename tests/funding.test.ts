@@ -20,6 +20,7 @@ import {
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
+import { createMemoryCompanyWalletChallengeStore } from "@/server/services/companyWalletChallenges";
 import { registerTestWallet } from "./wallet-fixtures";
 import type {
   ArcChainReader,
@@ -124,6 +125,7 @@ function setup(reader?: FakeReader) {
     config: CONFIG,
     reader: reader ?? new FakeReader(),
     now: () => FIXED_NOW,
+    challenges: createMemoryCompanyWalletChallengeStore(),
   };
   const campaignDeps: CampaignDeps = { store, audit: sink, now: () => FIXED_NOW };
   return { store, events, deps, campaignDeps };
@@ -145,7 +147,7 @@ async function approvedCampaign(deps: FundingDeps, campaignDeps: CampaignDeps, u
 }
 
 async function prepared(deps: FundingDeps, campaignDeps: CampaignDeps, reader: FakeReader) {
-  await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+  await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
   const a = await approvedCampaign(deps, campaignDeps);
   const p = await prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 1 });
   void reader;
@@ -164,7 +166,7 @@ async function fails(promise: Promise<unknown>): Promise<any> {
 describe("funding access control", () => {
   it("only the owner can prepare funding; members and outsiders are blocked", async () => {
     const { deps, campaignDeps } = setup();
-    await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+    await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const a = await approvedCampaign(deps, campaignDeps);
     const member = await fails(prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "member-2", expectedVersion: 1 }));
     expect(member.status).toBe(403);
@@ -190,18 +192,18 @@ describe("funding access control", () => {
     const draftErr = await fails(prepareFundingIntent(deps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 }));
     expect(draftErr.status).toBe(400);
 
-    await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+    await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const a = await approvedCampaign(deps, campaignDeps);
     const stale = await fails(prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 99 }));
     expect(stale.status).toBe(409);
   });
 
-  it("rejects malformed wallet addresses without storing them", async () => {
+  it("rejects unknown challenges without storing anything", async () => {
     const { deps } = setup();
     const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: "0x123", nonce: "unused-malformed-address-first", signature: "0x00" }),
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: "no-such-challenge" }),
     );
-    expect(err.status).toBe(400);
+    expect(err.status).toBe(404);
     const ws = await deps.store.getWorkspace("ws-A");
     expect(ws?.companyWallet).toBeNull();
   });
@@ -211,12 +213,10 @@ describe("funding access control", () => {
     const r = await registerCompanyWallet(deps, {
       workspaceId: "ws-A",
       userId: "member-2",
-      address: OWNER,
       nonce: "unused-owner-check-runs-first",
-      signature: "0x00",
     }).catch((e) => e);
     expect(r.status).toBe(403); // member cannot register
-    const ok = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER.toLowerCase() });
+    const ok = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1" });
     expect(ok.workspace.companyWallet).toBe(OWNER);
     expect(events.some((e) => e.action === "workspace.company_wallet_registered")).toBe(true);
   });
@@ -450,7 +450,7 @@ describe("funding confirmation (reads Arc, trusts nothing)", () => {
       return { id: "evt" };
     };
     const deps: FundingDeps = { store, audit: throwingSink, config: CONFIG, reader, now: () => FIXED_NOW };
-    await registerTestWallet({ ...deps, audit: throwingSink }, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+    await registerTestWallet({ ...deps, audit: throwingSink }, { workspaceId: "ws-A", userId: "owner-1" });
     const a = await approvedCampaign({ ...deps }, campaignDeps);
     const err = await fails(prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 1 }));
     expect(err.message).toBe("audit outage");

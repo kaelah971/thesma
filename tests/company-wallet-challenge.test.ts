@@ -8,6 +8,7 @@ import {
   type FundingStore,
 } from "@/server/services/campaignStore";
 import {
+  proveCompanyWalletChallenge,
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
@@ -25,10 +26,12 @@ vi.mock("@/server/api/campaignDeps", () => ({ marketDepsOr503: vi.fn() }));
 /**
  * Frozen-challenge regression (production "changed unexpectedly" failure).
  *
- * The client rebuilt the wallet field from the raw connected account while
- * the server verified the normalized challenge wallet — any checksum-case
- * divergence falsely failed the flow. The server payload is now frozen and
- * signed verbatim. Fixtures use throwaway dev keys only; no transactions.
+ * The client used to rebuild the wallet field from the raw connected
+ * account while the server verified a normalized challenge wallet — any
+ * checksum-case divergence falsely failed the flow. Challenges now bind
+ * (user, workspace) only; the recovered signer IS the identity, and the
+ * server payload is frozen and signed verbatim. Fixtures use throwaway dev
+ * keys only; no transactions.
  */
 
 const root = join(__dirname, "..");
@@ -55,7 +58,6 @@ function setup() {
 function frozenChallenge(): RegistrationChallengePayload {
   const typedData = buildCompanyWalletTypedData({
     workspaceId: "ws-A",
-    wallet: OWNER_ADDR,
     nonce: "frozen-nonce",
     issuedAt: FIXED_NOW.toISOString(),
     expiresAt: new Date(FIXED_NOW.getTime() + 10 * 60 * 1000).toISOString(),
@@ -90,7 +92,7 @@ describe("frozen challenge payload", () => {
     if ("typedData" in sel) expect(JSON.stringify(sel.typedData)).toBe(raw);
   });
 
-  it("lowercase selected account does not mutate the checksummed challenge (prod bug)", () => {
+  it("selection casing can never mutate the challenge (no wallet field to rebuild)", () => {
     const challenge = frozenChallenge();
     const sel = selectChallengePayload({
       challenge,
@@ -100,12 +102,12 @@ describe("frozen challenge payload", () => {
     });
     expect("typedData" in sel).toBe(true);
     if ("typedData" in sel) {
-      expect(sel.typedData.message.wallet).toBe(OWNER_ADDR);
+      expect("wallet" in sel.typedData.message).toBe(false);
       expect(JSON.stringify(sel.typedData)).toBe(JSON.stringify(challenge.typedData));
     }
   });
 
-  it("nonce/issuedAt/expiresAt/workspaceId/wallet/purpose survive frozen", () => {
+  it("nonce/issuedAt/expiresAt/workspaceId/purpose survive frozen", () => {
     const challenge = frozenChallenge();
     const sel = selectChallengePayload({
       challenge,
@@ -117,7 +119,6 @@ describe("frozen challenge payload", () => {
     if ("typedData" in sel) {
       expect(sel.typedData.message).toMatchObject({
         workspaceId: "ws-A",
-        wallet: OWNER_ADDR,
         nonce: "frozen-nonce",
         issuedAt: FIXED_NOW.toISOString(),
       });
@@ -148,41 +149,44 @@ describe("frozen challenge payload", () => {
       .toEqual({ error: "ACCOUNT_CHANGED" });
   });
 
-  it("stale challenge wallet differing from the live account aborts", () => {
+  it("selection that left the wallet aborts even with a valid challenge", () => {
     const challenge = frozenChallenge();
     expect(selectChallengePayload({
       challenge,
       workspaceId: "ws-A",
       selectedAccount: "0x0000000000000000000000000000000000000001",
-      availableAccounts: ["0x0000000000000000000000000000000000000001"],
+      availableAccounts: [OWNER_ADDR],
     })).toEqual({ error: "ACCOUNT_CHANGED" });
   });
 
-  it("frozen end-to-end: lowercase selection signs server payload and registers", async () => {
+  it("frozen end-to-end: sign, prove, confirm registers the recovered signer", async () => {
     const { deps, store } = setup();
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR.toLowerCase() });
+    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
     const sel = selectChallengePayload({
       challenge: { typedData: signed.typedData, nonce: signed.nonce, issuedAt: "", expiresAt: "" },
       workspaceId: "ws-A",
-      selectedAccount: OWNER_ADDR.toLowerCase(),
+      selectedAccount: OWNER_ADDR,
       availableAccounts: [OWNER_ADDR],
     });
     expect("typedData" in sel).toBe(true);
-    const r = await registerCompanyWallet(deps, {
-      workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR.toLowerCase(), nonce: signed.nonce, signature: signed.signature,
+    const proved = await proveCompanyWalletChallenge(deps, {
+      workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce, signature: signed.signature,
     });
+    expect(proved.provedWallet).toBe(OWNER_ADDR);
+    const r = await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: signed.nonce });
     expect(r.workspace.companyWallet).toBe(OWNER_ADDR);
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBe(OWNER_ADDR);
   });
 
-  it("tampered payload after selection still fails closed", async () => {
+  it("confirmation cannot be reached by tampering client state", async () => {
     const { deps, store } = setup();
-    const signed = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
-    const other = "0x0000000000000000000000000000000000000001";
-    const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: other, nonce: signed.nonce, signature: signed.signature }),
+    // No prove step at all: the confirm gate demands a PROVED challenge.
+    const bad = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1" });
+    void bad;
+    const unknown = await fails(
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", nonce: "no-such-nonce" }),
     );
-    expect(["CHALLENGE_MISMATCH", "SIGNER_MISMATCH"]).toContain(err.code);
+    expect(unknown.code).toBe("CHALLENGE_NOT_FOUND");
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBeNull();
   });
 

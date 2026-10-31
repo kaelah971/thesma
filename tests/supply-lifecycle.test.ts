@@ -121,7 +121,7 @@ describe("production campaign flow smoke (local fixtures only, no mainnet)", () 
     });
     await moveToReview(campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
     await approvePolicy(campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
-    await registerTestWallet(fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
+    await registerTestWallet(fundingDeps, { workspaceId: "ws-A", userId: "owner-1" });
     const p = await prepareFundingIntent(fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
     await recordFundingSubmitted(fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1, fundingTxHash: txFor(1) });
     reader.receipts.set(txFor(1).toLowerCase(), {
