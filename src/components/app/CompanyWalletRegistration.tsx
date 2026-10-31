@@ -15,6 +15,7 @@ import {
   type CompanyWalletTypedData,
   type DiscoveredWallet,
 } from "@/lib/wallet";
+import { hashCompanyWalletTypedData, recoverCompanyWalletSigner } from "@/lib/walletCrypto";
 
 type Phase = "idle" | "working" | "connected" | "verified" | "done" | "error";
 
@@ -45,6 +46,14 @@ export function CompanyWalletRegistration({
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
   const [confirmChange, setConfirmChange] = useState(false);
   const [proof, setProof] = useState<{ nonce: string; provedWallet: string } | null>(null);
+  // Temporary owner-only digest diagnostic (no signature, nonce, or secrets).
+  const [diagnostic, setDiagnostic] = useState<{
+    accountParam: string;
+    clientRecovered: string | null;
+    clientHash: string | null;
+    serverRecovered: string | null;
+    serverHash: string | null;
+  } | null>(null);
   const availableRef = useRef<string[]>([]);
 
   function commitAccounts(list: string[]) {
@@ -89,6 +98,7 @@ export function CompanyWalletRegistration({
   async function connect() {
     setError(null);
     setNote(null);
+    setDiagnostic(null);
     setPhase("working");
     try {
       setNote("Looking for an injected wallet…");
@@ -123,6 +133,7 @@ export function CompanyWalletRegistration({
     if (!wallet || !account) return fail("Connect a wallet first.");
     signingRef.current = true;
     setError(null);
+    setDiagnostic(null);
     setPhase("working");
     try {
       // The explicitly selected account — never accounts[0] by assumption.
@@ -175,7 +186,20 @@ export function CompanyWalletRegistration({
         if (signed.failure === "USER_REJECTED") throw new Error("Signature request was rejected. Nothing was registered.");
         throw new Error(`${wallet.name} could not sign. Try again.`);
       }
-      const proof = await postJson<{ provedWallet: string }>(
+      // Digest-level diagnostic (temporary, owner-only): hash and recover
+      // the EXACT object sent to MetaMask, before the server sees anything.
+      // No signature, nonce, or secrets are stored or displayed.
+      let clientHash: string | null = null;
+      let clientRecovered: string | null = null;
+      try {
+        clientHash = hashCompanyWalletTypedData(typedData);
+        clientRecovered = await recoverCompanyWalletSigner(typedData, signed.signature);
+      } catch {
+        clientHash = null;
+        clientRecovered = null;
+      }
+      setDiagnostic({ accountParam: selected, clientRecovered, clientHash, serverRecovered: null, serverHash: null });
+      const proof = await postJson<{ provedWallet: string; typedDataHash: string }>(
         `/api/workspaces/${workspaceId}/company-wallet/prove`,
         { nonce, signature: signed.signature },
       );
@@ -194,6 +218,7 @@ export function CompanyWalletRegistration({
       }
       // Phase A complete: the SERVER recovered this wallet. Nothing is
       // registered yet — the user now explicitly confirms THAT wallet.
+      setDiagnostic((d) => (d ? { ...d, serverRecovered: proof.data.provedWallet, serverHash: proof.data.typedDataHash } : d));
       setProof({ nonce, provedWallet: proof.data.provedWallet });
       setConfirmChange(false);
       setPhase("verified");
@@ -211,6 +236,7 @@ export function CompanyWalletRegistration({
     setWallet(null);
     setConfirmChange(false);
     setProof(null);
+    setDiagnostic(null);
     setError(null);
     setNote(null);
     setPhase("idle");
@@ -359,6 +385,17 @@ export function CompanyWalletRegistration({
       )}
       {phase === "error" && error && (
         <p className="form-error" role="alert" style={{ fontSize: 13 }}>{error}</p>
+      )}
+      {diagnostic && (phase === "verified" || phase === "error") && (
+        <div style={{ border: "1px dashed var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 4 }}>
+          <strong style={{ fontSize: 13 }}>EIP-712 diagnostic (temporary, owner-only)</strong>
+          <span style={{ fontSize: 12 }}>MetaMask account param: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic.accountParam}</span></span>
+          <span style={{ fontSize: 12 }}>Client recovered signer: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic.clientRecovered ?? "<unrecoverable>"}</span></span>
+          <span style={{ fontSize: 12 }}>Client typed-data hash: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic.clientHash ?? "<unavailable>"}</span></span>
+          <span style={{ fontSize: 12 }}>Server recovered signer: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic.serverRecovered ?? "<pending>"}</span></span>
+          <span style={{ fontSize: 12 }}>Server typed-data hash: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic.serverHash ?? "<pending>"}</span></span>
+          <span style={{ fontSize: 12, opacity: 0.85 }}>The two hashes should match. No wallet was registered by this panel.</span>
+        </div>
       )}
       {phase === "error" && (
         <div style={{ display: "flex", gap: 8 }}>

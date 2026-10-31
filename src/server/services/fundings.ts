@@ -10,7 +10,7 @@ import {
   type UnsignedAction,
 } from "../chain/arc";
 import { campaignKeyFor, policyHashFor, type Hex32 } from "../chain/keys";
-import { recoverTypedDataAddress } from "viem";
+import { hashTypedData, recoverTypedDataAddress } from "viem";
 import {
   buildCompanyWalletTypedData,
   COMPANY_WALLET_DOMAIN,
@@ -167,7 +167,7 @@ export async function issueCompanyWalletChallenge(
 export async function proveCompanyWalletChallenge(
   deps: FundingDeps,
   params: { workspaceId: string; userId: string; nonce: string; signature: string },
-): Promise<{ provedWallet: string }> {
+): Promise<{ provedWallet: string; typedDataHash: string }> {
   await ownerOrFail(deps, params.workspaceId, params.userId);
   const now = deps.now?.() ?? new Date();
   const challenge = await challengeStore(deps).find(params.nonce);
@@ -187,6 +187,12 @@ export async function proveCompanyWalletChallenge(
     issuedAt: challenge.issuedAt,
     expiresAt: challenge.expiresAt,
   });
+  const typedDataHash = hashTypedData({
+    domain: { ...COMPANY_WALLET_DOMAIN },
+    types: COMPANY_WALLET_REGISTRATION_TYPES,
+    primaryType: "CompanyWalletRegistration",
+    message: { ...typedData.message },
+  });
   let recovered: string | null = null;
   try {
     recovered = await recoverTypedDataAddress({
@@ -205,7 +211,7 @@ export async function proveCompanyWalletChallenge(
   const provedWallet = normalizeAddress(recovered as string);
   const proved = await challengeStore(deps).prove(params.nonce, params.workspaceId, provedWallet);
   if (!proved) fail(409, "CHALLENGE_USED", "Registration challenge already used. Request a fresh one.");
-  return { provedWallet };
+  return { provedWallet, typedDataHash };
 }
 
 export async function registerCompanyWallet(

@@ -19,7 +19,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       nonce: parsed.data.nonce,
       signature: parsed.data.signature,
     });
-    return Response.json({ provedWallet: proof.provedWallet });
+    return Response.json({ provedWallet: proof.provedWallet, typedDataHash: proof.typedDataHash });
   } catch (err) {
     return toApiError(err);
   }

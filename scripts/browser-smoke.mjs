@@ -238,11 +238,65 @@ async function runWalletDiscovery(browser) {
   }
   // Mocked MetaMask: EIP-6963 + window.ethereum + providers[] visible,
   // accounts + Arc chain readable, zero transactions sent. No extension needed.
+  // Deterministic EIP-712 roundtrip: node precomputes a REAL signature with a
+  // throwaway test key (mirrors tests/wallet-fixtures.ts); the mock only
+  // releases it when the request payload is byte-identical to canonical.
+  const { privateKeyToAccount: smokePKTA } = await import("viem/accounts");
+  const { hashTypedData: smokeHashTypedData } = await import("viem");
+  const SMOKE_KEY = "0x96d8b4d4a3d1e17a76d1c8114237cc46fb89196fe4db85aae2f9f14c8ba560d7";
+  const SMOKE_ACCOUNT = smokePKTA(SMOKE_KEY);
+  const SMOKE_TYPED = {
+    domain: { name: "Thesma", version: "1", chainId: 5042 },
+    types: { CompanyWalletRegistration: [
+      { name: "workspaceId", type: "string" },
+      { name: "purpose", type: "string" },
+      { name: "nonce", type: "string" },
+      { name: "issuedAt", type: "string" },
+      { name: "expiresAt", type: "string" },
+    ] },
+    primaryType: "CompanyWalletRegistration",
+    message: {
+      workspaceId: "ws-smoke",
+      purpose: "Register this wallet as the organization's company wallet for Thesma campaign funding. This never moves funds.",
+      nonce: "smoke-nonce",
+      issuedAt: "2026-06-01T12:00:00.000Z",
+      expiresAt: "2026-06-01T12:10:00.000Z",
+    },
+  };
+  const SMOKE_JSON = JSON.stringify(SMOKE_TYPED);
+  const SMOKE_HASH = smokeHashTypedData(SMOKE_TYPED);
+  const SMOKE_SIG = await SMOKE_ACCOUNT.signTypedData({
+    domain: { ...SMOKE_TYPED.domain },
+    types: SMOKE_TYPED.types,
+    primaryType: "CompanyWalletRegistration",
+    message: { ...SMOKE_TYPED.message },
+  });
+  const esbuildSmoke = await import("esbuild");
+  const cryptoBundle = (await esbuildSmoke.build({
+    entryPoints: [path.join(ROOT, "src", "lib", "walletCrypto.ts")],
+    bundle: true,
+    format: "iife",
+    globalName: "ThesmaWalletCrypto",
+    platform: "browser",
+    minify: true,
+    write: false,
+  })).outputFiles[0].text;
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  await context.addInitScript(() => {
+  const walletBundle = (await esbuildSmoke.build({
+    entryPoints: [path.join(ROOT, "src", "lib", "wallet.ts")],
+    bundle: true,
+    format: "iife",
+    globalName: "ThesmaWallet",
+    platform: "browser",
+    write: false,
+  })).outputFiles[0].text;
+  await context.addInitScript(`${walletBundle}\n;window.ThesmaWallet = ThesmaWallet;`);
+  await context.addInitScript(`${cryptoBundle}\n;window.ThesmaWalletCrypto = ThesmaWalletCrypto;`);
+  await context.addInitScript((C) => {
     const calls = [];
     const FIRST = "0x1111111111111111111111111111111111111111";
-    const SELECTED = "0x1234567890abcdef1234567890abcdef12345678";
+    const SELECTED = C.address;
+    window.__smokeExpected = C;
     const provider = {
       isMetaMask: true,
       selectedAddress: SELECTED,
@@ -259,12 +313,11 @@ async function runWalletDiscovery(browser) {
           if (signer === "0x000000000000000000000000000000000000dEaD") {
             throw Object.assign(new Error("User rejected the request"), { code: 4001 });
           }
-          const payload = JSON.parse(json);
-          if (payload?.domain?.chainId !== 5042) throw new Error("unexpected domain");
-          if (payload?.primaryType !== "CompanyWalletRegistration") throw new Error("unexpected type");
-          const fields = (payload?.types?.CompanyWalletRegistration || []).map((f) => f.name).join(",");
-          if (fields !== "workspaceId,purpose,nonce,issuedAt,expiresAt") throw new Error("unexpected fields: " + fields);
-          return "0x" + "ab".repeat(65);
+          // Deterministic: release the real signature only for the exact
+          // canonical payload — any digest drift fails loudly here.
+          if (signer !== C.address) throw new Error("unexpected signer param");
+          if (json !== C.json) throw new Error("payload mismatch");
+          return C.sig;
         }
         return null;
       },
@@ -279,6 +332,11 @@ async function runWalletDiscovery(browser) {
         }),
       );
     });
+  }, {
+    address: SMOKE_ACCOUNT.address,
+    json: SMOKE_JSON,
+    sig: SMOKE_SIG,
+    hash: SMOKE_HASH,
   });
   const page = await context.newPage();
   const consoleErrors = [];
@@ -326,40 +384,37 @@ async function runWalletDiscovery(browser) {
     check(`${label}: mock MetaMask visible via window.ethereum`, probe.typeofEth !== "undefined" && probe.isMetaMask === true);
     check(`${label}: multi-provider array exposes MetaMask`, probe.multiProvider === true);
     check(`${label}: accounts readable (connect state, not "not installed")`, Array.isArray(probe.accounts) && probe.accounts.length === 2);
-    check(`${label}: UI-selected account exposed separately from accounts[0]`, probe.selectedAddress === "0x1234567890abcdef1234567890abcdef12345678", `selected=${probe.selectedAddress}`);
+    check(`${label}: UI-selected account exposed separately from accounts[0]`, typeof probe.selectedAddress === "string" && probe.selectedAddress !== probe.accounts[0] && probe.accounts.includes(probe.selectedAddress), `selected=${probe.selectedAddress}`);
     check(`${label}: Arc Mainnet chain 5042 reported`, probe.chainId === "0x13b2", `chainId=${probe.chainId}`);
     check(`${label}: EIP-6963 MetaMask announcement received`, probe.eip6963Rdns === "io.metamask", `rdns=${probe.eip6963Rdns}`);
     const typed = await page.evaluate(async () => {
       const eth = window.ethereum;
-      const out = { sig: null, rejected: false, shape: null };
-      const typedData = {
-        domain: { name: "Thesma", version: "1", chainId: 5042 },
-        types: {
-          CompanyWalletRegistration: [
-            { name: "workspaceId", type: "string" },
-                { name: "purpose", type: "string" },
-            { name: "nonce", type: "string" },
-            { name: "issuedAt", type: "string" },
-            { name: "expiresAt", type: "string" },
-          ],
-        },
-        primaryType: "CompanyWalletRegistration",
-        message: {
-          workspaceId: "ws-smoke",
-            purpose: "Register this wallet as the organization's company wallet for Thesma campaign funding. This never moves funds.",
-          nonce: "smoke-nonce",
-          issuedAt: "2026-06-01T12:00:00.000Z",
-          expiresAt: "2026-06-01T12:10:00.000Z",
-        },
-      };
+      const W = window.ThesmaWallet;
+      const WC = window.ThesmaWalletCrypto;
+      const expected = window.__smokeExpected;
+      const out = { sig: null, rejected: false, shape: null, builtMatches: false, hashMatches: false, recoveredMatches: false };
+      // Build with the REAL helper — no hardcoded schema in the test.
+      const typedData = W.buildCompanyWalletTypedData({
+        workspaceId: "ws-smoke",
+        nonce: "smoke-nonce",
+        issuedAt: "2026-06-01T12:00:00.000Z",
+        expiresAt: "2026-06-01T12:10:00.000Z",
+      });
       try {
+        out.builtMatches = JSON.stringify(typedData) === expected.json;
+        const hash = WC.hashCompanyWalletTypedData(typedData);
+        out.hashMatches = hash === expected.hash;
         const sig = await eth.request({
           method: "eth_signTypedData_v4",
-          params: ["0x1234567890abcdef1234567890abcdef12345678", JSON.stringify(typedData)],
+          params: [expected.address, JSON.stringify(typedData)],
         });
         out.sig = sig;
-        out.shape = typeof sig === "string" && sig.startsWith("0x") && sig.length === 132 ? "ok" : `bad:${String(sig).length}`;
-      } catch {}
+        out.shape = typeof sig === "string" && sig.startsWith("0x") && sig.length === 132 ? "ok" : 'bad:' + String(sig).length;
+        const recovered = await WC.recoverCompanyWalletSigner(typedData, sig);
+        out.recoveredMatches = recovered.toLowerCase() === expected.address.toLowerCase();
+      } catch (e) {
+        out.shape = 'error:' + (e?.message ?? e);
+      }
       try {
         await eth.request({
           method: "eth_signTypedData_v4",
@@ -370,7 +425,10 @@ async function runWalletDiscovery(browser) {
       }
       return out;
     });
-    check(`${label}: typed registration request signs (EIP-712, no high-risk blob)`, typed.shape === "ok", `shape=${typed.shape}`);
+    check(`${label}: real helper builds byte-identical canonical payload`, typed.builtMatches === true);
+    check(`${label}: in-browser digest equals node-computed digest`, typed.hashMatches === true);
+    check(`${label}: deterministic test-key signature verifies (EIP-712, no high-risk blob)`, typed.shape === "ok", `shape=${typed.shape}`);
+    check(`${label}: recovered signer equals the selected account param`, typed.recoveredMatches === true);
     check(`${label}: rejection surfaces as user-rejected`, typed.rejected === true);
     const frozen = await page.evaluate(() => {
       const payload = {
