@@ -7,6 +7,7 @@ import { EvidenceHash } from "@/components/proof/EvidenceHash";
 import { LifecycleStrip } from "@/components/proof/LifecycleStrip";
 import { deriveLifecycle } from "@/components/proof/lifecycle";
 import { Card, PageHeader, Pill } from "@/components/app/ui";
+import { PublicFooter } from "@/components/trust/PublicFooter";
 import { formatDateTime, formatUsdc } from "@/lib/format";
 import {
   addressExplorerUrl,
@@ -429,6 +430,7 @@ export default async function DemoPage() {
           </Link>
         </section>
 
+        <PublicFooter />
         <section
           aria-label="Run your own campaign"
           style={{ borderRadius: 18, background: "var(--ink, #131417)", color: "#fff", padding: "28px 24px", display: "grid", gap: 12 }}

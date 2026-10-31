@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/brand/Logo";
+import { PublicFooter } from "@/components/trust/PublicFooter";
 import styles from "@/components/start/start.module.css";
 
 export const metadata: Metadata = {
@@ -75,6 +76,7 @@ export default function SecurityPage() {
             </Link>
           </div>
         </section>
+        <PublicFooter />
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { listCompletedMarkets, listPublicMarkets } from "@/server/services/markets";
 import { LogoMark } from "@/components/brand/Logo";
 import { Card, EmptyState, PageHeader, Pill, ProgressBar } from "@/components/app/ui";
+import { PublicFooter } from "@/components/trust/PublicFooter";
 import { LifecycleStrip } from "@/components/proof/LifecycleStrip";
 import { deriveLifecycle } from "@/components/proof/lifecycle";
 import { shouldPromoteCompleted } from "@/lib/proof";
@@ -122,6 +123,7 @@ export default async function MarketsPage() {
         </section>
         )}
         {!promoteCompleted && <CompletedMarkets completed={completed} />}
+        <PublicFooter />
       </div>
     </main>
   );

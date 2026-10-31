@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 import { Logo } from "@/components/brand/Logo";
+import { PersistRole } from "@/components/start/PersistRole";
 import { RoleCards } from "@/components/start/RoleCards";
 import { getSessionUser } from "@/server/auth/guard";
 import { isDbConfigured } from "@/server/db/client";
 import { getPartnerByUserId } from "@/server/services/partners";
 import { listUserWorkspaces } from "@/server/services/workspaces";
-import { PERSONA_COOKIE, getPersonaByUserId, parsePersona, personaFromEnum, personaHome } from "@/server/services/personas";
+import { getPersonaByUserId, parsePersona, personaFromEnum, personaHome } from "@/server/services/personas";
 import styles from "@/components/start/start.module.css";
 
 export const metadata: Metadata = { title: "Start" };
@@ -36,16 +36,11 @@ async function returningDestination(): Promise<string | null> {
 export default async function StartPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const change = params.change === "1";
-  // Honor an explicit role hint without tracking params: persist it server-side.
+  // Honor an explicit role hint (?role= direct link): RoleCards persists
+  // every click through POST /api/persona/select, and <PersistRole> below
+  // does the same for direct links — Server Components cannot set cookies
+  // at runtime (it 500s in production).
   const hinted = parsePersona(Array.isArray(params.role) ? params.role[0] : params.role);
-  if (hinted) {
-    (await cookies()).set(PERSONA_COOKIE, hinted, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  }
   if (!change) {
     const dest = await returningDestination();
     if (dest) redirect(dest);
@@ -66,6 +61,7 @@ export default async function StartPage({ searchParams }: { searchParams: Promis
           <h1>How will you use Thesma?</h1>
           <p>Choose what you&apos;re here to do. Thesma will shape the experience around you.</p>
         </div>
+        {hinted && <PersistRole role={hinted} />}
         <RoleCards />
         <p className={styles.footnote}>
           Just browsing? <Link href="/markets">Explore live markets</Link> — no login required.

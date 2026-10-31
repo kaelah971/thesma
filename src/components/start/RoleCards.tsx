@@ -49,12 +49,14 @@ export function RoleCards() {
     setPending(persona);
     setError(null);
     // Cookie is best-effort pre-auth; /welcome re-resolves server-side.
+    // The ?role= param carries the same intent explicitly so /signin can
+    // show role-specific copy even if the cookie write is still in flight.
     await fetch("/api/persona/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ persona }),
     }).catch(() => null);
-    router.push("/welcome");
+    router.push(`/signin?role=${persona}&next=/welcome`);
     router.refresh();
   }
 

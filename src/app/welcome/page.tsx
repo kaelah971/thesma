@@ -24,11 +24,13 @@ import {
  */
 export default async function WelcomePage() {
   if (!isDbConfigured()) redirect("/start");
-  const user = await getSessionUser();
-  if (!user) redirect("/signin?next=/welcome");
-
   const jar = await cookies();
   const cookiePersona = parsePersona(jar.get(PERSONA_COOKIE)?.value);
+  const user = await getSessionUser();
+  // Keep role intent visible across the auth redirect: the persona cookie
+  // survives server-side, and the ?role= param lets /signin show
+  // role-specific copy for direct links too.
+  if (!user) redirect(cookiePersona ? `/signin?role=${cookiePersona}&next=/welcome` : "/signin?next=/welcome");
 
   let row = await getPersonaByUserId(user.userId);
   if (!row && cookiePersona) {

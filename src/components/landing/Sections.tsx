@@ -3,6 +3,8 @@ import Link from "next/link";
 import { Logo, LogoMark } from "@/components/brand/Logo";
 import { Rail } from "@/components/ui/Rail";
 import { ArrowIcon, CalloutGlyph, type Glyph } from "./Hero";
+import { GITHUB_REPO_URL } from "@/components/trust/PublicFooter";
+import { ARC_EXPLORER_FALLBACK, sourcifyContractUrl } from "@/lib/proof";
 import styles from "./landing.module.css";
 
 /** Scroll reveal hook (see RevealObserver). `i` staggers siblings. */
@@ -490,6 +492,22 @@ export function SiteFooter() {
                 <h3>Get started</h3>
                 <Link href="/signin?next=/app/campaigns/new">Launch a campaign</Link>
                 <Link href="/signin">Open app</Link>
+              </div>
+              <div>
+                <h3>Trust</h3>
+                <Link href="/demo">Live proof</Link>
+                <a href={sourcifyContractUrl()} target="_blank" rel="noreferrer">
+                  Verified contract
+                </a>
+                <a href={ARC_EXPLORER_FALLBACK} target="_blank" rel="noreferrer">
+                  Arc Mainnet
+                </a>
+                <Link href="/security">Security</Link>
+                <Link href="/terms">Terms</Link>
+                <Link href="/privacy">Privacy</Link>
+                <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+                  GitHub
+                </a>
               </div>
             </nav>
           </div>
