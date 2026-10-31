@@ -218,6 +218,109 @@ async function runDemoProof(browser) {
   }
 }
 
+async function runWalletDiscovery(browser) {
+  const label = "wallet-discovery";
+  console.log(`\n[${label}]`);
+  // Baseline: clean CI Chromium ships no extension — the funding flow must
+  // report "not detected" here rather than crash or mislabel.
+  {
+    const { page, context, consoleErrors, pageErrors } = await newPage(browser, 1280);
+    try {
+      await page.goto(BASE, { waitUntil: "load", timeout: 30_000 });
+      await page.waitForTimeout(800);
+      const typeofEth = await page.evaluate(() => typeof window.ethereum);
+      check(`${label}: no-provider baseline is observable`, typeofEth === "undefined", `typeof window.ethereum=${typeofEth}`);
+      const { hydration } = firstPartyFailures(consoleErrors, pageErrors);
+      check(`${label}: no hydration errors (no provider)`, hydration.length === 0, hydration.slice(0, 2).join(" | "));
+    } finally {
+      await context.close();
+    }
+  }
+  // Mocked MetaMask: EIP-6963 + window.ethereum + providers[] visible,
+  // accounts + Arc chain readable, zero transactions sent. No extension needed.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript(() => {
+    const calls = [];
+    const provider = {
+      isMetaMask: true,
+      async request({ method }) {
+        calls.push(method);
+        if (method === "eth_accounts" || method === "eth_requestAccounts") {
+          return ["0x1234567890abcdef1234567890abcdef12345678"];
+        }
+        if (method === "eth_chainId") return "0x13b2"; // 5042 Arc Mainnet
+        if (method === "wallet_switchEthereumChain") return null;
+        return null;
+      },
+    };
+    window.__mockWalletCalls = calls;
+    window.ethereum = provider;
+    provider.providers = [provider];
+    window.addEventListener("eip6963:requestProvider", () => {
+      window.dispatchEvent(
+        new CustomEvent("eip6963:announceProvider", {
+          detail: { info: { uuid: "mock-uuid", name: "MetaMask", icon: "", rdns: "io.metamask" }, provider },
+        }),
+      );
+    });
+  });
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") consoleErrors.push(msg.text());
+  });
+  page.on("pageerror", (err) => pageErrors.push(String(err?.message ?? err)));
+  try {
+    await page.goto(BASE, { waitUntil: "load", timeout: 30_000 });
+    await page.waitForTimeout(800);
+    const probe = await page.evaluate(async () => {
+      const eth = window.ethereum;
+      const out = {
+        typeofEth: typeof eth,
+        isMetaMask: eth?.isMetaMask === true,
+        multiProvider: Array.isArray(eth?.providers) && eth.providers[0]?.isMetaMask === true,
+        accounts: null,
+        chainId: null,
+        eip6963Rdns: null,
+      };
+      try {
+        out.accounts = await eth.request({ method: "eth_accounts" });
+      } catch {}
+      try {
+        out.chainId = await eth.request({ method: "eth_chainId" });
+      } catch {}
+      try {
+        const found = await new Promise((resolve) => {
+          const seen = [];
+          const onAnnounce = (e) => seen.push(e.detail);
+          window.addEventListener("eip6963:announceProvider", onAnnounce);
+          window.dispatchEvent(new Event("eip6963:requestProvider"));
+          setTimeout(() => {
+            window.removeEventListener("eip6963:announceProvider", onAnnounce);
+            resolve(seen);
+          }, 400);
+        });
+        const meta = found.find((d) => /metamask/i.test(d?.info?.rdns ?? ""));
+        out.eip6963Rdns = meta?.info?.rdns ?? null;
+      } catch {}
+      return out;
+    });
+    check(`${label}: mock MetaMask visible via window.ethereum`, probe.typeofEth !== "undefined" && probe.isMetaMask === true);
+    check(`${label}: multi-provider array exposes MetaMask`, probe.multiProvider === true);
+    check(`${label}: accounts readable (connect state, not "not installed")`, Array.isArray(probe.accounts) && probe.accounts.length === 1);
+    check(`${label}: Arc Mainnet chain 5042 reported`, probe.chainId === "0x13b2", `chainId=${probe.chainId}`);
+    check(`${label}: EIP-6963 MetaMask announcement received`, probe.eip6963Rdns === "io.metamask", `rdns=${probe.eip6963Rdns}`);
+    const sent = await page.evaluate(() => window.__mockWalletCalls ?? []);
+    check(`${label}: discovery sent zero transactions`, !sent.includes("eth_sendTransaction"), sent.join(","));
+    const { csp, hydration } = firstPartyFailures(consoleErrors, pageErrors);
+    check(`${label}: no CSP-blocked scripts during wallet probing`, csp.length === 0, csp.slice(0, 2).join(" | "));
+    check(`${label}: no hydration errors (mock provider)`, hydration.length === 0, hydration.slice(0, 2).join(" | "));
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   if (!existsSync(path.join(ROOT, ".next", "required-server-files.json"))) {
     console.error("No production build found. Run `npm run build` first, then `npm run test:browser`.");
@@ -248,6 +351,7 @@ async function main() {
     await runWidth(browser, DESKTOP_WIDTH, docCsp);
     for (const w of MOBILE_WIDTHS) await runWidth(browser, w, docCsp);
     await runDemoProof(browser);
+    await runWalletDiscovery(browser);
   } finally {
     await browser.close().catch(() => {});
     server.kill();

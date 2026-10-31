@@ -112,15 +112,24 @@ describe("public trust surface ships with the app", () => {
     // click handlers, never in effects or module scope.
     const buy = readFileSync(join(root, "src/components/buy/BuyCheckout.tsx"), "utf8");
     const funding = readFileSync(join(root, "src/components/app/CampaignFunding.tsx"), "utf8");
-    for (const [name, src] of [["BuyCheckout", buy], ["CampaignFunding", funding]] as const) {
-      const requests = src.split("eth_requestAccounts").length - 1;
-      expect(requests, `${name} wallet requests`).toBeGreaterThan(0);
+    // Funding discovery lives in a shared helper invoked only from click
+    // handlers (begin/switchChain/execute) — the same boot-path ban applies.
+    const walletLib = readFileSync(join(root, "src/lib/wallet.ts"), "utf8");
+    for (const [name, src] of [["BuyCheckout", buy], ["CampaignFunding", funding], ["wallet helper", walletLib]] as const) {
       // No request call inside a useEffect boot path.
       const effects = src.match(/useEffect\(\(\) => \{[\s\S]*?\n  \}, \[/g) ?? [];
       for (const e of effects) expect(e, `${name} effect`).not.toContain("eth_requestAccounts");
     }
+    // Wallet requests exist and live behind explicit user gestures:
+    // BuyCheckout calls the provider directly; CampaignFunding reaches it
+    // only through the shared helper invoked from click handlers.
+    expect(buy.split("eth_requestAccounts").length - 1, "BuyCheckout wallet requests").toBeGreaterThan(0);
+    const fundingRequests =
+      funding.split("eth_requestAccounts").length - 1 + walletLib.split("eth_requestAccounts").length - 1;
+    expect(fundingRequests, "CampaignFunding wallet requests (component + helper)").toBeGreaterThan(0);
+    expect(funding, "CampaignFunding uses the shared discovery helper").toContain("discoverWallet");
     // Nobody asks for the one thing a wallet must never reveal.
-    for (const [name, src] of [["BuyCheckout", buy], ["CampaignFunding", funding]] as const) {
+    for (const [name, src] of [["BuyCheckout", buy], ["CampaignFunding", funding], ["wallet helper", walletLib]] as const) {
       expect(src.toLowerCase(), name).not.toContain("seed phrase");
       expect(src.toLowerCase(), name).not.toContain("recovery phrase");
       expect(src.toLowerCase(), name).not.toContain("private key");

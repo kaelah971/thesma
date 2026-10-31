@@ -3,6 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getJson, postJson } from "@/lib/api";
+import {
+  connectWallet,
+  discoverWallet,
+  getWalletState,
+  switchToNetwork,
+  truncateAddress,
+  type DiscoveredWallet,
+  type InjectedProvider,
+} from "@/lib/wallet";
 
 type Purpose = "create-campaign" | "approve-usdc" | "fund-campaign";
 
@@ -52,10 +61,8 @@ function fmtMicro(raw: string): string {
   }
 }
 
-function eth(): { request(a: { method: string; params?: unknown }): Promise<unknown> } {
-  const w = window as unknown as { ethereum?: { request(a: { method: string; params?: unknown }): Promise<unknown> } };
-  if (!w.ethereum) throw new Error("MetaMask is not installed in this browser. Install it, then try again.");
-  return w.ethereum;
+function providerName(w: DiscoveredWallet | null): string {
+  return w?.name ?? "your wallet";
 }
 
 type Phase =
@@ -96,6 +103,8 @@ export function CampaignFunding({
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [account, setAccount] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<DiscoveredWallet | null>(null);
+  const [needsSwitch, setNeedsSwitch] = useState(false);
   const [actions, setActions] = useState<FundingAction[]>([]);
   const [completed, setCompleted] = useState<Purpose[]>([]);
   const [activeStep, setActiveStep] = useState<Purpose | null>(null);
@@ -135,20 +144,51 @@ export function CampaignFunding({
   async function begin() {
     setError(null);
     setNote(null);
+    setNeedsSwitch(false);
     setPhase("working");
+    setNote("Looking for an injected wallet…");
     try {
-      const provider = eth();
-      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-      const connected = accounts?.[0];
+      // Re-discovered on every attempt: never cache "not installed".
+      // EIP-6963 + multi-provider aware, tolerant of delayed injection.
+      const found = await discoverWallet();
+      if (!found) {
+        throw new Error(
+          "MetaMask or another compatible wallet was not detected. Install MetaMask (or another injected wallet), unlock it, then try again.",
+        );
+      }
+      setWallet(found);
+      const provider = found.provider;
+      // Silent probe first — already-connected wallets skip the prompt entirely.
+      const probe = await getWalletState(provider, chainId);
+      let connected: string | null = null;
+      if (probe.state === "READY" || probe.state === "WRONG_NETWORK") {
+        connected = probe.account;
+      } else {
+        setNote(`Waiting for ${found.name} — approve the connection request.`);
+        const res = await connectWallet(provider);
+        if ("failure" in res) {
+          if (res.failure === "USER_REJECTED") {
+            throw new Error("Connection request was rejected in the wallet. Click Fund campaign to try again.");
+          }
+          if (res.failure === "NO_ACCOUNT") {
+            throw new Error(`${found.name} returned no account. Unlock it and try again.`);
+          }
+          throw new Error(`${found.name} could not connect. Unlock it and try again.`);
+        }
+        connected = res.account;
+      }
       if (!connected) throw new Error("No account returned by the wallet.");
       if (!expectedSender || connected.toLowerCase() !== expectedSender.toLowerCase()) {
         throw new Error(
-          `Wrong account. Connected ${connected}, but this campaign must be funded from ${expectedSender ?? "the registered company wallet"}. Switch accounts in MetaMask and try again.`,
+          `Wrong account. Connected ${truncateAddress(connected)}, but this campaign must be funded from ${expectedSender ? truncateAddress(expectedSender) : "the registered company wallet"}. Switch accounts in ${found.name} and try again.`,
         );
       }
-      const currentChain = (await provider.request({ method: "eth_chainId" })) as string;
-      if (currentChain.toLowerCase() !== chainHex.toLowerCase()) {
-        throw new Error(`Wrong network. MetaMask is on ${currentChain} — switch to ${chainName} (${chainHex}) and try again.`);
+      const currentChain = (await provider.request({ method: "eth_chainId" }).catch(() => null)) as string | null;
+      if (!currentChain || currentChain.toLowerCase() !== chainHex.toLowerCase()) {
+        setNeedsSwitch(true);
+        throw new Error(
+          `${found.name} is on ${currentChain ?? "an unknown network"} — switch to ${chainName} (${chainHex}) to continue.`,
+        );
       }
       const data = await loadActions();
       if (data.confirmReady || data.actions.length === 0) {
@@ -177,8 +217,29 @@ export function CampaignFunding({
     return true;
   }
 
-  async function waitForReceipt(hash: string): Promise<"success" | "reverted" | "unknown"> {
-    const provider = eth();
+  async function switchChain() {
+    if (!wallet) return fail("Wallet disconnected. Start again.");
+    setError(null);
+    setNeedsSwitch(false);
+    setPhase("working");
+    setNote(`Asking ${wallet.name} to switch to ${chainName}…`);
+    const res = await switchToNetwork(wallet.provider, chainId);
+    if ("failure" in res) {
+      if (res.failure === "USER_REJECTED") {
+        return fail("Network switch was rejected in the wallet. Switch to Arc Mainnet manually and retry.");
+      }
+      if (res.failure === "CHAIN_NOT_ADDED") {
+        setNeedsSwitch(true);
+        return fail(
+          `Your wallet does not know ${chainName} (${chainHex}) yet. Add Arc Mainnet (chain 5042) in ${wallet.name}, then retry.`,
+        );
+      }
+      return fail(`${wallet.name} could not switch networks. Switch to ${chainName} manually and retry.`);
+    }
+    await begin();
+  }
+
+  async function waitForReceipt(provider: InjectedProvider, hash: string): Promise<"success" | "reverted" | "unknown"> {
     for (let i = 0; i < 240; i++) {
       await new Promise((r) => setTimeout(r, 2500));
       const receipt = (await provider
@@ -193,9 +254,10 @@ export function CampaignFunding({
 
   async function execute() {
     if (!account) return fail("Wallet disconnected. Start again.");
+    const provider = wallet?.provider;
+    if (!provider) return fail("Wallet disconnected. Start again.");
     setError(null);
     setPhase("signing");
-    const provider = eth();
     for (const action of actions) {
       if (action.chainId !== chainId) {
         return fail(`Backend action targets chain ${action.chainId}, expected ${chainId}. Stopped before signing.`);
@@ -213,12 +275,12 @@ export function CampaignFunding({
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (/rejected|denied|user/i.test(msg)) {
-          return fail(`You rejected the "${STEP_LABEL[action.purpose]}" confirmation in MetaMask. Nothing was broadcast for that step — click ${resumable ? "Continue funding" : "Fund campaign"} to retry when ready.`);
+          return fail(`You rejected the "${STEP_LABEL[action.purpose]}" confirmation in ${providerName(wallet)}. Nothing was broadcast for that step — click ${resumable ? "Continue funding" : "Fund campaign"} to retry when ready.`);
         }
         return fail(`Wallet refused to send "${STEP_LABEL[action.purpose]}": ${msg}. Nothing was recorded — safe to retry.`);
       }
       setLastHash(hash);
-      const outcome = await waitForReceipt(hash);
+      const outcome = await waitForReceipt(provider, hash);
       if (outcome === "reverted") {
         await recordHash(action.purpose, hash);
         return fail(`Transaction ${hash} reverted onchain. It has been recorded so it will never be silently retried. Funding is stopped — report this hash.`);
@@ -268,6 +330,8 @@ export function CampaignFunding({
     );
   }
 
+  const vaultDestination = actions.find((a) => a.purpose === "fund-campaign")?.to ?? null;
+
   if (phase === "preflight") {
     return (
       <div style={{ display: "grid", gap: 8 }}>
@@ -275,8 +339,12 @@ export function CampaignFunding({
           Amount to fund: <strong>{expectedAmountMicro ? `${fmtMicro(expectedAmountMicro)} USDC` : "—"}</strong>
         </p>
         <p style={{ fontSize: 14 }}>Network: <strong>{chainName}</strong></p>
-        <p style={{ fontSize: 14 }}>Connected wallet: <span className="mono">{account}</span></p>
-        <p style={{ fontSize: 14 }}>Expected company wallet: <span className="mono">{expectedSender}</span></p>
+        <p style={{ fontSize: 14 }}>Asset: <strong>USDC</strong></p>
+        {vaultDestination && (
+          <p style={{ fontSize: 14 }}>Destination: <span className="mono" title={vaultDestination}>{truncateAddress(vaultDestination)}</span> (Thesma vault)</p>
+        )}
+        <p style={{ fontSize: 14 }}>Connected wallet: <span className="mono" title={account ?? ""}>{truncateAddress(account)}</span>{wallet ? ` (${wallet.name})` : ""}</p>
+        <p style={{ fontSize: 14 }}>Expected company wallet: <span className="mono" title={expectedSender ?? ""}>{truncateAddress(expectedSender)}</span></p>
         <p style={{ fontSize: 13, opacity: 0.8 }}>{actions.length} wallet confirmation{actions.length === 1 ? "" : "s"} may be required — one at a time.</p>
         <ol style={{ fontSize: 14, margin: 0, paddingLeft: 20 }}>
           {actions.map((a) => (
@@ -320,8 +388,13 @@ export function CampaignFunding({
       {phase === "error" && error && (
         <p className="form-error" role="alert" style={{ fontSize: 14 }}>{error}</p>
       )}
+      {phase === "error" && needsSwitch && wallet && (
+        <button type="button" className="btn btn-primary" onClick={switchChain}>
+          Switch to {chainName} in {wallet.name}
+        </button>
+      )}
       {phase === "error" && (
-        <button type="button" className="btn btn-ghost" onClick={() => { setPhase("idle"); setError(null); }}>
+        <button type="button" className="btn btn-ghost" onClick={() => { setPhase("idle"); setError(null); setNeedsSwitch(false); }}>
           Back
         </button>
       )}
