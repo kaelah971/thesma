@@ -196,6 +196,28 @@ async function runWidth(browser, width, docCsp) {
   }
 }
 
+async function runDemoProof(browser) {
+  const label = "demo";
+  console.log(`\n[${label}]`);
+  const { page, context, consoleErrors, pageErrors } = await newPage(browser, 390);
+  try {
+    const res = await page.goto(`${BASE}/demo`, { waitUntil: "load", timeout: 30_000 });
+    await page.waitForTimeout(1500);
+    check(`${label}: responds 200`, res?.ok() === true, `status=${res?.status()}`);
+    const body = await page.locator("body").innerText();
+    // CI has no database: the honest unavailable card also counts as loaded.
+    // What must never happen is a 500, an empty shell, or a silent fixture.
+    check(
+      `${label}: public proof loads (proof or honest unavailable)`,
+      /watch a real campaign settle|proof data is temporarily unavailable/i.test(body),
+    );
+    const { hydration } = firstPartyFailures(consoleErrors, pageErrors);
+    check(`${label}: no hydration errors`, hydration.length === 0, hydration.slice(0, 2).join(" | "));
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   if (!existsSync(path.join(ROOT, ".next", "required-server-files.json"))) {
     console.error("No production build found. Run `npm run build` first, then `npm run test:browser`.");
@@ -225,6 +247,7 @@ async function main() {
 
     await runWidth(browser, DESKTOP_WIDTH, docCsp);
     for (const w of MOBILE_WIDTHS) await runWidth(browser, w, docCsp);
+    await runDemoProof(browser);
   } finally {
     await browser.close().catch(() => {});
     server.kill();

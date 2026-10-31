@@ -392,10 +392,17 @@ npm test             # vitest run — 246 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 npm run mainnet:preflight  # read-only production readiness gate (never signs/broadcasts; exit 1 when BLOCKED)
+npm run secret:hygiene    # tracked-secret hygiene (filenames + key material; fixtures allowlisted)
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **246 passing, 2 skipped** (the 2 skips require `ARC_ANVIL_TESTS=1` with a local Anvil node). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **656 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+
+## Release gate (CI)
+
+[![CI](https://github.com/kaelah971/thesma/actions/workflows/ci.yml/badge.svg)](https://github.com/kaelah971/thesma/actions/workflows/ci.yml)
+
+Every push to `main` and every PR must pass `.github/workflows/ci.yml` (pinned Node 22, `contents: read`, zero production secrets): quality (typecheck + lint + full tests) · DB-independent build (absent AND unreachable `DATABASE_URL`, fake credentials only) · real-browser smoke against a local prod server (CSP, hydration, menu, role gateway, `/demo`) · `npm audit` policy (fail on critical/high; moderate dev-tooling residuals reported, never auto-fixed) · `forge test` (local only, no RPC/keys) · tracked-secret hygiene.
 
 ## Security guarantees
 

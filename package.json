@@ -16,6 +16,7 @@
     "arc:doctor": "tsx ./scripts/arc-doctor.ts",
     "mainnet:preflight": "tsx ./scripts/mainnet-preflight.ts",
     "production:doctor": "tsx ./scripts/mainnet-preflight.ts",
+    "secret:hygiene": "bash scripts/secret-hygiene.sh",
     "test:browser": "node ./scripts/browser-smoke.mjs"
   },
   "dependencies": {

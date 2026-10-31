@@ -1,0 +1,124 @@
+name: CI
+
+# Release gate: install → typecheck → lint → tests → builds → browser
+# smoke → dependency security → contracts → secret hygiene. Reproducible on
+# GitHub-hosted runners with zero production secrets and zero production
+# database access (builds run with DATABASE_URL absent AND unreachable).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: no job writes to the repository.
+permissions:
+  contents: read
+
+# Stale runs for the same PR/branch cancel; main runs always complete so the
+# release state is never hidden.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  quality:
+    name: Quality (typecheck, lint, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      # Full suite runs once here. The 2 Anvil/env-gated tests
+      # (checkout.anvil, payout.anvil) intentionally skip without a local
+      # Anvil binary; core payment tests are NOT skipped.
+      - run: npm test
+
+  build:
+    name: Build (DB-independent)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Hardening 1: a generic contributor build must not require a database.
+      - name: Build with DATABASE_URL absent
+        run: env -u DATABASE_URL npm run build
+      # An unreachable URL must not cause build-time DB access either.
+      # Fake credentials only — this job must never contact production.
+      - name: Build with unreachable DATABASE_URL
+        run: npm run build
+        env:
+          DATABASE_URL: postgres://ci-user:ci-fake-password@invalid.invalid:5432/thesma?sslmode=verify-full
+
+  browser-smoke:
+    name: Browser smoke (local prod server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Production build (no database)
+        run: env -u DATABASE_URL npm run build
+      - name: Install Chrome for playwright-core
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      # Drives a local `next start` server only — never production.
+      - name: Real-browser smoke (CSP, hydration, menu, gateway, /demo)
+        run: npm run test:browser
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+
+  dependency-security:
+    name: Dependency security (npm audit policy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      # Deterministic policy script: FAIL on critical/high, report the
+      # documented moderate dev-tooling residuals. Never `audit fix --force`.
+      - run: node scripts/audit-policy.mjs
+
+  contracts:
+    name: Contracts (forge test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+      # Pure unit/invariant tests: local Anvil/Foundry behavior only.
+      # No mainnet key, no production RPC, no wallet secrets.
+      - run: forge test
+        working-directory: contracts
+
+  secret-hygiene:
+    name: Secret hygiene (tracked files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # Fails on tracked .env/private keys/mnemonics/secret material.
+      # Allowlisted: .env.example, public addresses/hashes, clearly-labeled
+      # test fixtures. Prints locations only, never secret contents.
+      - run: bash scripts/secret-hygiene.sh
