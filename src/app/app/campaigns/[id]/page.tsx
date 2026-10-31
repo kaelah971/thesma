@@ -104,7 +104,11 @@ export default async function CampaignPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const { id } = await params;
-  const { drafted } = await searchParams;
+  const { drafted, creator } = await searchParams;
+  // Optional deep link from a public creator profile (?creator=<creatorUserId>).
+  // Only pre-highlights a creator already visible in Creator Matches; unknown
+  // ids are ignored and all authorization stays inside the match/invite flow.
+  const highlightCreatorUserId = typeof creator === "string" && creator.length > 0 ? creator : undefined;
   const { snapshot } = await requireWorkspace();
   if (!snapshot) return <NoWorkspace />;
   const campaign = snapshot.campaigns.find((c) => c.id === id);
@@ -322,7 +326,7 @@ export default async function CampaignPage({
               ? " Advisory matches work before funding; the market opens after funding."
               : ""}
           </p>
-          <CreatorMatchesPanel campaignId={campaign.id} />
+          <CreatorMatchesPanel campaignId={campaign.id} highlightCreatorUserId={highlightCreatorUserId} />
         </Card>
         <Card title="Participants">
           {participantRows.length ? (

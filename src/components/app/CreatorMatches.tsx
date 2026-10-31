@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { postJson, serverErrorMessage } from "@/lib/api";
 import { formatUsdc } from "@/lib/format";
 import type { MatchEngineReport, OrganizationCreatorMatch } from "@/server/services/matching";
@@ -96,7 +96,14 @@ function buildDealPayload(f: HybridForm, bountyMicro: string): Record<string, un
  * match service (deterministic, server-side); this panel filters and
  * invites. No client-side scoring anywhere.
  */
-export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
+export function CreatorMatchesPanel({
+  campaignId,
+  highlightCreatorUserId,
+}: {
+  campaignId: string;
+  /** Optional deep link (?creator=): pre-selects a creator already in the match lists. Unknown ids are ignored. */
+  highlightCreatorUserId?: string;
+}) {
   const [report, setReport] = useState<MatchEngineReport | null>(null);
   const [invites, setInvites] = useState<InviteState>({ byCreator: {} });
   const [inviteRows, setInviteRows] = useState<InvitationDto[]>([]);
@@ -107,13 +114,28 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Deep-link highlight (?creator=) applies once per id — never re-checks a
+  // box the organization deliberately unchecked on a later refresh.
+  const highlightAppliedRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const [m, inv] = await Promise.all([
       fetch(`/api/campaigns/${campaignId}/matches`).then((r) => r.json().catch(() => null)),
       fetch(`/api/campaigns/${campaignId}/invitations`).then((r) => r.json().catch(() => null)),
     ]);
-    if (m && typeof m.evaluated === "number") setReport(m as MatchEngineReport);
+    if (m && typeof m.evaluated === "number") {
+      const rep = m as MatchEngineReport;
+      setReport(rep);
+      if (highlightCreatorUserId && highlightAppliedRef.current !== highlightCreatorUserId) {
+        const visible = [...rep.invite, ...rep.review].some((row) => row.creatorUserId === highlightCreatorUserId);
+        if (visible) {
+          highlightAppliedRef.current = highlightCreatorUserId;
+          setSelected((prev) =>
+            prev.includes(highlightCreatorUserId) ? prev : [...prev, highlightCreatorUserId].slice(0, 20),
+          );
+        }
+      }
+    }
     const rows = Array.isArray(inv?.invitations) ? (inv.invitations as InvitationDto[]) : [];
     const byCreator: Record<string, InvitationDto> = {};
     for (const row of rows) {
@@ -124,7 +146,7 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
     setInvites({ byCreator });
     setInviteRows(rows);
     setLoaded(true);
-  }, [campaignId]);
+  }, [campaignId, highlightCreatorUserId]);
 
   useEffect(() => {
     let cancelled = false;

@@ -10,6 +10,13 @@ import {
   getPublicCreatorProfile,
 } from "@/server/services/creatorProfiles";
 import { decodeHandleParam, normalizeHandle } from "@/server/services/personas";
+import { listUserWorkspaces } from "@/server/services/workspaces";
+import {
+  guestProfileAction,
+  loadOrgInviteCampaigns,
+  resolveProfileActions,
+  type ProfileAction,
+} from "@/server/services/profileActions";
 import { formatUsdc } from "@/lib/format";
 import styles from "@/components/start/start.module.css";
 
@@ -38,13 +45,48 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
   const normalized = normalizeHandle(decodeHandleParam(handle));
   if (!normalized) notFound();
   const user = await getSessionUser().catch(() => null);
+  const store = createDrizzleCampaignStore();
   const profile = await getPublicCreatorProfile(normalized, {
-    store: createDrizzleCampaignStore(),
+    store,
     follows: createDrizzleFollowStore(),
     viewerUserId: user?.userId ?? null,
   }).catch(() => null);
   if (!profile) notFound();
   const isSelf = Boolean(user && user.userId === profile.creatorUserId);
+
+  // Collaboration bridge: read-only, best-effort. Any failure falls back to
+  // the neutral public view — the profile itself must never break.
+  let action: ProfileAction;
+  if (isSelf) {
+    action = resolveProfileActions({ isSelf: true, isOrgMember: false, inviteOptions: [] });
+  } else if (!user) {
+    action = guestProfileAction();
+  } else {
+    try {
+      const { isOrgMember, options } = await loadOrgInviteCampaigns(
+        {
+          listMemberships: async (userId: string) => {
+            const rows = await listUserWorkspaces(userId).catch(() => []);
+            return rows.map((r) => ({
+              workspaceId: r.workspace.id,
+              workspaceName: r.workspace.name,
+              role: r.role,
+            }));
+          },
+          listCampaigns: (workspaceId: string) => store.listCampaigns(workspaceId).catch(() => []),
+          getIntent: async (campaignId: string) => {
+            const v = await store.getCurrentVersion(campaignId).catch(() => null);
+            return v?.intentText ?? null;
+          },
+        },
+        user.userId,
+        profile.creatorUserId,
+      );
+      action = resolveProfileActions({ isSelf: false, isOrgMember, inviteOptions: options });
+    } catch {
+      action = { kind: "neutral" };
+    }
+  }
 
   return (
     <HomeShell
@@ -59,13 +101,52 @@ export default async function CreatorProfilePage({ params }: { params: Promise<{
           {profile.followerCount} follower{profile.followerCount === 1 ? "" : "s"}
         </span>
         {isSelf ? (
-          <span style={{ fontSize: 13, color: "var(--ink-2)" }}>
-            This is your public profile · <Link href="/creator">Back to creator home</Link>
-          </span>
+          <span style={{ fontSize: 13, color: "var(--ink-2)" }}>This is your public profile</span>
         ) : (
           <FollowButton creatorHandle={profile.handle} initialFollowing={profile.isFollowing} signedIn={Boolean(user)} />
         )}
       </div>
+      {action.kind === "self" && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <Link href={action.dashboardHref} className="btn btn-primary">
+            Open creator dashboard
+          </Link>
+        </div>
+      )}
+      {action.kind === "org-invite" && (
+        <div className={styles.panel} style={{ marginTop: 12 }}>
+          <h2>Work with this creator</h2>
+          <p>
+            Invite @{profile.handle} from one of your campaigns. This opens the existing invitation flow — nothing
+            is sent until you confirm the invite.
+          </p>
+          <div className={styles.panelActions}>
+            {action.options.map((o) => (
+              <Link key={o.campaignId} href={o.href} className="btn btn-sm">
+                {o.workspaceName} · {o.label} ({o.state === "APPROVED" ? "pre-funding" : "live"})
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+      {action.kind === "org-empty" && (
+        <div className={styles.panel} style={{ marginTop: 12 }}>
+          <h2>Work with this creator</h2>
+          <p>Create or approve a campaign first — invitations open once your campaign policy is approved.</p>
+          <div className={styles.panelActions}>
+            <Link href={action.newCampaignHref} className="btn btn-primary btn-sm">
+              New campaign
+            </Link>
+          </div>
+        </div>
+      )}
+      {action.kind === "guest" && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <Link href={action.startHref} className="btn btn-primary">
+            Work with @{profile.handle}
+          </Link>
+        </div>
+      )}
 
       <div className={styles.kpis} style={{ marginTop: 18 }}>
         <div className={styles.kpi}>

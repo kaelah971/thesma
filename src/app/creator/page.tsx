@@ -80,6 +80,13 @@ export default async function CreatorHomePage() {
           @{row.handle} · <Link href={`/${row.handle}`}>View public profile →</Link>
         </span>
       )}
+      {row?.handle && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+          <Link href={`/${row.handle}`} className="btn btn-sm">
+            View public profile
+          </Link>
+        </div>
+      )}
       {row?.category && (
         <p style={{ marginTop: 10, fontSize: 13.5, color: "var(--ink-2)" }}>
           {row.category}
