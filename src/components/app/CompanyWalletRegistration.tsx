@@ -1,13 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { postJson } from "@/lib/api";
 import {
-  buildCompanyWalletTypedData,
   connectWallet,
   discoverWallet,
   isAccountChanged,
+  selectChallengePayload,
   signCompanyWalletTypedData,
   truncateAddress,
   type CompanyWalletTypedData,
@@ -72,8 +72,14 @@ export function CompanyWalletRegistration({
     }
   }
 
+  // Double-submit guard: one challenge per explicit Sign click. React
+  // re-renders (incl. StrictMode) must never mint a second challenge.
+  const signingRef = useRef(false);
+
   async function register() {
+    if (signingRef.current) return;
     if (!wallet || !account) return fail("Connect a wallet first.");
+    signingRef.current = true;
     setError(null);
     setPhase("working");
     try {
@@ -95,19 +101,26 @@ export function CompanyWalletRegistration({
       if (!ch.ok || !ch.data?.challenge) {
         throw new Error((ch as { error?: string }).error ?? "Could not start registration. Try again.");
       }
-      const { typedData, nonce } = ch.data.challenge;
-      // Exact-schema guard: the server payload must equal the canonical
-      // client build for the same inputs, or nothing is signed.
-      const expected = buildCompanyWalletTypedData({
+      // Frozen challenge: the server payload is the single source of truth.
+      // It is signed VERBATIM — fields are never rebuilt client-side (a raw
+      // account can differ in checksum case from the normalized challenge
+      // wallet, which falsely tripped rebuild-and-compare checks).
+      const frozen = selectChallengePayload({
+        challenge: ch.data.challenge,
         workspaceId,
-        wallet: account,
-        nonce,
-        issuedAt: ch.data.challenge.issuedAt,
-        expiresAt: ch.data.challenge.expiresAt,
+        selectedAccount: account,
+        activeAccount: active,
       });
-      if (JSON.stringify(typedData) !== JSON.stringify(expected)) {
-        throw new Error("Registration request changed unexpectedly. Reload and try again.");
+      if ("error" in frozen) {
+        if (frozen.error === "ACCOUNT_CHANGED") {
+          setAccount(null);
+          setWallet(null);
+          throw new Error("Your active wallet changed. Re-select the company wallet.");
+        }
+        throw new Error("Registration request does not match this workspace. Start over.");
       }
+      const { typedData } = frozen;
+      const nonce = ch.data.challenge.nonce;
       setNote(`Waiting for ${wallet.name} — review and sign the registration request. It never moves funds.`);
       const signed = await signCompanyWalletTypedData(wallet.provider, account, typedData);
       if ("failure" in signed) {
@@ -131,8 +144,11 @@ export function CompanyWalletRegistration({
             `Signature came from ${rec ? truncateAddress(rec) : "a different wallet"}. Sign with the wallet you want to register.`,
           );
         }
-        if (body.code === "CHALLENGE_EXPIRED" || body.code === "CHALLENGE_USED" || body.code === "CHALLENGE_NOT_FOUND") {
-          throw new Error("Registration request expired or already used. Reconnect to get a fresh one.");
+        if (body.code === "CHALLENGE_EXPIRED") {
+          throw new Error("Registration request expired. Start again.");
+        }
+        if (body.code === "CHALLENGE_USED" || body.code === "CHALLENGE_NOT_FOUND") {
+          throw new Error("Registration request already used or not found. Start again.");
         }
         if (body.code === "CHALLENGE_MISMATCH") {
           throw new Error("Registration request does not match this workspace or wallet. Start over.");
@@ -144,7 +160,19 @@ export function CompanyWalletRegistration({
       router.refresh();
     } catch (e) {
       fail(e instanceof Error ? e.message : "Registration failed. Try again.");
+    } finally {
+      signingRef.current = false;
     }
+  }
+
+  function restart() {
+    signingRef.current = false;
+    setAccount(null);
+    setWallet(null);
+    setConfirmChange(false);
+    setError(null);
+    setNote(null);
+    setPhase("idle");
   }
 
   if (phase === "done") {
@@ -206,9 +234,12 @@ export function CompanyWalletRegistration({
         <p className="form-error" role="alert" style={{ fontSize: 13 }}>{error}</p>
       )}
       {phase === "error" && (
-        <div>
+        <div style={{ display: "flex", gap: 8 }}>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setPhase(account ? "connected" : "idle"); setError(null); }}>
             Back
+          </button>
+          <button type="button" className="btn btn-sm" onClick={restart}>
+            Restart registration
           </button>
         </div>
       )}

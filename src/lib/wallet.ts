@@ -325,6 +325,39 @@ export function isAccountChanged(activeAccount: string | null, selectedAccount: 
   return activeAccount.toLowerCase() !== selectedAccount.toLowerCase();
 }
 
+export interface RegistrationChallengePayload {
+  typedData: CompanyWalletTypedData;
+  nonce: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export type ChallengePayloadError = "NO_CHALLENGE" | "WORKSPACE_MISMATCH" | "ACCOUNT_CHANGED";
+
+/**
+ * Frozen-challenge selector: the server-issued payload is the single source
+ * of truth and is returned VERBATIM — never rebuilt, never recomputed.
+ *
+ * The client must not reconstruct wallet/nonce/issuedAt/expiresAt (a raw
+ * account can differ in checksum case from the normalized challenge wallet,
+ * which falsely trips equality checks). Before returning the payload, this
+ * asserts the live provider account still matches both the selected account
+ * and the challenge wallet; otherwise the caller must restart (fresh
+ * challenge), never silently re-issue.
+ */
+export function selectChallengePayload(args: {
+  challenge: RegistrationChallengePayload | null;
+  workspaceId: string;
+  selectedAccount: string;
+  activeAccount: string | null;
+}): { typedData: CompanyWalletTypedData } | { error: ChallengePayloadError } {
+  if (!args.challenge) return { error: "NO_CHALLENGE" };
+  if (args.challenge.typedData.message.workspaceId !== args.workspaceId) return { error: "WORKSPACE_MISMATCH" };
+  if (isAccountChanged(args.activeAccount, args.selectedAccount)) return { error: "ACCOUNT_CHANGED" };
+  if (isAccountChanged(args.activeAccount, args.challenge.typedData.message.wallet)) return { error: "ACCOUNT_CHANGED" };
+  return { typedData: args.challenge.typedData };
+}
+
 export type FundingEntryState = "REGISTER_REQUIRED" | "WRONG_ACCOUNT" | "OK";
 
 /**

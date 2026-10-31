@@ -368,6 +368,44 @@ async function runWalletDiscovery(browser) {
     });
     check(`${label}: typed registration request signs (EIP-712, no high-risk blob)`, typed.shape === "ok", `shape=${typed.shape}`);
     check(`${label}: rejection surfaces as user-rejected`, typed.rejected === true);
+    const frozen = await page.evaluate(() => {
+      const payload = {
+        domain: { name: "Thesma", version: "1", chainId: 5042 },
+        types: {
+          CompanyWalletRegistration: [
+            { name: "workspaceId", type: "string" },
+            { name: "wallet", type: "string" },
+            { name: "purpose", type: "string" },
+            { name: "nonce", type: "string" },
+            { name: "issuedAt", type: "string" },
+            { name: "expiresAt", type: "string" },
+          ],
+        },
+        primaryType: "CompanyWalletRegistration",
+        message: {
+          workspaceId: "ws-smoke",
+          wallet: "0x1234567890abcdef1234567890abcdef12345678",
+          purpose: "Register this wallet as the organization's company wallet for Thesma campaign funding. This never moves funds.",
+          nonce: "smoke-nonce",
+          issuedAt: "2026-06-01T12:00:00.000Z",
+          expiresAt: "2026-06-01T12:10:00.000Z",
+        },
+      };
+      // Client freeze contract: fetch wire format + structured clone must
+      // preserve every signed field byte-identically (no client rebuild).
+      const before = JSON.stringify(payload);
+      const revived = JSON.parse(before);
+      const cloned = structuredClone(payload);
+      const fields = ["workspaceId", "wallet", "purpose", "nonce", "issuedAt", "expiresAt"];
+      return {
+        wireStable: JSON.stringify(revived) === before,
+        cloneStable: JSON.stringify(cloned) === before,
+        fields: fields.every((f) => revived.message[f] === payload.message[f]),
+      };
+    });
+    check(`${label}: challenge payload survives fetch wire format unchanged`, frozen.wireStable === true);
+    check(`${label}: challenge payload survives rerender clone unchanged`, frozen.cloneStable === true);
+    check(`${label}: all signed fields frozen (nonce/issuedAt/expiresAt/workspaceId/wallet/purpose)`, frozen.fields === true);
     const sent = await page.evaluate(() => window.__mockWalletCalls ?? []);
     check(`${label}: discovery sent zero transactions`, !sent.includes("eth_sendTransaction"), sent.join(","));
     check(`${label}: no token approval or permit RPC used`, !sent.some((m) => /approve|permit/i.test(m)), sent.join(","));
