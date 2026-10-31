@@ -6,6 +6,7 @@ import { Client } from "pg";
 import { getAddress } from "viem";
 import { arcConfigFromEnv, ViemArcReader } from "../src/server/chain/arc";
 import { payoutExecutorFromEnv, proofSignerFromEnv } from "../src/server/chain/signers";
+import { isLocalDatabaseUrl, isVerifyFull } from "../src/server/db/tls";
 
 type Status = "PASS" | "WARN" | "FAIL" | "NOT_CONFIGURED";
 interface Check {
@@ -51,6 +52,17 @@ async function main() {
   if (!env.DATABASE_URL) {
     checks.push({ name: "db:configured", status: "FAIL", detail: "DATABASE_URL missing" });
   } else {
+    // Explicit TLS posture first: any non-loopback URL is validated as
+    // production for this purpose (the preflight's own test-runner env
+    // must not weaken the verdict). Static detail only — never the URL,
+    // host, or secrets.
+    if (isVerifyFull(env.DATABASE_URL)) {
+      checks.push({ name: "db:tls", status: "PASS", detail: "sslmode=verify-full" });
+    } else if (!isLocalDatabaseUrl(env.DATABASE_URL)) {
+      checks.push({ name: "db:tls", status: "FAIL", detail: "set sslmode=verify-full on DATABASE_URL (value hidden)" });
+    } else {
+      checks.push({ name: "db:tls", status: "WARN", detail: "non-production database URL; verify-full enforced in production" });
+    }
     const client = new Client({ connectionString: env.DATABASE_URL, statement_timeout: 10_000 });
     try {
       await client.connect();

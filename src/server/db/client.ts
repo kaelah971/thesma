@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "./schema";
+import { assertProductionDbTls } from "./tls";
 
 /**
  * Provider-neutral Postgres boundary: the only thing that touches
@@ -19,11 +20,16 @@ export function isDbConfigured(): boolean {
 }
 
 export function getPool(): Pool {
-  if (!process.env.DATABASE_URL) {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
     throw new Error("DATABASE_URL is not configured");
   }
+  // Fail closed: production-like URLs without sslmode=verify-full are
+  // rejected before any socket is opened. Local/test URLs are exempt, and
+  // the error never echoes the URL or credentials.
+  assertProductionDbTls(url);
   if (!pool) {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    pool = new Pool({ connectionString: url });
   }
   return pool;
 }

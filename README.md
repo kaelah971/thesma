@@ -355,7 +355,7 @@ Mainnet is the default chain config (`ARC_NETWORK` unset → mainnet via `ARC_RP
 
 | Var | Required | Purpose |
 | --- | -------- | ------- |
-| `DATABASE_URL` | yes (runtime) | Provider-neutral Postgres connection. Build + unit tests pass without it; API routes return `503 UNCONFIGURED` until set. |
+| `DATABASE_URL` | yes (runtime) | Provider-neutral Postgres connection. Build + unit tests pass without it; API routes return `503 UNCONFIGURED` until set. Production (non-loopback) URLs must include `sslmode=verify-full` — any other mode fails closed at startup/preflight. Local loopback URLs are intentionally exempt. |
 | `SESSION_COOKIE_NAME` | no | Defaults to `thesma_session`. |
 | `ARC_NETWORK` | no (defaults `mainnet`) | Explicit Arc environment: `mainnet` (production, chain 5042) or `testnet` (Canteen, chain 5042002). Anything else fails closed. |
 | `ARC_TESTNET_RPC_URL` | for testnet | Canteen testnet RPC endpoint (authenticated personal RPC). Required when `ARC_NETWORK=testnet`; no fallback to mainnet. |
