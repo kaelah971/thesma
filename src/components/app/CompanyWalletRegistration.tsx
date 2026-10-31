@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { postJson } from "@/lib/api";
 import {
   connectWallet,
+  connectionFailureCopy,
   defaultSelectedAccount,
   discoverWallet,
   resolveAccountChange,
@@ -97,13 +98,10 @@ export function CompanyWalletRegistration({
       setWallet(found);
       setNote(`Waiting for ${found.name} — approve the connection request.`);
       const res = await connectWallet(found.provider);
-      if ("failure" in res) {
-        if (res.failure === "USER_REJECTED") throw new Error("Connection request was rejected. Try again when ready.");
-        throw new Error(`${found.name} could not connect. Unlock it and try again.`);
-      }
+      if ("failure" in res) throw new Error(connectionFailureCopy(res.failure, found.name));
       const exposed = (await found.provider.request({ method: "eth_accounts" }).catch(() => null)) as unknown;
       const list = Array.isArray(exposed) ? exposed.filter((a): a is string => typeof a === "string") : [res.account];
-      if (list.length === 0) throw new Error(`${found.name} returned no account. Unlock it and try again.`);
+      if (list.length === 0) throw new Error(connectionFailureCopy("NO_ACCOUNT", found.name));
       // Explicit selection: never assume accounts[0] is the UI-selected one.
       const selected = defaultSelectedAccount(list, found.provider.selectedAddress) ?? list[0];
       commitAccounts(list);

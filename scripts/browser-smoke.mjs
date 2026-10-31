@@ -423,6 +423,121 @@ async function runWalletDiscovery(browser) {
   }
 }
 
+async function runWalletConnectionStates(browser) {
+  const label = "wallet-connection";
+  console.log(`\n[${label}]`);
+  // Bundle the REAL helper and drive it in real Chromium against a
+  // mode-driven mock: already-connected, locked, rejection, pending,
+  // permission, disconnect, security-block, generic error, multi-account.
+  let bundle;
+  try {
+    const esbuild = await import("esbuild");
+    const out = await esbuild.build({
+      entryPoints: [path.join(ROOT, "src", "lib", "wallet.ts")],
+      bundle: true,
+      format: "iife",
+      globalName: "ThesmaWallet",
+      platform: "browser",
+      write: false,
+    });
+    bundle = `${out.outputFiles[0].text}\n;window.ThesmaWallet = ThesmaWallet;`;
+  } catch (e) {
+    check(`${label}: wallet helper bundles for browser test`, false, String(e?.message ?? e));
+    return;
+  }
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript(bundle);
+  await context.addInitScript(() => {
+    window.__mockCalls = [];
+    window.__mockMode = "connected";
+    const A1 = "0x1111111111111111111111111111111111111111";
+    const A2 = "0x1234567890abcdef1234567890abcdef12345678";
+    window.ethereum = {
+      isMetaMask: true,
+      selectedAddress: A2,
+      async request({ method }) {
+        window.__mockCalls.push(method);
+        const mode = window.__mockMode;
+        if (method === "eth_accounts") {
+          // Only already-connected modes expose accounts; every failure
+          // mode probes empty so the explicit request path is exercised.
+          if (mode === "connected" || mode === "multi") return [A1, A2];
+          if (mode === "dead-probe") throw Object.assign(new Error("Provider disconnected"), { code: 4900 });
+          return [];
+        }
+        if (method === "eth_requestAccounts") {
+          if (mode === "locked" || mode === "connected" || mode === "multi") return mode === "locked" ? [] : [A1, A2];
+          if (mode === "reject") throw Object.assign(new Error("User rejected the request"), { code: 4001 });
+          if (mode === "pending") throw Object.assign(new Error("Already processing eth_requestAccounts"), { code: -32002 });
+          if (mode === "perm") throw Object.assign(new Error("The requested account has not been authorized"), { code: 4100 });
+          if (mode === "disconnected") throw Object.assign(new Error("Provider disconnected"), { code: 4900 });
+          if (mode === "blocked") throw new Error("This site shows signs of phishing and is blocked");
+          if (mode === "generic") throw new Error("weird transport boom");
+          return [A1, A2];
+        }
+        if (method === "eth_chainId") return "0x13b2";
+        return null;
+      },
+    };
+  });
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") consoleErrors.push(msg.text());
+  });
+  page.on("pageerror", (err) => pageErrors.push(String(err?.message ?? err)));
+  try {
+    await page.goto(BASE, { waitUntil: "load", timeout: 30_000 });
+    await page.waitForTimeout(800);
+    const matrix = await page.evaluate(async () => {
+      const W = window.ThesmaWallet;
+      const eth = window.ethereum;
+      const run = async (mode) => {
+        window.__mockMode = mode;
+        window.__mockCalls.length = 0;
+        const started = window.__mockCalls.length;
+        let res;
+        try {
+          res = await W.connectWallet(eth);
+        } catch (e) {
+          return { mode, threw: String(e?.message ?? e), calls: window.__mockCalls.slice() };
+        }
+        return { mode, res, calls: window.__mockCalls.slice(started) };
+      };
+      const out = {};
+      for (const mode of ["connected", "locked", "reject", "pending", "perm", "disconnected", "blocked", "generic", "dead-probe", "multi"]) {
+        out[mode] = await run(mode);
+      }
+      out.selectedDefault = W.defaultSelectedAccount(["0x1111111111111111111111111111111111111111", "0x1234567890abcdef1234567890abcdef12345678"], eth.selectedAddress);
+      out.copyPending = W.connectionFailureCopy("REQUEST_ALREADY_PENDING", "MetaMask");
+      out.copyBlocked = W.connectionFailureCopy("SECURITY_BLOCKED", "MetaMask");
+      out.copyNoAccount = W.connectionFailureCopy("NO_ACCOUNT", "MetaMask");
+      return out;
+    });
+    const reqCount = (m) => (matrix[m]?.calls ?? []).filter((c) => c === "eth_requestAccounts").length;
+    check(`${label}: connected account needs no permission prompt`, matrix.connected?.res?.account === "0x1111111111111111111111111111111111111111" && !(matrix.connected?.calls ?? []).includes("eth_requestAccounts"), JSON.stringify(matrix.connected?.calls));
+    check(`${label}: locked/empty returns NO_ACCOUNT without unlock claims`, matrix.locked?.res?.failure === "NO_ACCOUNT");
+    check(`${label}: rejection maps to USER_REJECTED`, matrix.reject?.res?.failure === "USER_REJECTED");
+    check(`${label}: pending maps once with no retry loop`, matrix.pending?.res?.failure === "REQUEST_ALREADY_PENDING" && reqCount("pending") === 1, `calls=${reqCount("pending")}`);
+    check(`${label}: unauthorized maps to PERMISSION_REQUIRED`, matrix.perm?.res?.failure === "PERMISSION_REQUIRED");
+    check(`${label}: disconnect maps to PROVIDER_DISCONNECTED`, matrix.disconnected?.res?.failure === "PROVIDER_DISCONNECTED" || matrix["dead-probe"]?.res?.failure === "PROVIDER_DISCONNECTED", JSON.stringify(matrix.disconnected?.res));
+    check(`${label}: security block maps to SECURITY_BLOCKED`, matrix.blocked?.res?.failure === "SECURITY_BLOCKED");
+    check(`${label}: generic error maps to PROVIDER_ERROR`, matrix.generic?.res?.failure === "PROVIDER_ERROR");
+    check(`${label}: UI-selected account preferred over accounts[0]`, matrix.selectedDefault === "0x1234567890abcdef1234567890abcdef12345678", `selected=${matrix.selectedDefault}`);
+    check(`${label}: pending copy is actionable`, /already open/i.test(matrix.copyPending ?? ""));
+    check(`${label}: blocked copy is neutral (no bypass, no unlock)`, /preventing/i.test(matrix.copyBlocked ?? "") && !/bypass|unlock/i.test(matrix.copyBlocked ?? ""));
+    check(`${label}: empty-account copy claims no lock`, !/unlock|locked/i.test(matrix.copyNoAccount ?? ""));
+    const allCalls = Object.values(matrix).flatMap((m) => (m && m.calls) || []);
+    check(`${label}: connection path sends zero transactions`, !allCalls.includes("eth_sendTransaction"), allCalls.join(","));
+    const { csp, hydration } = firstPartyFailures(consoleErrors, pageErrors);
+    check(`${label}: no CSP-blocked scripts during connection matrix`, csp.length === 0, csp.slice(0, 2).join(" | "));
+    check(`${label}: no hydration errors (connection matrix)`, hydration.length === 0, hydration.slice(0, 2).join(" | "));
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   if (!existsSync(path.join(ROOT, ".next", "required-server-files.json"))) {
     console.error("No production build found. Run `npm run build` first, then `npm run test:browser`.");
@@ -454,6 +569,7 @@ async function main() {
     for (const w of MOBILE_WIDTHS) await runWidth(browser, w, docCsp);
     await runDemoProof(browser);
     await runWalletDiscovery(browser);
+    await runWalletConnectionStates(browser);
   } finally {
     await browser.close().catch(() => {});
     server.kill();

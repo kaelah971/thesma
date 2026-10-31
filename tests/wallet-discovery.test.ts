@@ -170,19 +170,27 @@ describe("wallet states", () => {
     expect(st.account).toBeNull();
   });
 
-  it("eth_requestAccounts success → connected account", async () => {
+  it("already-available account connects with no permission prompt", async () => {
     const p = mockProvider({});
     const res = await connectWallet(p);
     expect(res).toEqual({ account: ACCOUNT });
-    expect(p.calls).toContain("eth_requestAccounts");
+    expect(p.calls).toEqual(["eth_accounts"]);
+    expect(p.calls).not.toContain("eth_requestAccounts");
     expect(p.calls).not.toContain("eth_sendTransaction");
+  });
+
+  it("empty probe triggers exactly one explicit request", async () => {
+    const p = mockProvider({ onRequest: (m) => (m === "eth_accounts" ? [] : [ACCOUNT]) });
+    const res = await connectWallet(p);
+    expect(res).toEqual({ account: ACCOUNT });
+    expect(p.calls.filter((c) => c === "eth_requestAccounts")).toHaveLength(1);
   });
 
   it("user rejection (4001) → USER_REJECTED", async () => {
     const p = mockProvider({
       onRequest: (m) => {
         if (m === "eth_requestAccounts") throw Object.assign(new Error("User rejected the request"), { code: 4001 });
-        return [ACCOUNT];
+        return [];
       },
     });
     await expect(connectWallet(p)).resolves.toEqual({ failure: "USER_REJECTED" });

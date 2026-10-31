@@ -6,6 +6,7 @@ import { useState } from "react";
 import { getJson, postJson } from "@/lib/api";
 import {
   connectWallet,
+  connectionFailureCopy,
   discoverWallet,
   getWalletState,
   switchToNetwork,
@@ -176,15 +177,7 @@ export function CampaignFunding({
       } else {
         setNote(`Waiting for ${found.name} — approve the connection request.`);
         const res = await connectWallet(provider);
-        if ("failure" in res) {
-          if (res.failure === "USER_REJECTED") {
-            throw new Error("Connection request was rejected in the wallet. Click Fund campaign to try again.");
-          }
-          if (res.failure === "NO_ACCOUNT") {
-            throw new Error(`${found.name} returned no account. Unlock it and try again.`);
-          }
-          throw new Error(`${found.name} could not connect. Unlock it and try again.`);
-        }
+        if ("failure" in res) throw new Error(connectionFailureCopy(res.failure, found.name));
         connected = res.account;
       }
       if (!connected) throw new Error("No account returned by the wallet.");

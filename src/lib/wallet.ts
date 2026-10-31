@@ -140,18 +140,96 @@ export async function discoverWallet(timeoutMs = 700): Promise<DiscoveredWallet 
 }
 
 export type WalletPresence = "NOT_INSTALLED" | "DISCONNECTED" | "WRONG_NETWORK" | "READY";
-export type WalletFailure = "USER_REJECTED" | "NO_ACCOUNT" | "PROVIDER_ERROR" | "CHAIN_NOT_ADDED";
+export type WalletFailure =
+  | "USER_REJECTED"
+  | "REQUEST_ALREADY_PENDING"
+  | "PERMISSION_REQUIRED"
+  | "PROVIDER_DISCONNECTED"
+  | "SECURITY_BLOCKED"
+  | "NO_ACCOUNT"
+  | "PROVIDER_ERROR"
+  | "CHAIN_NOT_ADDED";
+
+export function errorCodeOf(err: unknown): number | null {
+  if (!err || typeof err !== "object") return null;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "number" && Number.isInteger(code)) return code;
+  if (typeof code === "string" && /^-?\d+$/.test(code.trim())) return Number.parseInt(code.trim(), 10);
+  return null;
+}
+
+export function errorMessageOf(err: unknown): string {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  const anyErr = err as { message?: unknown };
+  return typeof anyErr.message === "string" ? anyErr.message : String(err);
+}
 
 export function isUserRejection(err: unknown): boolean {
   if (!err) return false;
-  const anyErr = err as { code?: unknown; message?: unknown };
-  if (anyErr.code === 4001 || anyErr.code === "4001" || anyErr.code === "ACTION_REJECTED") return true;
-  const msg = typeof anyErr.message === "string" ? anyErr.message : String(err);
-  return /user rejected|rejected the request|denied|user denied/i.test(msg);
+  if (errorCodeOf(err) === 4001) return true;
+  const anyErr = err as { code?: unknown };
+  if (anyErr.code === "ACTION_REJECTED") return true;
+  return /user rejected|rejected the request|user denied/i.test(errorMessageOf(err));
+}
+
+/** Site-block / phishing-warning refusal. Never claim bypass; surface neutrally. */
+export function isSecurityBlocked(err: unknown): boolean {
+  return /phish|deceptive|malici|dangerous|fraud|scam|suspicious|not allowed to connect|site.{0,20}block|block.{0,20}site/i.test(
+    errorMessageOf(err),
+  );
+}
+
+export function isRequestPending(err: unknown): boolean {
+  if (errorCodeOf(err) === -32002) return true;
+  return /already processing|request already pending|already pending/i.test(errorMessageOf(err));
+}
+
+export function isPermissionIssue(err: unknown): boolean {
+  if (errorCodeOf(err) === 4100) return true;
+  return /unauthori[sz]ed|not been authori[sz]ed|no permissions|missing permissions/i.test(errorMessageOf(err));
+}
+
+export function isProviderDisconnected(err: unknown): boolean {
+  const code = errorCodeOf(err);
+  if (code === 4900 || code === 4901) return true;
+  return /\bdisconnected\b|connection (lost|closed)|provider (closed|lost)/i.test(errorMessageOf(err));
 }
 
 function failureOf(err: unknown): WalletFailure {
-  return isUserRejection(err) ? "USER_REJECTED" : "PROVIDER_ERROR";
+  if (isUserRejection(err)) return "USER_REJECTED";
+  if (isRequestPending(err)) return "REQUEST_ALREADY_PENDING";
+  if (isSecurityBlocked(err)) return "SECURITY_BLOCKED";
+  if (isPermissionIssue(err)) return "PERMISSION_REQUIRED";
+  if (isProviderDisconnected(err)) return "PROVIDER_DISCONNECTED";
+  return "PROVIDER_ERROR";
+}
+
+/**
+ * Truthful, non-technical copy per failure. Never claims "locked" without
+ * evidence, never exposes raw provider objects or stack traces, and never
+ * instructs the user to bypass a wallet security warning.
+ */
+export function connectionFailureCopy(failure: WalletFailure, walletName: string): string {
+  switch (failure) {
+    case "USER_REJECTED":
+      return "Connection request was rejected. Try again when ready.";
+    case "REQUEST_ALREADY_PENDING":
+      return "A wallet connection request is already open. Finish or cancel it in the wallet, then try again.";
+    case "PERMISSION_REQUIRED":
+      return `${walletName} did not grant access to any account. Approve access in the wallet, then try again.`;
+    case "PROVIDER_DISCONNECTED":
+      return "The wallet provider disconnected. Reopen the wallet and try again.";
+    case "SECURITY_BLOCKED":
+      return "The wallet is currently preventing this site from connecting. No wallet was registered.";
+    case "NO_ACCOUNT":
+      return "No account was returned. Select an account in the wallet, then try again.";
+    case "CHAIN_NOT_ADDED":
+      return `The wallet does not know this network yet. Add it in ${walletName}, then try again.`;
+    case "PROVIDER_ERROR":
+    default:
+      return `${walletName} could not connect because of a provider error. Try again.`;
+  }
 }
 
 /**
@@ -188,13 +266,24 @@ export async function getWalletState(
 }
 
 /**
- * Explicit user-gesture connect. Prompts `eth_requestAccounts` exactly once.
- * 4001-style rejections map to USER_REJECTED — never to NOT_INSTALLED.
+ * Explicit user-gesture connect. Silent `eth_accounts` probe FIRST: when an
+ * account is already available no `eth_requestAccounts` prompt is sent at
+ * all. Only a truly empty result triggers one permission request — exactly
+ * once, never in a loop. Failures map to precise states, never to a
+ * generic "unlock" claim.
  */
 export async function connectWallet(
   provider: InjectedProvider,
 ): Promise<{ account: string } | { failure: WalletFailure }> {
   if (!provider || typeof provider.request !== "function") return { failure: "PROVIDER_ERROR" };
+  let existing: unknown;
+  try {
+    existing = await provider.request({ method: "eth_accounts" });
+  } catch (err) {
+    return { failure: failureOf(err) };
+  }
+  const available = Array.isArray(existing) ? existing.filter((a): a is string => typeof a === "string") : [];
+  if (available.length > 0) return { account: available[0] };
   let accounts: unknown;
   try {
     accounts = await provider.request({ method: "eth_requestAccounts" });
