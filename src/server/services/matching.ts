@@ -376,24 +376,38 @@ export async function evaluateCreatorForCampaign(
   let activeTermsCount = history?.activeTermsCount ?? 0;
   let rules: PartnerRules | null = null;
   let prefundingAdvisory = false;
+  const extraWarnings: string[] = [];
   if (!candidate.onboardingCompleted) {
     eligibilityReason = "Creator has not finished onboarding.";
-  } else if (!profile) {
-    eligibilityReason = "No creator participation profile yet.";
-  } else if (!parsed.ok) {
-    eligibilityReason = "Stored creator rules are invalid.";
   } else if (ctx.prefunding) {
     // Advisory pre-funding match: the same kernel scores on the policy
     // floor, but nobody is join-eligible until the market opens. The
     // score-based action below lets orgs plan invitations early.
-    rules = (parsed as { ok: true; rules: PartnerRules }).rules;
-    const terms = await store.listPartnerTerms(profile.id).catch(() => []);
-    if (history?.activeTermsCount === undefined) {
-      activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+    // Discovery must never require prior participation: a creator with no
+    // partner row yet (or legacy rules that no longer parse) is still
+    // scored with open defaults. Missing capability data affects
+    // fit/evidence/confidence — never basic discoverability. Cold-start
+    // matches stay provisional (LOW confidence) until real history exists.
+    if (profile && parsed.ok) {
+      rules = parsed.rules;
+      const terms = await store.listPartnerTerms(profile.id).catch(() => []);
+      if (history?.activeTermsCount === undefined) {
+        activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
+      }
+    } else {
+      extraWarnings.push(
+        !profile
+          ? "no participation history yet — provisional"
+          : "stored creator rules need review — open defaults used for this estimate",
+      );
     }
     eligibility = "NOT_ELIGIBLE";
     eligibilityReason = "Advisory match — the market opens after funding. Priced at the policy floor until then.";
     prefundingAdvisory = true;
+  } else if (!profile) {
+    eligibilityReason = "No creator participation profile yet.";
+  } else if (!parsed.ok) {
+    eligibilityReason = "Stored creator rules are invalid.";
   } else {
     rules = (parsed as { ok: true; rules: PartnerRules }).rules;
     const terms = await store.listPartnerTerms(profile.id).catch(() => []);
@@ -420,7 +434,7 @@ export async function evaluateCreatorForCampaign(
       eligibilityReason = check.message;
     }
   }
-  return scoreCreatorMatch({
+  const match = scoreCreatorMatch({
     creatorUserId: candidate.userId,
     handle: candidate.handle,
     creatorType: candidate.creatorType,
@@ -441,6 +455,8 @@ export async function evaluateCreatorForCampaign(
     eligibilityReason,
     prefundingAdvisory,
   });
+  match.warnings.push(...extraWarnings);
+  return match;
 }
 
 export interface CapabilitySeed {

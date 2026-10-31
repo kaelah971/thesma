@@ -30,6 +30,17 @@ const EMPTY_HYBRID: HybridForm = {
   allocationCount: "5",
 };
 
+/**
+ * Empty-state copy: never claim "nobody completed onboarding" unless zero
+ * creator personas were actually evaluated. Zero registered creators and
+ * zero eligible matches are different truths with different next actions.
+ */
+export function matchesEmptyMessage(evaluated: number, eligibleCount: number): string | null {
+  if (eligibleCount > 0) return null;
+  if (evaluated === 0) return "No registered creators to match yet. Matches appear once creators complete onboarding.";
+  return "No eligible matches for this campaign yet.";
+}
+
 /** Client-side max-exposure preview (server re-validates exactly). */
 function previewMaxTotal(f: HybridForm, bountyMicro: string): string | null {
   try {
@@ -176,8 +187,9 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
   }
 
   if (!loaded) return <p style={{ fontSize: 13, opacity: 0.7 }}>Loading creator matches…</p>;
-  if (!report || report.evaluated === 0) {
-    return <p style={{ fontSize: 13, opacity: 0.7 }}>No registered creators to match yet. Matches appear once creators complete onboarding.</p>;
+  if (!report) return <p style={{ fontSize: 13, opacity: 0.7 }}>Couldn&apos;t load creator matches. Try again.</p>;
+  if (report.evaluated === 0) {
+    return <p style={{ fontSize: 13, opacity: 0.7 }}>{matchesEmptyMessage(0, 0)}</p>;
   }
 
   const list: OrganizationCreatorMatch[] =
@@ -212,9 +224,10 @@ export function CreatorMatchesPanel({ campaignId }: { campaignId: string }) {
       {notice && <p style={{ fontSize: 12.5, opacity: 0.8 }}>{notice}</p>}
       {list.length === 0 ? (
         <p style={{ fontSize: 13, opacity: 0.7 }}>
-          {tab === "recommended"
+          {tab === "recommended" && report.review.length > 0
             ? "No high-confidence matches right now. Check Review for close fits."
-            : "No matches in this view yet."}
+            : (matchesEmptyMessage(report.evaluated, report.invite.length + report.review.length) ??
+              "No matches in this view yet.")}
         </p>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>

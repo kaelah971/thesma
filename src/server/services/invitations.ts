@@ -204,7 +204,11 @@ export async function createInvitation(
     fail(409, "NOT_ELIGIBLE", "Creator has not finished creator onboarding");
   }
   const profile = await deps.store.getPartnerByUserId(params.creatorUserId).catch(() => null);
-  if (!profile) {
+  // Pre-funding invitations are prospective: discovery must not require the
+  // creator to have joined already (that would be circular). The partner
+  // profile + wallet are still enforced at accept time against the live
+  // market, so nothing funds or pays out early.
+  if (!profile && !prefunding) {
     fail(409, "NOT_ELIGIBLE", "Creator has no participation profile yet");
   }
   const activeTerms = opts?.history?.activeTermsCount;
@@ -214,7 +218,7 @@ export async function createInvitation(
     activeTermsCount: 0,
   };
   if (activeTerms === undefined) {
-    const terms = await deps.store.listPartnerTerms(profile.id).catch(() => []);
+    const terms = profile ? await deps.store.listPartnerTerms(profile.id).catch(() => []) : [];
     history.activeTermsCount = terms.filter((t) => t.status === "ACTIVE").length;
   }
   const match = await evaluateCreatorForCampaign(deps.store, ctx, candidate, history, now);
