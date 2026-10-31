@@ -15,6 +15,8 @@ export const companyWalletRequestSchema = z.object({
   nonce: z.string().trim().min(1).max(100),
   /** Owner's EIP-712 signature over the challenge typed data (ownership proof, never a tx). */
   signature: z.string().trim().min(1).max(500),
+  /** Address the client passed as the eth_signTypedData_v4 signer (diagnostic echo only, never trusted). */
+  signingAccount: z.string().trim().min(1).max(100).optional(),
   /** Required only when replacing an already-registered DIFFERENT wallet. */
   confirmChange: z.boolean().optional(),
 });

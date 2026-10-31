@@ -168,7 +168,7 @@ export async function issueCompanyWalletChallenge(
 
 export async function registerCompanyWallet(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address: string; nonce: string; signature: string; confirmChange?: boolean },
+  params: { workspaceId: string; userId: string; address: string; nonce: string; signature: string; signingAccount?: string; confirmChange?: boolean },
 ) {
   await ownerOrFail(deps, params.workspaceId, params.userId);
   const normalized = normalizeAddress(params.address);
@@ -214,8 +214,21 @@ export async function registerCompanyWallet(
     fail(400, "INVALID_SIGNATURE", "Signature is malformed. Sign the registration request shown by the app.");
   }
   if (recovered!.toLowerCase() !== normalized.toLowerCase()) {
+    // Owner-only diagnostic payload: four PUBLIC addresses that SHOULD match.
+    // Never includes the signature, nonce, session data, or key material.
+    const safeAddress = (value: unknown, fallback: string): string => {
+      try {
+        return normalizeAddress(String(value));
+      } catch {
+        return fallback;
+      }
+    };
+    const recoveredSigner = safeAddress(recovered, String(recovered));
     fail(403, "SIGNER_MISMATCH", "Signature came from a different wallet. Sign with the wallet you want to register.", {
-      recovered: (recovered as string).toLowerCase(),
+      selectedWallet: normalized,
+      challengeWallet: safeAddress(challenge.wallet, normalized),
+      signingAccount: params.signingAccount ? safeAddress(params.signingAccount, normalized) : normalized,
+      recoveredSigner,
     });
   }
   // Single-use: the nonce dies here even though replay would be harmless

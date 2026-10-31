@@ -43,6 +43,12 @@ export function CompanyWalletRegistration({
   const [account, setAccount] = useState<string | null>(null);
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
   const [confirmChange, setConfirmChange] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<{
+    selected: string | null;
+    challenge: string;
+    signing: string;
+    recovered: string | null;
+  } | null>(null);
   const availableRef = useRef<string[]>([]);
 
   function commitAccounts(list: string[]) {
@@ -84,9 +90,14 @@ export function CompanyWalletRegistration({
     setPhase("error");
   }
 
+  function clearDiagnostic() {
+    setDiagnostic(null);
+  }
+
   async function connect() {
     setError(null);
     setNote(null);
+    setDiagnostic(null);
     setPhase("working");
     try {
       setNote("Looking for an injected wallet…");
@@ -124,6 +135,7 @@ export function CompanyWalletRegistration({
     if (!wallet || !account) return fail("Connect a wallet first.");
     signingRef.current = true;
     setError(null);
+    setDiagnostic(null);
     setPhase("working");
     try {
       // The explicitly selected account — never accounts[0] by assumption.
@@ -178,7 +190,7 @@ export function CompanyWalletRegistration({
       }
       const res = await postJson<{ workspace: { companyWallet: string | null } }>(
         `/api/workspaces/${workspaceId}/company-wallet`,
-        { address: signer, nonce, signature: signed.signature, ...(confirmChange ? { confirmChange: true } : {}) },
+        { address: signer, nonce, signature: signed.signature, signingAccount: signer, ...(confirmChange ? { confirmChange: true } : {}) },
       );
       if (!res.ok) {
         const body = res as { error?: string; code?: string; details?: { recovered?: string } };
@@ -188,10 +200,20 @@ export function CompanyWalletRegistration({
           return;
         }
         if (body.code === "SIGNER_MISMATCH") {
-          const rec = body.details?.recovered;
-          throw new Error(
-            `Signature came from ${rec ? truncateAddress(rec) : "a different wallet"}. Sign with the wallet you want to register.`,
-          );
+          const d = (body.details ?? {}) as {
+            selectedWallet?: string;
+            challengeWallet?: string;
+            signingAccount?: string;
+            recoveredSigner?: string;
+          };
+          const diag = {
+            selected: typeof d.selectedWallet === "string" ? d.selectedWallet : account,
+            challenge: typeof d.challengeWallet === "string" ? d.challengeWallet : typedData.message.wallet,
+            signing: typeof d.signingAccount === "string" ? d.signingAccount : signer,
+            recovered: typeof d.recoveredSigner === "string" ? d.recoveredSigner : null,
+          };
+          setDiagnostic(diag);
+          throw new Error("Signature came from a different wallet. Compare the four addresses below — they should match. No wallet was registered.");
         }
         if (body.code === "CHALLENGE_EXPIRED") {
           throw new Error("Registration request expired. Start again.");
@@ -221,6 +243,7 @@ export function CompanyWalletRegistration({
     setConfirmChange(false);
     setError(null);
     setNote(null);
+    setDiagnostic(null);
     setPhase("idle");
   }
 
@@ -298,6 +321,16 @@ export function CompanyWalletRegistration({
       )}
       {phase === "error" && error && (
         <p className="form-error" role="alert" style={{ fontSize: 13 }}>{error}</p>
+      )}
+      {phase === "error" && diagnostic && (
+        <div style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 6 }}>
+          <strong style={{ fontSize: 13 }}>Registration diagnostic</strong>
+          <span style={{ fontSize: 12.5 }}>Selected: <span className="mono">{diagnostic.selected ?? "—"}</span></span>
+          <span style={{ fontSize: 12.5 }}>Challenge: <span className="mono">{diagnostic.challenge}</span></span>
+          <span style={{ fontSize: 12.5 }}>Signing account: <span className="mono">{diagnostic.signing}</span></span>
+          <span style={{ fontSize: 12.5 }}>Recovered signer: <span className="mono">{diagnostic.recovered ?? "—"}</span></span>
+          <span style={{ fontSize: 12.5, opacity: 0.85 }}>These addresses should match. No wallet was registered.</span>
+        </div>
       )}
       {phase === "error" && (
         <div style={{ display: "flex", gap: 8 }}>
