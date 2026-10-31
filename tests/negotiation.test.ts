@@ -15,9 +15,9 @@ import {
   confirmFunding,
   prepareFundingIntent,
   recordFundingSubmitted,
-  registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
+import { registerTestWallet } from "./wallet-fixtures";
 import type {
   PaidEventEvidence,
   PayoutChainReader,
@@ -58,7 +58,7 @@ import { reconcilePayout, reserveOutcomePayout, settleReservedPayout } from "@/s
 import type { OutcomeProofSigner, PayoutExecutor, PayoutSubmitArgs } from "@/server/chain/signers";
 import { outcomeId32For } from "@/server/domain/payout";
 
-const OWNER_W = "0x1111111111111111111111111111111111111111" as Address;
+const OWNER_W = "0xe7f4fDeC1Df452FE07b6b1E886ECF04D8A24bEa5" as Address;
 const PARTNER_W = "0x2222222222222222222222222222222222222222" as Address;
 const PARTNER2_W = "0x9999999999999999999999999999999999999999" as Address;
 const CUSTOMER = "0x6666666666666666666666666666666666666666" as Address;
@@ -200,7 +200,7 @@ async function openLiveMarket(
   });
   await moveToReview(ctx.campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
   await approvePolicy(ctx.campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
-  await registerCompanyWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
+  await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
   const p = await prepareFundingIntent(ctx.fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
   const ftx = txFor(`f${n}`);
   await recordFundingSubmitted(ctx.fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1, fundingTxHash: ftx });

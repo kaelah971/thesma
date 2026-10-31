@@ -3,6 +3,7 @@ import { CreateWorkspaceForm } from "@/components/app/CreateWorkspaceForm";
 import { Card, Facts, PageHeader, Pill } from "@/components/app/ui";
 import styles from "@/components/app/app.module.css";
 import { shortHash } from "@/lib/format";
+import { CompanyWalletRegistration } from "@/components/app/CompanyWalletRegistration";
 import { arcConfigFromEnv } from "@/server/chain/arc";
 import { selectWorkspace } from "../actions";
 import { getAppSession } from "../data";
@@ -99,9 +100,28 @@ export default async function SettingsPage() {
               ]}
             />
             <p className={styles.muted} style={{ fontSize: 13, marginTop: 12 }}>
-              Thesma never holds your wallet keys. Funding is signed from the owner&apos;s wallet.
+              Company wallet — your organization&apos;s address, used to sign and fund campaigns. Campaign vault —
+              Thesma&apos;s Arc contract where campaign USDC is deposited. Thesma never holds your wallet keys.
             </p>
           </Card>
+          {current && current.role === "ORGANIZATION_OWNER" && (
+            <Card title="Company wallet">
+              <Facts
+                columns={1}
+                items={[
+                  {
+                    label: "Status",
+                    value: current.companyWallet ? (
+                      <span className="mono">{shortHash(current.companyWallet, 8, 6)}</span>
+                    ) : (
+                      "Not registered"
+                    ),
+                  },
+                ]}
+              />
+              <CompanyWalletRegistration workspaceId={current.id} currentWallet={current.companyWallet} />
+            </Card>
+          )}
         </div>
       </div>
     </>

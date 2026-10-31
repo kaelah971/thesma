@@ -17,6 +17,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       workspaceId: id,
       userId: user.userId,
       address: parsed.data.address,
+      signature: parsed.data.signature,
+      confirmChange: parsed.data.confirmChange,
     });
     return Response.json({ workspace: result.workspace });
   } catch (err) {

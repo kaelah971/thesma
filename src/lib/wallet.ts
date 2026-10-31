@@ -10,8 +10,9 @@
  *  2. `window.ethereum` itself (MetaMask or another injected wallet).
  *  3. EIP-6963 announcements (`eip6963:requestProvider` round-trip).
  *
- * Nothing here signs, sends, or stores. All account reads use the
- * non-prompting `eth_accounts` unless the caller explicitly connects.
+ * Nothing here signs, sends, or stores. No secret key material is ever
+ * handled. All account reads use the non-prompting `eth_accounts`
+ * unless the caller explicitly connects.
  * No timers longer than the discovery round-trip; no cached verdicts —
  * every funding attempt re-discovers.
  */
@@ -221,6 +222,61 @@ export async function switchToNetwork(
     if (code === 4902 || code === "4902") return { failure: "CHAIN_NOT_ADDED" };
     return { failure: "PROVIDER_ERROR" };
   }
+}
+
+/**
+ * Canonical company-wallet registration challenge. Binding workspace + address
+ * makes any captured signature useless anywhere else: replaying it can only
+ * ever re-register the SAME address on the SAME workspace (idempotent).
+ */
+export function buildCompanyWalletMessage(workspaceId: string, address: string): string {
+  return [
+    "Thesma company wallet registration",
+    `workspace:${workspaceId}`,
+    `address:${address}`,
+    "This proves control of the wallet. It never moves funds.",
+  ].join("\n");
+}
+
+/**
+ * Ask the connected wallet to prove control by signing the registration
+ * challenge. Proves ownership without secret key material and without
+ * any transaction — a signature, never a broadcast.
+ */
+export async function signCompanyWalletMessage(
+  provider: InjectedProvider,
+  account: string,
+  message: string,
+): Promise<{ signature: string } | { failure: WalletFailure }> {
+  if (!provider || typeof provider.request !== "function") return { failure: "PROVIDER_ERROR" };
+  try {
+    // MetaMask personal_sign order: [message, address].
+    const signature = (await provider.request({
+      method: "personal_sign",
+      params: [message, account],
+    })) as unknown;
+    if (typeof signature !== "string" || !signature.startsWith("0x")) return { failure: "PROVIDER_ERROR" };
+    return { signature };
+  } catch (err) {
+    return { failure: failureOf(err) };
+  }
+}
+
+export type FundingEntryState = "REGISTER_REQUIRED" | "WRONG_ACCOUNT" | "OK";
+
+/**
+ * Pure entry gate for the funding flow. A missing registered wallet is its
+ * own state — never mislabeled as "wrong account".
+ */
+export function fundingEntryState(args: {
+  expectedSender: string | null;
+  connectedAccount: string | null;
+}): FundingEntryState {
+  if (!args.expectedSender) return "REGISTER_REQUIRED";
+  if (!args.connectedAccount || args.connectedAccount.toLowerCase() !== args.expectedSender.toLowerCase()) {
+    return "WRONG_ACCOUNT";
+  }
+  return "OK";
 }
 
 /** Truncated address for display. Full values stay in transaction params only. */

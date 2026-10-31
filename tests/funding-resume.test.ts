@@ -16,10 +16,10 @@ import {
   getFundingStatus,
   prepareFundingIntent,
   recordFundingSubmitted,
-  registerCompanyWallet,
   resumeFundingIntent,
   type FundingDeps,
 } from "@/server/services/fundings";
+import { registerTestWallet } from "./wallet-fixtures";
 import type {
   ArcChainReader,
   FundedEventEvidence,
@@ -27,7 +27,7 @@ import type {
   VaultCampaignState,
 } from "@/server/chain/arc";
 
-const OWNER = "0x1111111111111111111111111111111111111111" as Address;
+const OWNER = "0xe7f4fDeC1Df452FE07b6b1E886ECF04D8A24bEa5" as Address;
 const VAULT = "0x2222222222222222222222222222222222222222" as Address;
 const USDC = "0x3600000000000000000000000000000000000000" as Address;
 const EXECUTOR = "0x3333333333333333333333333333333333333333" as Address;
@@ -121,7 +121,7 @@ async function approvedCampaign(deps: FundingDeps, campaignDeps: CampaignDeps) {
 
 async function preparedFlow() {
   const ctx = setup();
-  await registerCompanyWallet(ctx.deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+  await registerTestWallet(ctx.deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
   const a = await approvedCampaign(ctx.deps, ctx.campaignDeps);
   const intent = await prepareFundingIntent(ctx.deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 1 });
   return { ...ctx, campaignId: a.campaign.id, intent };

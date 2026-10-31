@@ -20,6 +20,7 @@ import {
   registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
+import { registerTestWallet } from "./wallet-fixtures";
 import type {
   ArcChainReader,
   ArcConfig,
@@ -28,7 +29,7 @@ import type {
   VaultCampaignState,
 } from "@/server/chain/arc";
 
-const OWNER = "0x1111111111111111111111111111111111111111" as Address;
+const OWNER = "0xe7f4fDeC1Df452FE07b6b1E886ECF04D8A24bEa5" as Address;
 const VAULT = "0x2222222222222222222222222222222222222222" as Address;
 const USDC = "0x3600000000000000000000000000000000000000" as Address;
 const EXECUTOR = "0x3333333333333333333333333333333333333333" as Address;
@@ -144,7 +145,7 @@ async function approvedCampaign(deps: FundingDeps, campaignDeps: CampaignDeps, u
 }
 
 async function prepared(deps: FundingDeps, campaignDeps: CampaignDeps, reader: FakeReader) {
-  await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+  await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
   const a = await approvedCampaign(deps, campaignDeps);
   const p = await prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 1 });
   void reader;
@@ -163,7 +164,7 @@ async function fails(promise: Promise<unknown>): Promise<any> {
 describe("funding access control", () => {
   it("only the owner can prepare funding; members and outsiders are blocked", async () => {
     const { deps, campaignDeps } = setup();
-    await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+    await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
     const a = await approvedCampaign(deps, campaignDeps);
     const member = await fails(prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "member-2", expectedVersion: 1 }));
     expect(member.status).toBe(403);
@@ -189,7 +190,7 @@ describe("funding access control", () => {
     const draftErr = await fails(prepareFundingIntent(deps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 }));
     expect(draftErr.status).toBe(400);
 
-    await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+    await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
     const a = await approvedCampaign(deps, campaignDeps);
     const stale = await fails(prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 99 }));
     expect(stale.status).toBe(409);
@@ -197,21 +198,24 @@ describe("funding access control", () => {
 
   it("rejects malformed wallet addresses without storing them", async () => {
     const { deps } = setup();
-    const err = await fails(registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: "0x123" }));
+    const err = await fails(
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: "0x123", signature: "0x00" }),
+    );
     expect(err.status).toBe(400);
     const ws = await deps.store.getWorkspace("ws-A");
     expect(ws?.companyWallet).toBeNull();
   });
 
-  it("registers (not verifies) the company wallet with a checksummed address and audit", async () => {
+  it("registers the company wallet with signature proof, checksummed address and audit", async () => {
     const { events, deps } = setup();
     const r = await registerCompanyWallet(deps, {
       workspaceId: "ws-A",
       userId: "member-2",
       address: OWNER,
+      signature: "0x00",
     }).catch((e) => e);
     expect(r.status).toBe(403); // member cannot register
-    const ok = await registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER.toLowerCase() });
+    const ok = await registerTestWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER.toLowerCase() });
     expect(ok.workspace.companyWallet).toBe(OWNER);
     expect(events.some((e) => e.action === "workspace.company_wallet_registered")).toBe(true);
   });
@@ -445,7 +449,7 @@ describe("funding confirmation (reads Arc, trusts nothing)", () => {
       return { id: "evt" };
     };
     const deps: FundingDeps = { store, audit: throwingSink, config: CONFIG, reader, now: () => FIXED_NOW };
-    await registerCompanyWallet({ ...deps, audit: throwingSink }, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
+    await registerTestWallet({ ...deps, audit: throwingSink }, { workspaceId: "ws-A", userId: "owner-1", address: OWNER });
     const a = await approvedCampaign({ ...deps }, campaignDeps);
     const err = await fails(prepareFundingIntent(deps, { campaignId: a.campaign.id, userId: "owner-1", expectedVersion: 1 }));
     expect(err.message).toBe("audit outage");

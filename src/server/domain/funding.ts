@@ -6,6 +6,10 @@ const txHashSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Must be a 0x 32-by
 export const companyWalletRequestSchema = z.object({
   /** Raw address text; normalized + validated server-side (malformed -> 400). */
   address: z.string().trim().min(1).max(100),
+  /** Owner's signature over the canonical registration challenge (ownership proof, never a tx). */
+  signature: z.string().trim().min(1).max(500),
+  /** Required only when replacing an already-registered DIFFERENT wallet. */
+  confirmChange: z.boolean().optional(),
 });
 
 export const fundingSubmittedRequestSchema = expectedVersionSchema.extend({

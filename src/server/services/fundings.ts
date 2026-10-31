@@ -10,6 +10,8 @@ import {
   type UnsignedAction,
 } from "../chain/arc";
 import { campaignKeyFor, policyHashFor, type Hex32 } from "../chain/keys";
+import { verifyMessage } from "viem";
+import { buildCompanyWalletMessage } from "@/lib/wallet";
 import { newId } from "../auth/session";
 import { campaignInScope } from "./campaigns";
 import type { AuditSink, FundingStore, StoredFunding } from "./campaignStore";
@@ -110,10 +112,32 @@ export function serializeFunding(f: StoredFunding) {
  */
 export async function registerCompanyWallet(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address: string },
+  params: { workspaceId: string; userId: string; address: string; signature: string; confirmChange?: boolean },
 ) {
   await ownerOrFail(deps, params.workspaceId, params.userId);
   const normalized = normalizeAddress(params.address);
+  const current = await deps.store.getWorkspace(params.workspaceId);
+  if (!current) fail(404, "NOT_FOUND", "Workspace not found");
+  // Ownership proof: the signature must recover to the claimed address over
+  // the canonical workspace-bound challenge. Pasted addresses never register.
+  const message = buildCompanyWalletMessage(params.workspaceId, normalized);
+  let valid = false;
+  try {
+    valid = await verifyMessage({ address: normalized, message, signature: params.signature as `0x${string}` });
+  } catch {
+    valid = false;
+  }
+  if (!valid) {
+    fail(400, "INVALID_SIGNATURE", "Signature does not prove control of this wallet. Sign the registration message with the wallet you want to register.");
+  }
+  const existing = current.companyWallet ?? null;
+  if (existing && existing.toLowerCase() !== normalized.toLowerCase() && !params.confirmChange) {
+    fail(
+      409,
+      "WALLET_CHANGE_REQUIRES_CONFIRMATION",
+      "A different company wallet is already registered. Confirm explicitly to replace it.",
+    );
+  }
   const workspace = await deps.store.atomic(deps.audit, async ({ store, audit }) => {
     const ws = await store.setCompanyWallet(params.workspaceId, normalized);
     await audit({
@@ -123,7 +147,11 @@ export async function registerCompanyWallet(
       action: "workspace.company_wallet_registered",
       targetType: "workspace",
       targetId: params.workspaceId,
-      metadata: { workspaceId: params.workspaceId, companyWallet: normalized },
+      metadata: {
+        workspaceId: params.workspaceId,
+        companyWallet: normalized,
+        changed: existing !== null && existing.toLowerCase() !== normalized.toLowerCase(),
+      },
     });
     return ws;
   });

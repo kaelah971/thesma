@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getJson, postJson } from "@/lib/api";
@@ -105,6 +106,7 @@ export function CampaignFunding({
   const [account, setAccount] = useState<string | null>(null);
   const [wallet, setWallet] = useState<DiscoveredWallet | null>(null);
   const [needsSwitch, setNeedsSwitch] = useState(false);
+  const [needsRegistration, setNeedsRegistration] = useState(false);
   const [actions, setActions] = useState<FundingAction[]>([]);
   const [completed, setCompleted] = useState<Purpose[]>([]);
   const [activeStep, setActiveStep] = useState<Purpose | null>(null);
@@ -145,6 +147,14 @@ export function CampaignFunding({
     setError(null);
     setNote(null);
     setNeedsSwitch(false);
+    setNeedsRegistration(false);
+    // No registered wallet is its own state — never mislabeled as "wrong account".
+    // No provider touch, no intent preparation, no transaction.
+    if (!expectedSender) {
+      setNeedsRegistration(true);
+      fail("Register a company wallet before funding this campaign.");
+      return;
+    }
     setPhase("working");
     setNote("Looking for an injected wallet…");
     try {
@@ -393,8 +403,13 @@ export function CampaignFunding({
           Switch to {chainName} in {wallet.name}
         </button>
       )}
+      {phase === "error" && needsRegistration && (
+        <Link href="/app/settings" className="btn btn-primary">
+          Register wallet in Settings
+        </Link>
+      )}
       {phase === "error" && (
-        <button type="button" className="btn btn-ghost" onClick={() => { setPhase("idle"); setError(null); setNeedsSwitch(false); }}>
+        <button type="button" className="btn btn-ghost" onClick={() => { setPhase("idle"); setError(null); setNeedsSwitch(false); setNeedsRegistration(false); }}>
           Back
         </button>
       )}

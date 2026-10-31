@@ -15,9 +15,9 @@ import {
   confirmFunding,
   prepareFundingIntent,
   recordFundingSubmitted,
-  registerCompanyWallet,
   type FundingDeps,
 } from "@/server/services/fundings";
+import { registerTestWallet } from "./wallet-fixtures";
 import type { ArcConfig, TxReceiptSummary, VaultCampaignState } from "@/server/chain/arc";
 import {
   finalizeMarketIfTargetSettled,
@@ -34,7 +34,7 @@ import { reconcilePayout, type PayoutDeps } from "@/server/services/payouts";
 import { runSupplyAgentWorker } from "@/server/services/supplyAgent";
 import { newId } from "@/server/auth/session";
 
-const OWNER_W = "0x1111111111111111111111111111111111111111" as Address;
+const OWNER_W = "0xe7f4fDeC1Df452FE07b6b1E886ECF04D8A24bEa5" as Address;
 const PARTNER_W = "0x2222222222222222222222222222222222222222" as Address;
 const VAULT = "0x3333333333333333333333333333333333333333" as Address;
 const USDC = "0x3600000000000000000000000000000000000000" as Address;
@@ -110,7 +110,7 @@ async function liveCampaign(ctx: ReturnType<typeof setup>, tag = 1, target = 1) 
   });
   await moveToReview(ctx.campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
   await approvePolicy(ctx.campaignDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
-  await registerCompanyWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
+  await registerTestWallet(ctx.fundingDeps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_W });
   const p = await prepareFundingIntent(ctx.fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1 });
   await recordFundingSubmitted(ctx.fundingDeps, { campaignId: d.campaign.id, userId: "owner-1", expectedVersion: 1, fundingTxHash: txFor(tag) });
   ctx.reader.receipts.set(txFor(tag).toLowerCase(), {
