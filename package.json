@@ -15,7 +15,8 @@
     "db:migrate": "tsx ./src/server/db/migrate.ts",
     "arc:doctor": "tsx ./scripts/arc-doctor.ts",
     "mainnet:preflight": "tsx ./scripts/mainnet-preflight.ts",
-    "production:doctor": "tsx ./scripts/mainnet-preflight.ts"
+    "production:doctor": "tsx ./scripts/mainnet-preflight.ts",
+    "test:browser": "node ./scripts/browser-smoke.mjs"
   },
   "dependencies": {
     "bcryptjs": "3.0.3",
@@ -36,6 +37,7 @@
     "drizzle-kit": "0.31.11",
     "eslint": "9.39.1",
     "eslint-config-next": "16.4.2",
+    "playwright-core": "^1.64.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vitest": "4.0.18"

@@ -1,37 +1,26 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { buildCsp, generateNonce } from "@/server/security/csp";
 
 /**
  * Per-request Content-Security-Policy with a fresh nonce.
  *
- * Next.js streams page data as inline scripts (`self.__next_f.push(...)`):
- * a static `script-src 'self'` (no nonces) blocks those scripts and leaves
- * every streamed route stuck on its loading fallback with dead
- * interactivity. The framework reads the `x-nonce` request header and
- * stamps its own scripts, so first-party-only execution is preserved:
- * external/unknown scripts still cannot run.
+ * The SAME policy value is set on the request headers (so Next.js can
+ * extract the nonce during server rendering and stamp it onto framework
+ * scripts — without this, every streamed/inline first-party script is
+ * blocked and hydration never runs) and on the response headers (so the
+ * browser enforces it). See `src/server/security/csp.ts` for the policy.
  *
- * `strict-dynamic` (+ `https:`/`http:`/`'unsafe-inline'` as spec-mandated
- * fallbacks that modern browsers ignore when a nonce or strict-dynamic is
- * present) keeps ancient browsers functional without weakening modern ones.
- * Eval-based script execution is never allowed.
+ * Kept as `middleware.ts` (not `proxy.ts`): the rename is a convention
+ * deprecation only, and the current form is fully supported.
  */
 export function middleware(request: NextRequest) {
-  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const csp = [
-    "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https: http: 'unsafe-inline'`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "frame-ancestors 'none'",
-    "form-action 'self'",
-    "base-uri 'self'",
-    "object-src 'none'",
-  ].join("; ");
+  const nonce = generateNonce();
+  const csp = buildCsp(nonce);
   const headers = new Headers(request.headers);
   headers.set("x-nonce", nonce);
+  // Framework nonce extraction reads the REQUEST Content-Security-Policy.
+  headers.set("Content-Security-Policy", csp);
   const response = NextResponse.next({ request: { headers } });
   response.headers.set("Content-Security-Policy", csp);
   return response;

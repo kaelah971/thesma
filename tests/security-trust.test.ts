@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertSafeDestinationUrl } from "@/server/domain/market";
+import { buildCsp } from "@/server/security/csp";
 
 const PROD = { allowLocalhost: false };
 const DEV = { allowLocalhost: true };
@@ -45,18 +46,36 @@ describe("referral destination validation (no open redirect)", () => {
 describe("security headers baseline", () => {
   const middlewareSrc = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
   const configSrc = readFileSync(join(process.cwd(), "next.config.ts"), "utf8");
+  const cspSrc = readFileSync(join(process.cwd(), "src/server/security/csp.ts"), "utf8");
+  const layoutSrc = readFileSync(join(process.cwd(), "src/app/layout.tsx"), "utf8");
 
   it("issues a per-request CSP with a fresh nonce (static script-src would freeze streamed routes)", () => {
     // Next.js streams page data as inline scripts: only a nonce stamped via
-    // x-nonce keeps first-party execution without killing hydration.
+    // the request CSP keeps first-party execution without killing hydration.
+    // Policy shape lives in the pure builder; middleware propagates it.
     expect(middlewareSrc).toContain("x-nonce");
-    expect(middlewareSrc).toContain("'nonce-${nonce}'");
-    expect(middlewareSrc).toContain("'strict-dynamic'");
-    expect(middlewareSrc).toContain("frame-ancestors 'none'");
-    expect(middlewareSrc).toContain("object-src 'none'");
+    expect(middlewareSrc).toContain("buildCsp");
+    expect(middlewareSrc).toContain("generateNonce");
+    // Framework nonce extraction reads the REQUEST CSP — without this line
+    // no framework script gets a nonce and every streamed route stays blocked.
+    expect(middlewareSrc).toContain('headers.set("Content-Security-Policy"');
+    expect(middlewareSrc).toContain('response.headers.set("Content-Security-Policy"');
+    expect(cspSrc).toContain("'nonce-${nonce}'");
+    expect(cspSrc).toContain("'strict-dynamic'");
+    expect(cspSrc).toContain("frame-ancestors 'none'");
+    expect(cspSrc).toContain("object-src 'none'");
+    expect(cspSrc).not.toMatch(/script-src[^;]*unsafe-eval/);
     expect(middlewareSrc).not.toContain("unsafe-eval");
+    // The issued policy itself never grants eval.
+    expect(buildCsp("dGVzdG5vbmNlMTIzNDU2Nzg=")).not.toContain("unsafe-eval");
     // No second static policy in next.config: two policies intersect and break.
     expect(configSrc).not.toContain('key: "Content-Security-Policy"');
+  });
+
+  it("forces dynamic rendering so static HTML can never ship a stale nonce", () => {
+    // Per-request nonces cannot survive prerendering: the root layout stays
+    // dynamic so every route renders per-request with the request's nonce.
+    expect(layoutSrc).toContain('export const dynamic = "force-dynamic"');
   });
 
   it("serves hardening headers on all routes and hides the fingerprint", () => {

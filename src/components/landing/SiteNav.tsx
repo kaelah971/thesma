@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
 import styles from "./landing.module.css";
 
@@ -16,12 +16,30 @@ const LINKS = [
 
 export function SiteNav() {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      // Keyboard close returns focus to the trigger.
+      buttonRef.current?.focus();
+    };
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (menuRef.current?.contains(t)) return;
+      if (buttonRef.current?.contains(t)) return;
+      setOpen(false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
   }, [open]);
 
   return (
@@ -45,6 +63,7 @@ export function SiteNav() {
         </div>
         <button
           type="button"
+          ref={buttonRef}
           className={styles.navToggle}
           aria-expanded={open}
           aria-controls="mobile-menu"
@@ -54,7 +73,7 @@ export function SiteNav() {
           <span data-open={open} />
         </button>
       </div>
-      <div id="mobile-menu" className={styles.mobileMenu} data-open={open} hidden={!open}>
+      <div id="mobile-menu" ref={menuRef} className={styles.mobileMenu} data-open={open} hidden={!open}>
         <nav aria-label="Mobile">
           {LINKS.map((l) => (
             <a key={l.href} href={l.href} onClick={() => setOpen(false)}>

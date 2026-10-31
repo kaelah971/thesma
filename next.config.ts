@@ -7,9 +7,10 @@ import type { NextConfig } from "next";
  * src/middleware.ts with a fresh nonce. Next.js streams page data as
  * inline scripts, so a static `script-src 'self'` would block them and
  * freeze every streamed route on its loading fallback. The middleware
- * passes the nonce via `x-nonce`, which the framework stamps onto its own
- * scripts — first-party-only execution is preserved. Everything else here
- * is static and safe to declare once.
+ * sends the policy on the request headers (so the framework can extract
+ * the nonce and stamp it onto its own scripts) and on the response
+ * headers (so the browser enforces it) — first-party-only execution is
+ * preserved. Everything else here is static and safe to declare once.
  */
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },

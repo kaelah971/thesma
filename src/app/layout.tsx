@@ -2,6 +2,19 @@ import type { Metadata, Viewport } from "next";
 import { body, display } from "./fonts";
 import "./globals.css";
 
+/**
+ * Forced dynamic rendering (entire app).
+ *
+ * The middleware issues a global per-request CSP nonce (`src/middleware.ts`,
+ * no matcher). Statically prerendered HTML is fixed at build time, so it
+ * can never carry the request's fresh nonce — the framework's inline
+ * scripts would ship without (or with a stale) nonce, the browser would
+ * block them, and hydration would never run (dead mobile nav, stuck
+ * loading fallbacks). Keeping this here — rather than per-page — guards
+ * every current and future route against that regression class.
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://thesma.vercel.app"),
   title: {
