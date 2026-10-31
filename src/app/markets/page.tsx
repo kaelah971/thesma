@@ -15,8 +15,15 @@ export const metadata: Metadata = { title: "Live markets" };
 async function load() {
   const wired = marketDepsOr503();
   if ("response" in wired) return { live: [], completed: [], degraded: true };
-  const [live, completed] = await Promise.all([listPublicMarkets(wired.deps), listCompletedMarkets(wired.deps)]);
-  return { live: live.markets, completed: completed.markets, degraded: false };
+  try {
+    const [live, completed] = await Promise.all([listPublicMarkets(wired.deps), listCompletedMarkets(wired.deps)]);
+    return { live: live.markets, completed: completed.markets, degraded: false };
+  } catch {
+    // Runtime infra failure (e.g. DB configured but unreachable) is not
+    // empty data: show the unavailable state, never "No live markets".
+    // The error itself is never rendered (no hostnames, SQL, or secrets).
+    return { live: [], completed: [], degraded: true };
+  }
 }
 
 export default async function MarketsPage() {

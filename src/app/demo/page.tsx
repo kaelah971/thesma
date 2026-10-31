@@ -116,13 +116,17 @@ export default async function DemoPage() {
   try {
     detail = await getPublicMarketDetail(wired.deps, { campaignId: DEMO_CAMPAIGN_ID, explorerBaseUrl: base });
   } catch {
+    // The demo campaign id is fixed: a read failure means the proof store
+    // is unreachable, not that the proof was never published. Never claim
+    // empty truth here, and never render the underlying error.
     return (
       <main style={{ minHeight: "100dvh", padding: "32px 16px 64px" }}>
         <div style={{ width: "100%", maxWidth: 960, margin: "0 auto", display: "grid", gap: 20 }}>
           <PageHeader eyebrow="No login required" title="Real proof" description="A real campaign, settled onchain." />
           <Card tone="blue">
             <p style={{ margin: 0, fontSize: 14 }}>
-              This proof is not published yet. See <Link href="/markets">public markets</Link> for what is.
+              Proof data is temporarily unavailable. The completed history lives on{" "}
+              <Link href="/markets">public markets</Link>.
             </p>
           </Card>
         </div>

@@ -10,7 +10,7 @@ import { EvidenceHash } from "@/components/proof/EvidenceHash";
 import { LifecycleStrip } from "@/components/proof/LifecycleStrip";
 import { deriveLifecycle } from "@/components/proof/lifecycle";
 import { TruthNote } from "@/components/proof/TruthNote";
-import { PageHeader, Pill } from "@/components/app/ui";
+import { Card, PageHeader, Pill } from "@/components/app/ui";
 import { formatDate, formatDateTime, formatUsdc } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Market" };
@@ -77,18 +77,47 @@ function EvidenceRow({ label, children }: { label: string; children: React.React
   );
 }
 
+/** Controlled infra-failure state: the store is unreachable, so nothing
+ *  can be said about this market — not empty, not missing. */
+function MarketUnavailable() {
+  return (
+    <main style={{ minHeight: "100dvh", padding: "32px 16px 64px" }}>
+      <div style={{ width: "100%", maxWidth: 960, margin: "0 auto", display: "grid", gap: 20 }}>
+        <PageHeader
+          back={{ href: "/markets", label: "All markets" }}
+          eyebrow="No login required"
+          title="Market data unavailable"
+          description="The public proof store cannot be reached right now."
+        />
+        <Card tone="blue">
+          <p style={{ margin: 0, fontSize: 14 }}>
+            Market data is temporarily unavailable. Check back shortly — this does not mean the market is
+            gone.
+          </p>
+        </Card>
+      </div>
+    </main>
+  );
+}
+
 export default async function MarketDetailPage({ params }: { params: Promise<{ campaignId: string }> }) {
   const { campaignId } = await params;
   const wired = marketDepsOr503();
-  if ("response" in wired) notFound();
+  // No DB configured: the store is unreachable, which says nothing about
+  // whether this campaign exists — show unavailable, never a false 404.
+  if ("response" in wired) return <MarketUnavailable />;
   let detail;
   try {
     detail = await getPublicMarketDetail(wired.deps, {
       campaignId,
       explorerBaseUrl: process.env.ARC_EXPLORER_BASE_URL ?? null,
     });
-  } catch {
-    notFound();
+  } catch (e) {
+    // Genuine missing campaign (service throws { status: 404 }) stays a
+    // 404. Anything else is infra failure: unavailable, never "not found",
+    // and the error itself is never rendered (no hostnames, SQL, secrets).
+    if ((e as { status?: unknown } | null)?.status === 404) notFound();
+    return <MarketUnavailable />;
   }
   const done = detail.kind === "completed" ? detail : null;
   const settledCount = done ? done.payouts.filter((p) => p.state === "SETTLED").length : 0;
