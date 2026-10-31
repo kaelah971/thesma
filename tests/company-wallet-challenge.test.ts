@@ -84,7 +84,7 @@ describe("frozen challenge payload", () => {
       challenge: { ...challenge, typedData: revived },
       workspaceId: "ws-A",
       selectedAccount: OWNER_ADDR,
-      activeAccount: OWNER_ADDR,
+      availableAccounts: [OWNER_ADDR],
     });
     expect("typedData" in sel).toBe(true);
     if ("typedData" in sel) expect(JSON.stringify(sel.typedData)).toBe(raw);
@@ -96,7 +96,7 @@ describe("frozen challenge payload", () => {
       challenge,
       workspaceId: "ws-A",
       selectedAccount: OWNER_ADDR.toLowerCase(),
-      activeAccount: OWNER_ADDR.toLowerCase(),
+      availableAccounts: [OWNER_ADDR.toLowerCase()],
     });
     expect("typedData" in sel).toBe(true);
     if ("typedData" in sel) {
@@ -111,7 +111,7 @@ describe("frozen challenge payload", () => {
       challenge,
       workspaceId: "ws-A",
       selectedAccount: OWNER_ADDR,
-      activeAccount: OWNER_ADDR,
+      availableAccounts: [OWNER_ADDR],
     });
     expect("typedData" in sel).toBe(true);
     if ("typedData" in sel) {
@@ -127,7 +127,7 @@ describe("frozen challenge payload", () => {
 
   it("rerender purity: same inputs always select the identical payload object", () => {
     const challenge = frozenChallenge();
-    const args = { challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, activeAccount: OWNER_ADDR };
+    const args = { challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, availableAccounts: [OWNER_ADDR] };
     const first = selectChallengePayload(args);
     const second = selectChallengePayload(args);
     expect(first).toEqual(second);
@@ -138,13 +138,13 @@ describe("frozen challenge payload", () => {
 
   it("missing challenge, workspace mismatch, and account changes fail closed", () => {
     const challenge = frozenChallenge();
-    expect(selectChallengePayload({ challenge: null, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, activeAccount: OWNER_ADDR }))
+    expect(selectChallengePayload({ challenge: null, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, availableAccounts: [OWNER_ADDR] }))
       .toEqual({ error: "NO_CHALLENGE" });
-    expect(selectChallengePayload({ challenge, workspaceId: "ws-B", selectedAccount: OWNER_ADDR, activeAccount: OWNER_ADDR }))
+    expect(selectChallengePayload({ challenge, workspaceId: "ws-B", selectedAccount: OWNER_ADDR, availableAccounts: [OWNER_ADDR] }))
       .toEqual({ error: "WORKSPACE_MISMATCH" });
-    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, activeAccount: "0x0000000000000000000000000000000000000001" }))
+    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, availableAccounts: ["0x0000000000000000000000000000000000000001"] }))
       .toEqual({ error: "ACCOUNT_CHANGED" });
-    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, activeAccount: null }))
+    expect(selectChallengePayload({ challenge, workspaceId: "ws-A", selectedAccount: OWNER_ADDR, availableAccounts: [] }))
       .toEqual({ error: "ACCOUNT_CHANGED" });
   });
 
@@ -154,7 +154,7 @@ describe("frozen challenge payload", () => {
       challenge,
       workspaceId: "ws-A",
       selectedAccount: "0x0000000000000000000000000000000000000001",
-      activeAccount: "0x0000000000000000000000000000000000000001",
+      availableAccounts: ["0x0000000000000000000000000000000000000001"],
     })).toEqual({ error: "ACCOUNT_CHANGED" });
   });
 
@@ -165,7 +165,7 @@ describe("frozen challenge payload", () => {
       challenge: { typedData: signed.typedData, nonce: signed.nonce, issuedAt: "", expiresAt: "" },
       workspaceId: "ws-A",
       selectedAccount: OWNER_ADDR.toLowerCase(),
-      activeAccount: OWNER_ADDR,
+      availableAccounts: [OWNER_ADDR],
     });
     expect("typedData" in sel).toBe(true);
     const r = await registerCompanyWallet(deps, {
@@ -188,10 +188,16 @@ describe("frozen challenge payload", () => {
 
   it("component never rebuilds challenge fields (single source of truth)", () => {
     const src = readFileSync(join(root, "src/components/app/CompanyWalletRegistration.tsx"), "utf8");
-    // Event-driven only: no effect-driven challenge fetch (StrictMode-safe).
-    expect(src).not.toContain("useEffect");
+    // The only effect subscribes to accountsChanged; the challenge fetch
+    // lives solely in the Sign click handler (StrictMode-safe: no effect fetch).
+    expect(src).toContain("accountsChanged");
     // Exactly one challenge request site (the Sign click handler).
     expect(src.split("company-wallet/challenge").length - 1).toBe(1);
+    const effectStart = src.indexOf("useEffect(() => {");
+    const effectEnd = src.indexOf("}, [wallet, phase]);");
+    const effectBody = effectStart >= 0 && effectEnd > effectStart ? src.slice(effectStart, effectEnd) : "";
+    expect(effectBody).not.toContain("company-wallet/challenge");
+    expect(effectBody).not.toContain("postJson");
     // The client must not recompute signed timestamps.
     expect(src).not.toContain("Date.now()");
     // Double-submit guard: one challenge per explicit Sign click.

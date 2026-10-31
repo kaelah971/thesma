@@ -241,12 +241,16 @@ async function runWalletDiscovery(browser) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   await context.addInitScript(() => {
     const calls = [];
+    const FIRST = "0x1111111111111111111111111111111111111111";
+    const SELECTED = "0x1234567890abcdef1234567890abcdef12345678";
     const provider = {
       isMetaMask: true,
+      selectedAddress: SELECTED,
       async request({ method, params }) {
         calls.push(method);
         if (method === "eth_accounts" || method === "eth_requestAccounts") {
-          return ["0x1234567890abcdef1234567890abcdef12345678"];
+          // Two permitted accounts with the UI selection NOT first.
+          return [FIRST, SELECTED];
         }
         if (method === "eth_chainId") return "0x13b2"; // 5042 Arc Mainnet
         if (method === "wallet_switchEthereumChain") return null;
@@ -293,6 +297,7 @@ async function runWalletDiscovery(browser) {
         isMetaMask: eth?.isMetaMask === true,
         multiProvider: Array.isArray(eth?.providers) && eth.providers[0]?.isMetaMask === true,
         accounts: null,
+        selectedAddress: eth?.selectedAddress ?? null,
         chainId: null,
         eip6963Rdns: null,
       };
@@ -320,7 +325,8 @@ async function runWalletDiscovery(browser) {
     });
     check(`${label}: mock MetaMask visible via window.ethereum`, probe.typeofEth !== "undefined" && probe.isMetaMask === true);
     check(`${label}: multi-provider array exposes MetaMask`, probe.multiProvider === true);
-    check(`${label}: accounts readable (connect state, not "not installed")`, Array.isArray(probe.accounts) && probe.accounts.length === 1);
+    check(`${label}: accounts readable (connect state, not "not installed")`, Array.isArray(probe.accounts) && probe.accounts.length === 2);
+    check(`${label}: UI-selected account exposed separately from accounts[0]`, probe.selectedAddress === "0x1234567890abcdef1234567890abcdef12345678", `selected=${probe.selectedAddress}`);
     check(`${label}: Arc Mainnet chain 5042 reported`, probe.chainId === "0x13b2", `chainId=${probe.chainId}`);
     check(`${label}: EIP-6963 MetaMask announcement received`, probe.eip6963Rdns === "io.metamask", `rdns=${probe.eip6963Rdns}`);
     const typed = await page.evaluate(async () => {

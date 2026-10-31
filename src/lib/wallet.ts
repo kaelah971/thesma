@@ -25,6 +25,10 @@ export interface InjectedProvider {
   request: WalletRequest;
   isMetaMask?: boolean;
   providers?: InjectedProvider[];
+  /** MetaMask UI-selected account (when exposed). Never assumed — always validated against eth_accounts. */
+  selectedAddress?: unknown;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
   [key: string]: unknown;
 }
 
@@ -90,13 +94,18 @@ export function findMetaMask6963(details: EIP6963Detail[]): EIP6963Detail | null
 }
 
 /**
- * Full discovery: synchronous providers first, then one EIP-6963
- * round-trip (bounded by timeoutMs), then a final synchronous re-check to
- * catch delayed injection that landed during the round-trip.
+ * Full discovery. Never assumes `window.ethereum` is MetaMask and never
+ * assumes `accounts[0]` is the user's selected account (a stale permitted
+ * account can sit at index 0 while the UI shows another one).
+ *
+ * Order: explicit MetaMask providers[] entry → MetaMask window.ethereum
+ * fast path → EIP-6963 MetaMask round-trip → legacy injected fallback.
+ * Ends with a synchronous re-check to catch delayed injection.
  */
 export async function discoverWallet(timeoutMs = 700): Promise<DiscoveredWallet | null> {
   const sync = pickInjectedWallet();
-  if (sync) return sync;
+  // Fast path only for an explicitly MetaMask root.
+  if (sync?.isMetaMask) return sync;
   if (typeof window === "undefined") return null;
   const collected: EIP6963Detail[] = [];
   const onAnnounce = (event: Event) => {
@@ -117,15 +126,17 @@ export async function discoverWallet(timeoutMs = 700): Promise<DiscoveredWallet 
     }
   }
   const late = pickInjectedWallet();
-  if (late) return late;
+  if (late?.isMetaMask) return late;
   const meta = findMetaMask6963(collected);
   if (meta) return { provider: meta.provider, name: "MetaMask", isMetaMask: true, source: "eip6963" };
+  // Legacy fallback: a usable injected root even when it is not MetaMask.
+  if (late) return late;
   const first = collected.find((d) => d && typeof d.provider?.request === "function") ?? null;
   if (first) {
     const name = typeof first.info?.name === "string" && first.info.name ? first.info.name : "Injected wallet";
     return { provider: first.provider, name, isMetaMask: false, source: "eip6963" };
   }
-  return null;
+  return sync;
 }
 
 export type WalletPresence = "NOT_INSTALLED" | "DISCONNECTED" | "WRONG_NETWORK" | "READY";
@@ -334,6 +345,45 @@ export interface RegistrationChallengePayload {
 
 export type ChallengePayloadError = "NO_CHALLENGE" | "WORKSPACE_MISMATCH" | "ACCOUNT_CHANGED";
 
+function sameAccount(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * Explicit account selection. `accounts[0]` is never assumed to be the
+ * user's selected account: when several accounts are permitted, the
+ * wallet's UI-selected address (`selectedAddress`, when exposed and still
+ * permitted) wins; otherwise the caller picks explicitly.
+ */
+export function defaultSelectedAccount(availableAccounts: string[], selectedAddress?: unknown): string | null {
+  if (availableAccounts.length === 0) return null;
+  if (typeof selectedAddress === "string" && selectedAddress) {
+    const match = availableAccounts.find((a) => sameAccount(a, selectedAddress));
+    if (match) return match;
+  }
+  return availableAccounts[0];
+}
+
+export interface AccountChangeResolution {
+  changed: boolean;
+  /** New selection when changed and non-empty; null when locked/empty. */
+  selection: string | null;
+}
+
+/**
+ * Pure accountsChanged reducer. Any membership change invalidates the
+ * current selection flow: a non-empty new list moves the selection to the
+ * wallet's freshly selected account (index 0); an empty list means locked.
+ */
+export function resolveAccountChange(previousAccounts: string[], nextAccounts: string[]): AccountChangeResolution {
+  const sameSet =
+    previousAccounts.length === nextAccounts.length &&
+    previousAccounts.every((p) => nextAccounts.some((n) => sameAccount(p, n)));
+  if (nextAccounts.length === 0) return { changed: true, selection: null };
+  if (!sameSet) return { changed: true, selection: nextAccounts[0] };
+  return { changed: false, selection: null };
+}
+
 /**
  * Frozen-challenge selector: the server-issued payload is the single source
  * of truth and is returned VERBATIM — never rebuilt, never recomputed.
@@ -341,20 +391,20 @@ export type ChallengePayloadError = "NO_CHALLENGE" | "WORKSPACE_MISMATCH" | "ACC
  * The client must not reconstruct wallet/nonce/issuedAt/expiresAt (a raw
  * account can differ in checksum case from the normalized challenge wallet,
  * which falsely trips equality checks). Before returning the payload, this
- * asserts the live provider account still matches both the selected account
- * and the challenge wallet; otherwise the caller must restart (fresh
- * challenge), never silently re-issue.
+ * asserts the explicitly selected account is still permitted AND still
+ * equals the challenge wallet; otherwise the caller must restart (fresh
+ * challenge), never silently re-issue or silently switch accounts.
  */
 export function selectChallengePayload(args: {
   challenge: RegistrationChallengePayload | null;
   workspaceId: string;
   selectedAccount: string;
-  activeAccount: string | null;
+  availableAccounts: string[];
 }): { typedData: CompanyWalletTypedData } | { error: ChallengePayloadError } {
   if (!args.challenge) return { error: "NO_CHALLENGE" };
   if (args.challenge.typedData.message.workspaceId !== args.workspaceId) return { error: "WORKSPACE_MISMATCH" };
-  if (isAccountChanged(args.activeAccount, args.selectedAccount)) return { error: "ACCOUNT_CHANGED" };
-  if (isAccountChanged(args.activeAccount, args.challenge.typedData.message.wallet)) return { error: "ACCOUNT_CHANGED" };
+  if (!args.availableAccounts.some((a) => sameAccount(a, args.selectedAccount))) return { error: "ACCOUNT_CHANGED" };
+  if (!sameAccount(args.selectedAccount, args.challenge.typedData.message.wallet)) return { error: "ACCOUNT_CHANGED" };
   return { typedData: args.challenge.typedData };
 }
 

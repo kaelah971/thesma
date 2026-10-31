@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { postJson } from "@/lib/api";
 import {
   connectWallet,
+  defaultSelectedAccount,
   discoverWallet,
-  isAccountChanged,
+  resolveAccountChange,
   selectChallengePayload,
   signCompanyWalletTypedData,
   truncateAddress,
@@ -40,7 +41,43 @@ export function CompanyWalletRegistration({
   const [error, setError] = useState<string | null>(null);
   const [wallet, setWallet] = useState<DiscoveredWallet | null>(null);
   const [account, setAccount] = useState<string | null>(null);
+  const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
   const [confirmChange, setConfirmChange] = useState(false);
+  const availableRef = useRef<string[]>([]);
+
+  function commitAccounts(list: string[]) {
+    availableRef.current = list;
+    setAvailableAccounts(list);
+  }
+
+  // Live account tracking: the SAME discovered provider is the only event
+  // source — window.ethereum from another extension is never consulted.
+  // Any membership change invalidates the flow; a non-empty new list moves
+  // the explicit selection to the wallet's freshly selected account.
+  useEffect(() => {
+    const provider = wallet?.provider;
+    if (!provider?.on || (phase !== "connected" && phase !== "working")) return;
+    const handleAccountsChanged = (...args: unknown[]) => {
+      const raw = Array.isArray(args[0]) ? (args[0] as unknown[]) : [];
+      const next = raw.filter((a): a is string => typeof a === "string");
+      const res = resolveAccountChange(availableRef.current, next);
+      if (!res.changed) return;
+      commitAccounts(next);
+      if (res.selection === null) {
+        setAccount(null);
+        setWallet(null);
+        setError("Your active MetaMask account changed. Restart registration.");
+        setPhase("error");
+      } else {
+        setAccount(res.selection);
+        setNote(`Active account changed — selection updated to ${truncateAddress(res.selection)}. Review before signing.`);
+      }
+    };
+    provider.on("accountsChanged", handleAccountsChanged);
+    return () => {
+      provider.removeListener?.("accountsChanged", handleAccountsChanged);
+    };
+  }, [wallet, phase]);
 
   function fail(message: string) {
     setError(message);
@@ -64,7 +101,13 @@ export function CompanyWalletRegistration({
         if (res.failure === "USER_REJECTED") throw new Error("Connection request was rejected. Try again when ready.");
         throw new Error(`${found.name} could not connect. Unlock it and try again.`);
       }
-      setAccount(res.account);
+      const exposed = (await found.provider.request({ method: "eth_accounts" }).catch(() => null)) as unknown;
+      const list = Array.isArray(exposed) ? exposed.filter((a): a is string => typeof a === "string") : [res.account];
+      if (list.length === 0) throw new Error(`${found.name} returned no account. Unlock it and try again.`);
+      // Explicit selection: never assume accounts[0] is the UI-selected one.
+      const selected = defaultSelectedAccount(list, found.provider.selectedAddress) ?? list[0];
+      commitAccounts(list);
+      setAccount(selected);
       setPhase("connected");
       setNote(null);
     } catch (e) {
@@ -83,21 +126,24 @@ export function CompanyWalletRegistration({
     setError(null);
     setPhase("working");
     try {
-      // Provider/account consistency: the signer must be the selected wallet.
+      // The explicitly selected account — never accounts[0] by assumption.
+      const selected = account;
+      // Fresh availability read from the SAME provider (never window.ethereum).
       setNote("Confirming the selected wallet is still active…");
       const current = (await wallet.provider
         .request({ method: "eth_accounts" })
-        .catch(() => null)) as string[] | null;
-      const active = Array.isArray(current) ? current[0] ?? null : null;
-      if (isAccountChanged(active, account)) {
+        .catch(() => null)) as unknown;
+      const fresh = Array.isArray(current) ? current.filter((a): a is string => typeof a === "string") : [];
+      if (!fresh.some((a) => a.toLowerCase() === selected.toLowerCase())) {
         setAccount(null);
         setWallet(null);
         throw new Error("Your active wallet changed. Re-select the company wallet.");
       }
+      commitAccounts(fresh);
       setNote("Requesting a single-use registration challenge…");
       const ch = await postJson<{
         challenge: { typedData: CompanyWalletTypedData; nonce: string; issuedAt: string; expiresAt: string };
-      }>(`/api/workspaces/${workspaceId}/company-wallet/challenge`, { address: account });
+      }>(`/api/workspaces/${workspaceId}/company-wallet/challenge`, { address: selected });
       if (!ch.ok || !ch.data?.challenge) {
         throw new Error((ch as { error?: string }).error ?? "Could not start registration. Try again.");
       }
@@ -108,8 +154,8 @@ export function CompanyWalletRegistration({
       const frozen = selectChallengePayload({
         challenge: ch.data.challenge,
         workspaceId,
-        selectedAccount: account,
-        activeAccount: active,
+        selectedAccount: selected,
+        availableAccounts: fresh,
       });
       if ("error" in frozen) {
         if (frozen.error === "ACCOUNT_CHANGED") {
@@ -121,15 +167,18 @@ export function CompanyWalletRegistration({
       }
       const { typedData } = frozen;
       const nonce = ch.data.challenge.nonce;
+      // The signer param is EXACTLY the frozen challenge wallet — MetaMask
+      // is never asked to choose implicitly.
+      const signer = typedData.message.wallet;
       setNote(`Waiting for ${wallet.name} — review and sign the registration request. It never moves funds.`);
-      const signed = await signCompanyWalletTypedData(wallet.provider, account, typedData);
+      const signed = await signCompanyWalletTypedData(wallet.provider, signer, typedData);
       if ("failure" in signed) {
         if (signed.failure === "USER_REJECTED") throw new Error("Signature request was rejected. Nothing was registered.");
         throw new Error(`${wallet.name} could not sign. Try again.`);
       }
       const res = await postJson<{ workspace: { companyWallet: string | null } }>(
         `/api/workspaces/${workspaceId}/company-wallet`,
-        { address: account, nonce, signature: signed.signature, ...(confirmChange ? { confirmChange: true } : {}) },
+        { address: signer, nonce, signature: signed.signature, ...(confirmChange ? { confirmChange: true } : {}) },
       );
       if (!res.ok) {
         const body = res as { error?: string; code?: string; details?: { recovered?: string } };
@@ -203,7 +252,24 @@ export function CompanyWalletRegistration({
           <div style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 6 }}>
             <strong style={{ fontSize: 14 }}>Register company wallet</strong>
             <span style={{ fontSize: 13 }}>Workspace: <strong>{workspaceName}</strong></span>
-            <span style={{ fontSize: 13 }}>Wallet: <span className="mono" title={account}>{truncateAddress(account)}</span>{wallet ? ` (${wallet.name})` : ""}</span>
+            {availableAccounts.length > 1 ? (
+              <span style={{ fontSize: 13, display: "grid", gap: 4 }}>
+                <strong>Select the wallet to register{wallet ? ` (${wallet.name})` : ""}:</strong>
+                {availableAccounts.map((a) => (
+                  <label key={a} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="radio"
+                      name="company-wallet-account"
+                      checked={account.toLowerCase() === a.toLowerCase()}
+                      onChange={() => setAccount(a)}
+                    />
+                    <span className="mono" title={a}>{truncateAddress(a)}</span>
+                  </label>
+                ))}
+              </span>
+            ) : (
+              <span style={{ fontSize: 13 }}>Wallet: <span className="mono" title={account}>{truncateAddress(account)}</span>{wallet ? ` (${wallet.name})` : ""}</span>
+            )}
             <span style={{ fontSize: 13 }}>Network: <strong>Arc Mainnet</strong></span>
             <span style={{ fontSize: 13 }}>This signature:</span>
             <ul style={{ fontSize: 12.5, margin: 0, paddingLeft: 18 }}>
