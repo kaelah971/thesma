@@ -405,6 +405,10 @@ export interface CreatorOpportunity extends InvitationDto {
     category: string | null;
     deadline: string | null;
     visibility: string | null;
+    /** Display truth: drives the "Awaiting campaign funding" gate. Never filters rows. */
+    state: string | null;
+    marketStatus: string | null;
+    fundingStatus: string | null;
   };
   /** Live agent assessment for INVITED rows (display only, never audited here). */
   agent: { result: InvitationAgentResult; reasons: string[] } | null;
@@ -432,6 +436,12 @@ export async function listCreatorOpportunities(
     const workspace = campaign ? await deps.store.getWorkspace(campaign.workspaceId).catch(() => null) : null;
     const version = campaign
       ? await deps.store.getVersion(row.campaignId, row.offeredPolicyVersion).catch(() => null)
+      : null;
+    // Funding/market posture is display truth only: an APPROVED + UNFUNDED
+    // campaign must still surface its INVITED rows (visibility != acceptance).
+    const market = campaign ? await deps.store.getMarket(row.campaignId).catch(() => null) : null;
+    const funding = campaign
+      ? await deps.store.getFunding(row.campaignId, row.offeredPolicyVersion).catch(() => null)
       : null;
     let agent: CreatorOpportunity["agent"] = null;
     if (row.status === "INVITED" && snapshot) {
@@ -467,6 +477,9 @@ export async function listCreatorOpportunities(
         category: workspace?.category ?? null,
         deadline: version?.deadline ? version.deadline.toISOString() : null,
         visibility: version?.marketVisibility ?? null,
+        state: campaign?.state ?? null,
+        marketStatus: market?.status ?? null,
+        fundingStatus: funding?.status ?? null,
       },
       agent,
       referral,
@@ -696,6 +709,9 @@ export async function acceptInvitation(
     );
   }
   const campaign = await deps.store.getCampaign(row.campaignId);
+  if (campaign?.state === "APPROVED") {
+    fail(409, "FUNDING_PENDING", "Campaign is awaiting funding — acceptance opens when the market goes live");
+  }
   if (!campaign || campaign.state !== "LIVE") {
     fail(409, "CAMPAIGN_CLOSED", "Campaign is no longer live");
   }

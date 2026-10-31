@@ -19,7 +19,7 @@ interface Opportunity {
     bonus: Record<string, unknown>;
   };
   match: { score: number; confidence: string; action: string; reasons: string[] };
-  campaign: { workspaceName: string; objective: string; category: string | null; deadline: string | null };
+  campaign: { workspaceName: string; objective: string; category: string | null; deadline: string | null; state: string | null; marketStatus: string | null; fundingStatus: string | null };
   agent: { result: string; reasons: string[] } | null;
   referral: { code: string; path: string } | null;
   respondedAt: string | null;
@@ -196,10 +196,21 @@ export function OpportunityInbox() {
             <span style={{ display: "block", fontSize: 12, marginTop: 4, color: "var(--ink-2)" }}>
               Accepted ≠ earned · Verified ≠ paid · Submitted ≠ settled.
             </span>
+            {open && (o.campaign.state !== "LIVE" || o.campaign.marketStatus !== "OPEN") && (
+              <span style={{ display: "block", fontSize: 12.5, marginTop: 8, fontWeight: 700 }}>
+                Awaiting campaign funding — your frozen offer is saved and becomes accept-ready when the market goes live.
+              </span>
+            )}
             <div className={styles.panelActions}>
               {open ? (
                 <>
-                  <button type="button" className="btn btn-primary btn-sm" disabled={pending === o.id} onClick={() => respond(o.id, "accept")}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={pending === o.id || o.campaign.state !== "LIVE" || o.campaign.marketStatus !== "OPEN"}
+                    title={o.campaign.state !== "LIVE" || o.campaign.marketStatus !== "OPEN" ? "Awaiting campaign funding" : "Accept"}
+                    onClick={() => respond(o.id, "accept")}
+                  >
                     {pending === o.id ? "Working…" : "Accept"}
                   </button>
                   <button type="button" className="btn btn-sm" disabled={pending === o.id} onClick={() => respond(o.id, "decline")}>
