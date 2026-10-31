@@ -3,10 +3,17 @@ import { expectedVersionSchema } from "./campaign";
 
 const txHashSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Must be a 0x 32-byte transaction hash");
 
+export const companyWalletChallengeRequestSchema = z.object({
+  /** Candidate wallet address; normalized server-side. Nothing is registered yet. */
+  address: z.string().trim().min(1).max(100),
+});
+
 export const companyWalletRequestSchema = z.object({
   /** Raw address text; normalized + validated server-side (malformed -> 400). */
   address: z.string().trim().min(1).max(100),
-  /** Owner's signature over the canonical registration challenge (ownership proof, never a tx). */
+  /** Server-issued single-use challenge nonce (binds user + workspace + wallet). */
+  nonce: z.string().trim().min(1).max(100),
+  /** Owner's EIP-712 signature over the challenge typed data (ownership proof, never a tx). */
   signature: z.string().trim().min(1).max(500),
   /** Required only when replacing an already-registered DIFFERENT wallet. */
   confirmChange: z.boolean().optional(),

@@ -199,7 +199,7 @@ describe("funding access control", () => {
   it("rejects malformed wallet addresses without storing them", async () => {
     const { deps } = setup();
     const err = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: "0x123", signature: "0x00" }),
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: "0x123", nonce: "unused-malformed-address-first", signature: "0x00" }),
     );
     expect(err.status).toBe(400);
     const ws = await deps.store.getWorkspace("ws-A");
@@ -212,6 +212,7 @@ describe("funding access control", () => {
       workspaceId: "ws-A",
       userId: "member-2",
       address: OWNER,
+      nonce: "unused-owner-check-runs-first",
       signature: "0x00",
     }).catch((e) => e);
     expect(r.status).toBe(403); // member cannot register

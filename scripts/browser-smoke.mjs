@@ -243,13 +243,25 @@ async function runWalletDiscovery(browser) {
     const calls = [];
     const provider = {
       isMetaMask: true,
-      async request({ method }) {
+      async request({ method, params }) {
         calls.push(method);
         if (method === "eth_accounts" || method === "eth_requestAccounts") {
           return ["0x1234567890abcdef1234567890abcdef12345678"];
         }
         if (method === "eth_chainId") return "0x13b2"; // 5042 Arc Mainnet
         if (method === "wallet_switchEthereumChain") return null;
+        if (method === "eth_signTypedData_v4") {
+          const [signer, json] = params || [];
+          if (signer === "0x000000000000000000000000000000000000dEaD") {
+            throw Object.assign(new Error("User rejected the request"), { code: 4001 });
+          }
+          const payload = JSON.parse(json);
+          if (payload?.domain?.chainId !== 5042) throw new Error("unexpected domain");
+          if (payload?.primaryType !== "CompanyWalletRegistration") throw new Error("unexpected type");
+          const fields = (payload?.types?.CompanyWalletRegistration || []).map((f) => f.name).join(",");
+          if (fields !== "workspaceId,wallet,purpose,nonce,issuedAt,expiresAt") throw new Error("unexpected fields: " + fields);
+          return "0x" + "ab".repeat(65);
+        }
         return null;
       },
     };
@@ -311,8 +323,54 @@ async function runWalletDiscovery(browser) {
     check(`${label}: accounts readable (connect state, not "not installed")`, Array.isArray(probe.accounts) && probe.accounts.length === 1);
     check(`${label}: Arc Mainnet chain 5042 reported`, probe.chainId === "0x13b2", `chainId=${probe.chainId}`);
     check(`${label}: EIP-6963 MetaMask announcement received`, probe.eip6963Rdns === "io.metamask", `rdns=${probe.eip6963Rdns}`);
+    const typed = await page.evaluate(async () => {
+      const eth = window.ethereum;
+      const out = { sig: null, rejected: false, shape: null };
+      const typedData = {
+        domain: { name: "Thesma", version: "1", chainId: 5042 },
+        types: {
+          CompanyWalletRegistration: [
+            { name: "workspaceId", type: "string" },
+            { name: "wallet", type: "string" },
+            { name: "purpose", type: "string" },
+            { name: "nonce", type: "string" },
+            { name: "issuedAt", type: "string" },
+            { name: "expiresAt", type: "string" },
+          ],
+        },
+        primaryType: "CompanyWalletRegistration",
+        message: {
+          workspaceId: "ws-smoke",
+          wallet: "0x1234567890abcdef1234567890abcdef12345678",
+          purpose: "Register this wallet as the organization's company wallet for Thesma campaign funding. This never moves funds.",
+          nonce: "smoke-nonce",
+          issuedAt: "2026-06-01T12:00:00.000Z",
+          expiresAt: "2026-06-01T12:10:00.000Z",
+        },
+      };
+      try {
+        const sig = await eth.request({
+          method: "eth_signTypedData_v4",
+          params: ["0x1234567890abcdef1234567890abcdef12345678", JSON.stringify(typedData)],
+        });
+        out.sig = sig;
+        out.shape = typeof sig === "string" && sig.startsWith("0x") && sig.length === 132 ? "ok" : `bad:${String(sig).length}`;
+      } catch {}
+      try {
+        await eth.request({
+          method: "eth_signTypedData_v4",
+          params: ["0x000000000000000000000000000000000000dEaD", JSON.stringify(typedData)],
+        });
+      } catch (e) {
+        out.rejected = /reject/i.test(e?.message ?? "") || e?.code === 4001;
+      }
+      return out;
+    });
+    check(`${label}: typed registration request signs (EIP-712, no high-risk blob)`, typed.shape === "ok", `shape=${typed.shape}`);
+    check(`${label}: rejection surfaces as user-rejected`, typed.rejected === true);
     const sent = await page.evaluate(() => window.__mockWalletCalls ?? []);
     check(`${label}: discovery sent zero transactions`, !sent.includes("eth_sendTransaction"), sent.join(","));
+    check(`${label}: no token approval or permit RPC used`, !sent.some((m) => /approve|permit/i.test(m)), sent.join(","));
     const { csp, hydration } = firstPartyFailures(consoleErrors, pageErrors);
     check(`${label}: no CSP-blocked scripts during wallet probing`, csp.length === 0, csp.slice(0, 2).join(" | "));
     check(`${label}: no hydration errors (mock provider)`, hydration.length === 0, hydration.slice(0, 2).join(" | "));

@@ -1,14 +1,21 @@
 import { privateKeyToAccount } from "viem/accounts";
-import { buildCompanyWalletMessage } from "@/lib/wallet";
+import { buildCompanyWalletTypedData } from "@/lib/wallet";
 import { normalizeAddress } from "@/server/chain/arc";
-import { registerCompanyWallet, type FundingDeps } from "@/server/services/fundings";
+import {
+  issueCompanyWalletChallenge,
+  registerCompanyWallet,
+  type FundingDeps,
+} from "@/server/services/fundings";
+import { createMemoryCompanyWalletChallengeStore } from "@/server/services/companyWalletChallenges";
 
 /**
- * Shared signing fixture for company-wallet registration tests.
+ * Signing fixtures for company-wallet registration tests.
  *
- * Registration requires a real ownership signature (no pasted addresses),
- * so tests sign with a well-known throwaway dev key (Anvil default #0 —
- * public, unfunded, never mainnet). Nothing here touches a real wallet.
+ * Registration requires a server-issued challenge + EIP-712 signature, so
+ * this helper performs the full client flow: challenge → canonical
+ * typed-data build (byte-checked like the UI) → viem signTypedData →
+ * register. Always uses an in-memory challenge store — never touches a
+ * real database. Keys are throwaway dev keys, never mainnet keys.
  */
 export const TEST_OWNER_PRIVATE_KEY =
   "0x96d8b4d4a3d1e17a76d1c8114237cc46fb89196fe4db85aae2f9f14c8ba560d7" as const;
@@ -17,32 +24,68 @@ export function testOwnerAccount() {
   return privateKeyToAccount(TEST_OWNER_PRIVATE_KEY);
 }
 
-/** Sign the canonical registration challenge for (workspaceId, address). */
-export async function signWalletRegistration(workspaceId: string, address: string, privateKey: string = TEST_OWNER_PRIVATE_KEY) {
-  const account = privateKeyToAccount(privateKey as `0x${string}`);
-  const normalized = normalizeAddress(address);
-  const message = buildCompanyWalletMessage(workspaceId, normalized);
-  const signature = await account.signMessage({ message });
-  return { address, normalized, message, signature };
+function ensureMemoryChallenges(deps: FundingDeps) {
+  if (!deps.challenges) deps.challenges = createMemoryCompanyWalletChallengeStore();
+  return deps.challenges;
+}
+
+/** Issue a challenge and sign its typed data (mirrors the client exactly). */
+export async function signWalletRegistration(
+  deps: FundingDeps,
+  params: { workspaceId: string; userId: string; address: string; privateKey?: string },
+) {
+  ensureMemoryChallenges(deps);
+  const key = (params.privateKey ?? TEST_OWNER_PRIVATE_KEY) as `0x${string}`;
+  const account = privateKeyToAccount(key);
+  const normalized = normalizeAddress(params.address);
+  const ch = await issueCompanyWalletChallenge(deps, {
+    workspaceId: params.workspaceId,
+    userId: params.userId,
+    address: normalized,
+  });
+  const expected = buildCompanyWalletTypedData({
+    workspaceId: params.workspaceId,
+    wallet: normalized,
+    nonce: ch.nonce,
+    issuedAt: ch.issuedAt,
+    expiresAt: ch.expiresAt,
+  });
+  if (JSON.stringify(ch.typedData) !== JSON.stringify(expected)) {
+    throw new Error("typed-data schema drift between server and client builder");
+  }
+  const signature = await account.signTypedData({
+    domain: { ...expected.domain },
+    types: expected.types,
+    primaryType: "CompanyWalletRegistration",
+    message: { ...expected.message },
+  });
+  return { address: params.address, normalized, nonce: ch.nonce, signature, typedData: ch.typedData };
 }
 
 /**
- * Register a workspace wallet with a valid ownership signature.
- * Defaults to the fixture key/address pair; pass address (any case) and
- * the signature is computed over the normalized form, like the server.
+ * Full client flow with ownership proof. Defaults to the fixture keypair;
+ * pass address (any case) and the signature is computed over the normalized
+ * form, exactly like production.
  */
 export async function registerTestWallet(
   deps: FundingDeps,
   params: { workspaceId: string; userId: string; address?: string; privateKey?: string; confirmChange?: boolean },
 ) {
-  const key = params.privateKey ?? TEST_OWNER_PRIVATE_KEY;
-  const account = privateKeyToAccount(key as `0x${string}`);
+  ensureMemoryChallenges(deps);
+  const key = (params.privateKey ?? TEST_OWNER_PRIVATE_KEY) as `0x${string}`;
+  const account = privateKeyToAccount(key);
   const address = params.address ?? account.address;
-  const { signature } = await signWalletRegistration(params.workspaceId, address, key);
+  const { nonce, signature } = await signWalletRegistration(deps, {
+    workspaceId: params.workspaceId,
+    userId: params.userId,
+    address,
+    privateKey: key,
+  });
   return registerCompanyWallet(deps, {
     workspaceId: params.workspaceId,
     userId: params.userId,
     address,
+    nonce,
     signature,
     ...(params.confirmChange !== undefined ? { confirmChange: params.confirmChange } : {}),
   });

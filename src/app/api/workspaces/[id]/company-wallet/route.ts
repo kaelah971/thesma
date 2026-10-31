@@ -17,6 +17,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       workspaceId: id,
       userId: user.userId,
       address: parsed.data.address,
+      nonce: parsed.data.nonce,
       signature: parsed.data.signature,
       confirmChange: parsed.data.confirmChange,
     });

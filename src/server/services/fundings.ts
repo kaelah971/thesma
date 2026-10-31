@@ -10,8 +10,19 @@ import {
   type UnsignedAction,
 } from "../chain/arc";
 import { campaignKeyFor, policyHashFor, type Hex32 } from "../chain/keys";
-import { verifyMessage } from "viem";
-import { buildCompanyWalletMessage } from "@/lib/wallet";
+import { recoverTypedDataAddress } from "viem";
+import {
+  buildCompanyWalletTypedData,
+  COMPANY_WALLET_DOMAIN,
+  COMPANY_WALLET_REGISTRATION_TYPES,
+  type CompanyWalletTypedData,
+} from "@/lib/wallet";
+import {
+  CHALLENGE_TTL_MS,
+  createDrizzleCompanyWalletChallengeStore,
+  type CompanyWalletChallengeStore,
+} from "./companyWalletChallenges";
+import { randomUUID } from "node:crypto";
 import { newId } from "../auth/session";
 import { campaignInScope } from "./campaigns";
 import type { AuditSink, FundingStore, StoredFunding } from "./campaignStore";
@@ -23,6 +34,12 @@ export interface FundingDeps {
   config: ArcConfig | null;
   reader: ArcChainReader | null;
   now?: () => Date;
+  /** Registration-challenge persistence. Defaults to the audit-backed store. */
+  challenges?: CompanyWalletChallengeStore;
+}
+
+function challengeStore(deps: FundingDeps): CompanyWalletChallengeStore {
+  return deps.challenges ?? createDrizzleCompanyWalletChallengeStore(deps.audit);
 }
 
 export function fundingDepsFromEnv(store: FundingStore, audit: AuditSink, reader: ArcChainReader | null): FundingDeps {
@@ -110,26 +127,101 @@ export function serializeFunding(f: StoredFunding) {
  * Funding evidence later must come FROM this exact address; typing it here
  * proves nothing cryptographic by itself.
  */
+/**
+ * Issue a single-use registration challenge for (user, workspace, wallet).
+ * The client signs the returned typed data; the nonce binds that exact
+ * triple for CHALLENGE_TTL_MS. No private material is stored.
+ */
+export async function issueCompanyWalletChallenge(
+  deps: FundingDeps,
+  params: { workspaceId: string; userId: string; address: string },
+): Promise<{ typedData: CompanyWalletTypedData; nonce: string; issuedAt: string; expiresAt: string }> {
+  await ownerOrFail(deps, params.workspaceId, params.userId);
+  const normalized = normalizeAddress(params.address);
+  const workspace = await deps.store.getWorkspace(params.workspaceId);
+  if (!workspace) fail(404, "NOT_FOUND", "Workspace not found");
+  const now = deps.now?.() ?? new Date();
+  const issuedAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + CHALLENGE_TTL_MS).toISOString();
+  const nonce = randomUUID();
+  await challengeStore(deps).issue({
+    nonce,
+    workspaceId: params.workspaceId,
+    wallet: normalized,
+    userId: params.userId,
+    issuedAt,
+    expiresAt,
+  });
+  return {
+    typedData: buildCompanyWalletTypedData({
+      workspaceId: params.workspaceId,
+      wallet: normalized,
+      nonce,
+      issuedAt,
+      expiresAt,
+    }),
+    nonce,
+    issuedAt,
+    expiresAt,
+  };
+}
+
 export async function registerCompanyWallet(
   deps: FundingDeps,
-  params: { workspaceId: string; userId: string; address: string; signature: string; confirmChange?: boolean },
+  params: { workspaceId: string; userId: string; address: string; nonce: string; signature: string; confirmChange?: boolean },
 ) {
   await ownerOrFail(deps, params.workspaceId, params.userId);
   const normalized = normalizeAddress(params.address);
   const current = await deps.store.getWorkspace(params.workspaceId);
   if (!current) fail(404, "NOT_FOUND", "Workspace not found");
-  // Ownership proof: the signature must recover to the claimed address over
-  // the canonical workspace-bound challenge. Pasted addresses never register.
-  const message = buildCompanyWalletMessage(params.workspaceId, normalized);
-  let valid = false;
+  // Freshness + binding: the nonce must exist, belong to this caller +
+  // workspace + wallet, be unexpired, and be unused.
+  const now = deps.now?.() ?? new Date();
+  const challenge = await challengeStore(deps).find(params.nonce);
+  if (!challenge) fail(404, "CHALLENGE_NOT_FOUND", "Registration challenge not found. Request a fresh one.");
+  if (challenge.workspaceId !== params.workspaceId || challenge.userId !== params.userId) {
+    fail(403, "CHALLENGE_MISMATCH", "This challenge was issued for a different workspace or user.");
+  }
+  if (challenge.wallet.toLowerCase() !== normalized.toLowerCase()) {
+    fail(400, "CHALLENGE_MISMATCH", "This challenge was issued for a different wallet address.");
+  }
+  if (Number.isNaN(Date.parse(challenge.expiresAt)) || Date.parse(challenge.expiresAt) <= now.getTime()) {
+    fail(410, "CHALLENGE_EXPIRED", "Registration challenge expired. Request a fresh one.");
+  }
+  // Ownership proof: EIP-712 typed data must recover to the claimed wallet.
+  // The exact schema is shared with the client (lib/wallet) — any drift
+  // fails closed here.
+  const typedData = buildCompanyWalletTypedData({
+    workspaceId: challenge.workspaceId,
+    wallet: challenge.wallet,
+    nonce: challenge.nonce,
+    issuedAt: challenge.issuedAt,
+    expiresAt: challenge.expiresAt,
+  });
+  let recovered: string | null = null;
   try {
-    valid = await verifyMessage({ address: normalized, message, signature: params.signature as `0x${string}` });
+    recovered = await recoverTypedDataAddress({
+      domain: { ...COMPANY_WALLET_DOMAIN },
+      types: COMPANY_WALLET_REGISTRATION_TYPES,
+      primaryType: "CompanyWalletRegistration",
+      message: { ...typedData.message },
+      signature: params.signature as `0x${string}`,
+    });
   } catch {
-    valid = false;
+    recovered = null;
   }
-  if (!valid) {
-    fail(400, "INVALID_SIGNATURE", "Signature does not prove control of this wallet. Sign the registration message with the wallet you want to register.");
+  if (!recovered) {
+    fail(400, "INVALID_SIGNATURE", "Signature is malformed. Sign the registration request shown by the app.");
   }
+  if (recovered!.toLowerCase() !== normalized.toLowerCase()) {
+    fail(403, "SIGNER_MISMATCH", "Signature came from a different wallet. Sign with the wallet you want to register.", {
+      recovered: (recovered as string).toLowerCase(),
+    });
+  }
+  // Single-use: the nonce dies here even though replay would be harmless
+  // (it binds one address), so a captured signature can never re-register.
+  const firstUse = await challengeStore(deps).consume(params.nonce, params.workspaceId);
+  if (!firstUse) fail(409, "CHALLENGE_USED", "Registration challenge already used. Request a fresh one.");
   const existing = current.companyWallet ?? null;
   if (existing && existing.toLowerCase() !== normalized.toLowerCase() && !params.confirmChange) {
     fail(

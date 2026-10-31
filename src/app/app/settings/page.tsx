@@ -119,7 +119,7 @@ export default async function SettingsPage() {
                   },
                 ]}
               />
-              <CompanyWalletRegistration workspaceId={current.id} currentWallet={current.companyWallet} />
+              <CompanyWalletRegistration workspaceId={current.id} workspaceName={current.name} currentWallet={current.companyWallet} />
             </Card>
           )}
         </div>

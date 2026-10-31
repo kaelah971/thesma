@@ -225,41 +225,104 @@ export async function switchToNetwork(
 }
 
 /**
- * Canonical company-wallet registration challenge. Binding workspace + address
- * makes any captured signature useless anywhere else: replaying it can only
- * ever re-register the SAME address on the SAME workspace (idempotent).
+ * EIP-712 typed-data ownership proof for company-wallet registration.
+ *
+ * Structured data (not an opaque personal_sign blob) so wallets render a
+ * human-readable request instead of a high-risk warning. The domain pins
+ * Thesma + Arc Mainnet; the message binds workspace + wallet + a
+ * server-issued single-use nonce with expiry. No verifyingContract: this
+ * proof authorizes no contract call, fund movement, or token approval —
+ * chainId + purpose make that explicit on every signer UI.
  */
-export function buildCompanyWalletMessage(workspaceId: string, address: string): string {
-  return [
-    "Thesma company wallet registration",
-    `workspace:${workspaceId}`,
-    `address:${address}`,
-    "This proves control of the wallet. It never moves funds.",
-  ].join("\n");
+export const COMPANY_WALLET_DOMAIN = {
+  name: "Thesma",
+  version: "1",
+  chainId: 5042,
+} as const;
+
+export const COMPANY_WALLET_REGISTRATION_TYPES = {
+  CompanyWalletRegistration: [
+    { name: "workspaceId", type: "string" },
+    { name: "wallet", type: "string" },
+    { name: "purpose", type: "string" },
+    { name: "nonce", type: "string" },
+    { name: "issuedAt", type: "string" },
+    { name: "expiresAt", type: "string" },
+  ],
+} as const;
+
+export const COMPANY_WALLET_PURPOSE =
+  "Register this wallet as the organization's company wallet for Thesma campaign funding. This never moves funds.";
+
+export interface CompanyWalletTypedMessage {
+  workspaceId: string;
+  wallet: string;
+  purpose: string;
+  nonce: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface CompanyWalletTypedData {
+  domain: typeof COMPANY_WALLET_DOMAIN;
+  types: typeof COMPANY_WALLET_REGISTRATION_TYPES;
+  primaryType: "CompanyWalletRegistration";
+  message: CompanyWalletTypedMessage;
+}
+
+/** Canonical typed-data payload. Frontend and server MUST build it here. */
+export function buildCompanyWalletTypedData(args: {
+  workspaceId: string;
+  wallet: string;
+  nonce: string;
+  issuedAt: string;
+  expiresAt: string;
+}): CompanyWalletTypedData {
+  return {
+    domain: COMPANY_WALLET_DOMAIN,
+    types: COMPANY_WALLET_REGISTRATION_TYPES,
+    primaryType: "CompanyWalletRegistration",
+    message: {
+      workspaceId: args.workspaceId,
+      wallet: args.wallet,
+      purpose: COMPANY_WALLET_PURPOSE,
+      nonce: args.nonce,
+      issuedAt: args.issuedAt,
+      expiresAt: args.expiresAt,
+    },
+  };
 }
 
 /**
- * Ask the connected wallet to prove control by signing the registration
- * challenge. Proves ownership without secret key material and without
- * any transaction — a signature, never a broadcast.
+ * Ask the connected wallet to sign the registration typed data
+ * (eth_signTypedData_v4). Proves control without secret key material and
+ * without any transaction — a signature, never a broadcast.
  */
-export async function signCompanyWalletMessage(
+export async function signCompanyWalletTypedData(
   provider: InjectedProvider,
   account: string,
-  message: string,
+  typedData: CompanyWalletTypedData,
 ): Promise<{ signature: string } | { failure: WalletFailure }> {
   if (!provider || typeof provider.request !== "function") return { failure: "PROVIDER_ERROR" };
   try {
-    // MetaMask personal_sign order: [message, address].
     const signature = (await provider.request({
-      method: "personal_sign",
-      params: [message, account],
+      method: "eth_signTypedData_v4",
+      params: [account, JSON.stringify(typedData)],
     })) as unknown;
     if (typeof signature !== "string" || !signature.startsWith("0x")) return { failure: "PROVIDER_ERROR" };
     return { signature };
   } catch (err) {
     return { failure: failureOf(err) };
   }
+}
+
+/**
+ * Provider/account consistency gate: the signer must still be the wallet the
+ * user selected. Any change aborts before any challenge or signature.
+ */
+export function isAccountChanged(activeAccount: string | null, selectedAccount: string): boolean {
+  if (!activeAccount) return true;
+  return activeAccount.toLowerCase() !== selectedAccount.toLowerCase();
 }
 
 export type FundingEntryState = "REGISTER_REQUIRED" | "WRONG_ACCOUNT" | "OK";

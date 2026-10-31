@@ -21,7 +21,7 @@ import {
 } from "@/server/services/fundings";
 import type { ArcConfig } from "@/server/chain/arc";
 import { THESMA_VAULT_ADDRESS } from "@/lib/proof";
-import { buildCompanyWalletMessage, fundingEntryState } from "@/lib/wallet";
+import { buildCompanyWalletTypedData, fundingEntryState } from "@/lib/wallet";
 import { registerTestWallet, signWalletRegistration, TEST_OWNER_PRIVATE_KEY } from "./wallet-fixtures";
 
 vi.mock("@/server/auth/guard", () => ({ getSessionUser: vi.fn(), requireUser: vi.fn() }));
@@ -138,25 +138,26 @@ describe("company wallet registration", () => {
 
   it("arbitrary pasted addresses never register without a valid signature", async () => {
     const { deps, store } = setup();
-    // Garbage signature.
+    // Malformed signature on a real challenge.
+    const bad = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR });
     const garbage = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, signature: "0x00" }),
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: bad.nonce, signature: "0x00" }),
     );
     expect(garbage.status).toBe(400);
     expect(garbage.code).toBe("INVALID_SIGNATURE");
-    // Valid signature for a DIFFERENT address (wrong-key proof).
-    const { signature } = await signWalletRegistration("ws-A", OTHER_ADDR, TEST_OWNER_PRIVATE_KEY);
+    // Structurally valid signature from a DIFFERENT key (wrong-key proof).
+    const wrong = await signWalletRegistration(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR });
     const wrongKey = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR, signature }),
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OTHER_ADDR, nonce: wrong.nonce, signature: wrong.signature }),
     );
-    expect(wrongKey.status).toBe(400);
-    expect(wrongKey.code).toBe("INVALID_SIGNATURE");
+    expect(wrongKey.status).toBe(403);
+    expect(wrongKey.code).toBe("SIGNER_MISMATCH");
     // Signature bound to another workspace does not transfer.
-    const other = await signWalletRegistration("ws-B", OWNER_ADDR);
+    const other = await signWalletRegistration(deps, { workspaceId: "ws-B", userId: "owner-1", address: OWNER_ADDR });
     const replay = await fails(
-      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, signature: other.signature }),
+      registerCompanyWallet(deps, { workspaceId: "ws-A", userId: "owner-1", address: OWNER_ADDR, nonce: other.nonce, signature: other.signature }),
     );
-    expect(replay.code).toBe("INVALID_SIGNATURE");
+    expect(replay.code).toBe("CHALLENGE_MISMATCH");
     expect((await store.getWorkspace("ws-A"))?.companyWallet).toBeNull();
   });
 
@@ -167,7 +168,7 @@ describe("company wallet registration", () => {
     expect(events.some((e) => e.action === "workspace.company_wallet_registered")).toBe(true);
     const meta = events.find((e) => e.action === "workspace.company_wallet_registered")?.metadata as Record<string, unknown>;
     expect(meta.companyWallet).toBe(getAddress(OWNER_ADDR));
-    expect(JSON.stringify(meta)).not.toContain("0xac0974");
+    expect(JSON.stringify(meta)).not.toContain("0x96d8b4d4");
   });
 
   it("re-registering the same address is idempotent (no confirmation needed)", async () => {
@@ -231,10 +232,13 @@ describe("company wallet registration", () => {
     expect(CONFIG.vaultAddress).not.toBe(OWNER_ADDR);
   });
 
-  it("challenge message binds workspace + address", () => {
-    const m = buildCompanyWalletMessage("ws-A", OWNER_ADDR);
-    expect(m).toContain("workspace:ws-A");
-    expect(m).toContain(`address:${OWNER_ADDR}`);
-    expect(buildCompanyWalletMessage("ws-B", OWNER_ADDR)).not.toBe(m);
+  it("typed-data challenge binds workspace + address + domain", () => {
+    const base = { wallet: OWNER_ADDR, nonce: "n-1", issuedAt: "2026-06-01T12:00:00.000Z", expiresAt: "2026-06-01T12:10:00.000Z" };
+    const a = buildCompanyWalletTypedData({ workspaceId: "ws-A", ...base });
+    const b = buildCompanyWalletTypedData({ workspaceId: "ws-B", ...base });
+    expect(a.domain).toMatchObject({ name: "Thesma", version: "1", chainId: 5042 });
+    expect(a.message.workspaceId).toBe("ws-A");
+    expect(a.message.wallet).toBe(OWNER_ADDR);
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
   });
 });
