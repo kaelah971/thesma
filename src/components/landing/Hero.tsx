@@ -113,10 +113,20 @@ export function Hero() {
             Open app
             <ArrowIcon />
           </Link>
+          <Link href="/demo" className="btn btn-ghost">
+            Explore real proof
+            <ArrowIcon />
+          </Link>
           <a href="#how-it-works" className="btn btn-ghost">
             See how it works
           </a>
         </div>
+        <p className={styles.enter} style={{ ...enter(4), marginTop: 14, fontSize: 12.5, opacity: 0.7 }}>
+          Arc Mainnet &middot; Verified contract &middot; Real USDC settled &middot;{" "}
+          <Link href="/demo" style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>
+            See the proof
+          </Link>
+        </p>
       </div>
 
       <div className={styles.stage}>
@@ -126,6 +136,9 @@ export function Hero() {
         <div className={styles.center}>
           <div className={`${styles.phoneRise} ${styles.enterRise}`} style={enter(4)}>
             <PhoneMockup />
+            <p style={{ marginTop: 10, fontSize: 12.5, opacity: 0.7 }}>
+              Example preview with sample numbers — <Link href="/demo">see real settled proof</Link>.
+            </p>
           </div>
         </div>
         <span className={`${styles.splitWord} ${styles.enterFade}`} data-half="end" aria-hidden="true" style={enter(4)}>

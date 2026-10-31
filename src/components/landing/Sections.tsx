@@ -174,9 +174,12 @@ export function OperatorShowcase() {
     <section id="operator" className={styles.section} aria-labelledby="operator-title" data-inview-track>
       <div className="container">
         <div className={styles.sectionHead} {...reveal()}>
-          <p className="eyebrow">Operator</p>
+          <p className="eyebrow">Operator · Illustrative example</p>
           <h2 id="operator-title">Ask your campaign what it&apos;s doing.</h2>
           <p>Straight answers on holds, budget and payments, with the numbers attached.</p>
+          <p style={{ fontSize: 12.5, opacity: 0.65 }}>
+            Mock conversation with sample numbers — <Link href="/demo">see real settled proof</Link>.
+          </p>
         </div>
 
         <div className={styles.opFrame} {...reveal(1)}>

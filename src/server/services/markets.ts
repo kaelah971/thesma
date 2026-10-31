@@ -505,6 +505,7 @@ export async function getPublicMarketDetail(
     bountyCeilingMicroUsdc: version.bountyCeilingMicroUsdc?.toString() ?? null,
     deadline: version.deadline?.toISOString() ?? null,
     startedAt: campaign.createdAt.toISOString(),
+    holdSeconds: version.refundHoldSeconds ?? null,
     progress: { verified: verifiedCount, target: version.targetOutcomeCount },
     participatingPartners: partners.size,
     latestAgentDecision: latestDecision

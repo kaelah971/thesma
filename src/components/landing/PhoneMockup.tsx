@@ -9,7 +9,7 @@ import styles from "./landing.module.css";
  */
 export function PhoneMockup() {
   return (
-    <div className={styles.phoneWrap} aria-label="Preview of a Thesma campaign dashboard" role="img">
+    <div className={styles.phoneWrap} aria-label="Illustrated example of a Thesma campaign dashboard (sample numbers, not live data)" role="img">
       <div className={styles.phone}>
         <div className={styles.screen} aria-hidden="true">
           <div className={styles.statusBar}>
@@ -30,9 +30,10 @@ export function PhoneMockup() {
               <small>Paid customers · Arc USDC</small>
             </div>
             <span className="pill" data-tone="mint">
-              LIVE
+              EXAMPLE
             </span>
           </div>
+          <p style={{ margin: "8px 0 0", fontSize: 11.5, opacity: 0.65 }}>Illustrative example numbers.</p>
 
           <div className={styles.phBudget}>
             <span className={styles.phLabel}>Available budget</span>
