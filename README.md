@@ -29,7 +29,7 @@
 <img src="https://img.shields.io/badge/settlement-USDC-66F2A2?style=flat-square" alt="Settlement: USDC" />
 <img src="https://img.shields.io/badge/proof-reconciled-66F2A2?style=flat-square" alt="Proof: reconciled" />
 <img src="https://img.shields.io/badge/safety-no_double_pay-66F2A2?style=flat-square" alt="Safety: no double pay" />
-<img src="https://img.shields.io/badge/tests-515_passing-66F2A2?style=flat-square" alt="Tests: 515 passing" />
+<img src="https://img.shields.io/badge/tests-836_passing-66F2A2?style=flat-square" alt="Tests: 836 passing" />
 <img src="https://img.shields.io/badge/next.js-16-111111?style=flat-square" alt="Next.js 16" />
 <img src="https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square" alt="TypeScript strict" />
 </p>
@@ -83,13 +83,107 @@ DECISION LEDGER ──► shows why every important action occurred
 | Area | Link |
 | --- | --- |
 | Live app | [thesma.vercel.app](https://thesma.vercel.app) |
+| Zero-login real proof | [thesma.vercel.app/demo](https://thesma.vercel.app/demo) |
 | Public markets | [thesma.vercel.app/markets](https://thesma.vercel.app/markets) |
+| Public creator profile | [thesma.vercel.app/@bgirl](https://thesma.vercel.app/@bgirl) |
 | Security | [thesma.vercel.app/security](https://thesma.vercel.app/security) |
+| Terms | [thesma.vercel.app/terms](https://thesma.vercel.app/terms) |
+| Privacy | [thesma.vercel.app/privacy](https://thesma.vercel.app/privacy) |
+| Current production state | [`docs/current-state.md`](docs/current-state.md) |
 | Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
 | Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
 | Arc testnet operator proof | [`docs/proof/operator-testnet.md`](docs/proof/operator-testnet.md) |
 | Beaconfield live proof | [market `dcec0b71…`](https://thesma.vercel.app/markets/dcec0b71-2a4d-496c-b573-6999d09c8cb2) |
 | Aster settled proof | [market `5571f328…`](https://thesma.vercel.app/markets/5571f328-ceeb-4712-8671-a72be1966ffb) |
+
+---
+
+## Current production checkpoint — November 1, 2026
+
+Thesma is now a multi-sided autonomous growth-finance marketplace with the organization, creator, customer/proof, and operator surfaces working together.
+
+**CURRENT SHIPPED TRUTH:**
+
+Creator matching + invitations:
+
+- organizations rank creators using fit/evidence/economics
+- organizations can inspect why a creator matched
+- invitations can be sent before funding
+- invitation != participation
+- no referral/payout is created merely by inviting
+
+Creator opportunity inbox:
+
+- exact frozen economics visible before market funding
+- Northstar's real @bgirl invite is visible pre-funding
+- frozen offer = 5 USDC per verified purchase
+- acceptance stays disabled until funding is confirmed and market opens
+- campaign deadline displays Nov 30, 2026 consistently
+
+Company wallet:
+
+- cryptographically ownership-proven
+- server-issued workspace-bound EIP-712 challenge
+- nonce + expiry + replay protection
+- recovered signer is authoritative
+- explicit user confirmation before registration
+- registration itself moves NO funds
+- no token approval
+- no transaction
+
+MetaMask compatibility:
+
+- raw eth_signTypedData_v4 payload explicitly includes types.EIP712Domain
+- viem ↔ MetaMask cross-library digest/sign/recover tests pass
+
+Northstar — campaign id: `307eb746-dcd6-4f92-b640-cff9764a84f2`:
+
+- state: FUNDING
+- funding intent: PREPARED
+- budget: 50 USDC
+- funded: 0 USDC
+- funding transaction: none
+- market: closed until funding is independently confirmed
+- registered company wallet: `0x85522b...894A33`
+- @bgirl: existing frozen INVITED opportunity remains intact
+
+Funding safety:
+
+- real Arc USDC balance preflight
+- eth_chainId + eth_call balanceOf only
+- insufficient balance fails closed
+- Start signing disabled when insufficient
+- balance read failure != zero balance
+- balance check creates no transaction/signature/approval/new funding intent
+
+No-spend development:
+
+- we are NOT creating another mainnet campaign simply for testing
+- Northstar demonstrates organization → creator → invitation → funding-preparation
+- Aster remains canonical real-money settled evidence
+- local/Anvil/deterministic tests cover money-cost flows without forcing additional user spend
+
+### Creator marketplace — both sides of the offer
+
+<p align="center">
+  <img src="docs/readme/12-creator-marketplace-proof.jpg" alt="Creator marketplace proof: organization Creator Matches above, creator Opportunity Inbox below" width="900" />
+</p>
+
+TOP — organization-side Creator Matches: @bgirl with an explainable match score, frozen invitation, reliability, and hybrid deal controls.
+
+BOTTOM — creator-side Opportunity Inbox: Northstar INVITED with the frozen 5 USDC offer, Nov 30 deadline, truthful pre-funding state, and Accept disabled until the market goes live.
+
+### Organization funding — safe before money moves
+
+<p align="center">
+  <img src="docs/readme/13-northstar-production-state.jpg" alt="Northstar production state: verified company wallet and PREPARED unfunded campaign" width="900" />
+</p>
+
+TOP — Northstar company wallet cryptographically verified and registered.
+
+BOTTOM — Northstar PREPARED funding state: 50 USDC intended, funded 0, tx none, confirmed none, Continue funding available, market closed until confirmed.
+
+These are CURRENT production screenshots, captured November 1, 2026. Older lifecycle screenshots below remain as historical/mainnet evidence.
 
 ---
 
@@ -141,7 +235,7 @@ The same production campaign then processed a real public customer checkout thro
 - Outcome: `5fb1e592-0a87-4bcf-a502-9cdb98cb295d`, status **VERIFIED**, proof hash `0xdc0f207f682623e0f05165262cfa63d8ea4cd6a3b5884feb7ce82e16018a0fd7`
 - Verified: `2026-10-18T04:50:26.889Z`; safety hold **3600 seconds** until `2026-10-18T05:50:26.889Z` (06:50:26 Nigeria time)
 
-At the time of writing, Proof #2 is VERIFIED and serving its legitimate safety hold. It is NOT settled: no reservation, no payout, and no `OutcomePaid` event exist for this outcome. Run #1 remains the canonical completed SETTLED lifecycle.
+At this captured checkpoint, Proof #2 was VERIFIED and serving its legitimate safety hold. It was NOT settled: no reservation, no payout, and no `OutcomePaid` event existed for this outcome. Run #1 remains the canonical completed SETTLED lifecycle.
 
 ### Fresh campaign through the production UI
 
@@ -240,13 +334,21 @@ Account → workspace → campaign creation, then the `/app` workspace: funded v
 
  Beaconfield Studio live at 0.9 USDC per verified outcome with the lifecycle stopping truthfully before SETTLED; Aster Media below it as the permanent completed record.
 
-### Live truth — Beaconfield
+### Historical checkpoint — Beaconfield before settlement
 
 <p align="center">
   <img src="docs/readme/07-beaconfield-live-proof.png" alt="Beaconfield live market proof: funded, purchased, verified, held — not settled" width="900" />
 </p>
 
-Campaign `dcec0b71-2a4d-496c-b573-6999d09c8cb2`: LIVE, funded 0.9 USDC CONFIRMED, 1 verified purchase, serving its safety hold — **verified/held is not settled**: "No payouts recorded yet."
+Campaign `dcec0b71-2a4d-496c-b573-6999d09c8cb2`: the screenshot preserves the real moment when Beaconfield was LIVE, funded 0.9 USDC, had one VERIFIED purchase, and was still serving its safety hold.
+
+At THAT checkpoint:
+
+VERIFIED/HELD != SETTLED
+
+"No payouts recorded yet" was truthful.
+
+This screenshot is historical evidence of that checkpoint — it is not Beaconfield's current live state.
 
 ### Permanent proof — Aster
 
@@ -388,7 +490,7 @@ No secrets are committed. Server secrets are never exposed via `NEXT_PUBLIC` var
 ```bash
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest run — 246 passing, 2 env-gated (Anvil) skipped
+npm test             # vitest run — 836 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 npm run mainnet:preflight  # read-only production readiness gate (never signs/broadcasts; exit 1 when BLOCKED)
@@ -396,7 +498,7 @@ npm run secret:hygiene    # tracked-secret hygiene (filenames + key material; fi
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **656 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **836 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Release gate (CI)
 
@@ -419,10 +521,10 @@ Every push to `main` and every PR must pass `.github/workflows/ci.yml` (pinned N
 Honest boundaries of the shipped product:
 
 - No LLM is wired anywhere — intent parsing, pricing, negotiation, and Operator answers are deterministic kernels and fixed templates.
-- Company and partner wallet addresses are registered, not cryptographically ownership-proven.
+- Organization company wallets are cryptographically ownership-proven with a workspace-bound EIP-712 challenge and recovered-signer confirmation. Partner wallet ownership remains registration-based.
 - Refund protection is the hold timer only; no refund-event detection exists.
-- No Circle Gateway/CCTP/x402, no paymasters, no fiat ramps.
-- No revenue/CAC analytics derived from purchases.
+- No Circle Gateway/CCTP, paymasters, or fiat ramps. x402 v2 transport is protocol-tested locally, but real-provider interoperability is not yet claimed.
+- Analytics remain intentionally bounded to proof-backed campaign metrics; realized CAC is shown only where computable from verified production data.
 - Payout scheduling latency: the current Vercel Hobby production schedule runs the payout worker daily, so settlement can wait for the next run after hold expiry; payout safety and idempotency are unchanged, and lower latency needs a higher-frequency scheduler or plan.
 
 ## Engineering history
@@ -443,6 +545,7 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 ## Docs
 
 - [`docs/mainnet-proof.md`](docs/mainnet-proof.md) — canonical S8.2 mainnet evidence (detailed record).
+- [`docs/current-state.md`](docs/current-state.md) — current production checkpoint: shipped surfaces, Northstar truth, wallet/EIP-712 safety, funding balance safety, canonical Aster proof, release gate.
 - [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md) — mainnet runtime provisioning runbook.
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
 - [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.
