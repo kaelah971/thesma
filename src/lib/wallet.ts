@@ -38,6 +38,8 @@ export interface DiscoveredWallet {
   name: string;
   isMetaMask: boolean;
   source: "providers" | "injected" | "eip6963";
+  /** EIP-6963 announcement info when source === "eip6963"; null otherwise. Diagnostic only. */
+  info?: EIP6963Info | null;
 }
 
 export interface EIP6963Info {
@@ -128,13 +130,13 @@ export async function discoverWallet(timeoutMs = 700): Promise<DiscoveredWallet 
   const late = pickInjectedWallet();
   if (late?.isMetaMask) return late;
   const meta = findMetaMask6963(collected);
-  if (meta) return { provider: meta.provider, name: "MetaMask", isMetaMask: true, source: "eip6963" };
+  if (meta) return { provider: meta.provider, name: "MetaMask", isMetaMask: true, source: "eip6963", info: meta.info ?? null };
   // Legacy fallback: a usable injected root even when it is not MetaMask.
   if (late) return late;
   const first = collected.find((d) => d && typeof d.provider?.request === "function") ?? null;
   if (first) {
     const name = typeof first.info?.name === "string" && first.info.name ? first.info.name : "Injected wallet";
-    return { provider: first.provider, name, isMetaMask: false, source: "eip6963" };
+    return { provider: first.provider, name, isMetaMask: false, source: "eip6963", info: first.info ?? null };
   }
   return sync;
 }
@@ -400,6 +402,10 @@ export function buildCompanyWalletTypedData(args: {
  * Ask the connected wallet to sign the registration typed data
  * (eth_signTypedData_v4). Proves control without secret key material and
  * without any transaction — a signature, never a broadcast.
+ *
+ * Legacy shape (`{ failure: WalletFailure }`) is preserved for existing
+ * callers. New code should prefer signCompanyWalletTypedDataDetailed,
+ * which reports the exact normalized provider error.
  */
 export async function signCompanyWalletTypedData(
   provider: InjectedProvider,
@@ -416,6 +422,189 @@ export async function signCompanyWalletTypedData(
     return { signature };
   } catch (err) {
     return { failure: failureOf(err) };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Temporary owner-only signature-failure diagnosis (P0).               */
+/* One explicit click → one eth_signTypedData_v4 request, no retries.   */
+/* Only safe fields (code, rpcCode, message) are ever surfaced.         */
+/* Never: signature, nonce, tokens, cookies, stack, raw error object.  */
+/* ------------------------------------------------------------------ */
+
+export type SignClassification =
+  | "USER_REJECTED"
+  | "REQUEST_ALREADY_PENDING"
+  | "UNAUTHORIZED"
+  | "SECURITY_BLOCKED"
+  | "PROVIDER_INTERNAL_ERROR"
+  | "UNSUPPORTED_METHOD"
+  | "INVALID_PARAMS"
+  | "ACCOUNT_CHANGED"
+  | "UNKNOWN_SIGNING_ERROR";
+
+/** Safe, renderable subset of a provider signing error. No raw object. */
+export interface SafeSignError {
+  code: number | string | null;
+  rpcCode: number | string | null;
+  /** Sanitized message: redacted, truncated, single-line. */
+  message: string;
+  classification: SignClassification;
+}
+
+/**
+ * Inner RPC code for wrapped provider errors (e.g. outer code 53 with an
+ * inner 4001 cancellation). Checks common nesting shapes; numeric strings
+ * are parsed. Returns null when no inner code is present.
+ */
+export function signRpcCodeOf(err: unknown): number | string | null {
+  if (!err || typeof err !== "object") return null;
+  const anyErr = err as Record<string, unknown>;
+  const candidates: unknown[] = [
+    anyErr.rpcCode,
+    (anyErr.data as { rpcCode?: unknown } | null)?.rpcCode,
+    (anyErr.error as { code?: unknown } | null)?.code,
+    (anyErr.cause as { code?: unknown } | null)?.code,
+    (anyErr.data as { code?: unknown } | null)?.code,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "number" && Number.isInteger(c)) return c;
+    if (typeof c === "string" && /^-?\d+$/.test(c.trim())) return Number.parseInt(c.trim(), 10);
+  }
+  return null;
+}
+
+/** Security-layer refusal text (Blockaid / phishing / deceptive site). */
+function isSecurityRefusalMessage(message: string): boolean {
+  return /phish|deceptive|malici|dangerous|fraud|scam|suspicious|blockaid|secur/i.test(message);
+}
+
+/**
+ * Normalize a thrown eth_signTypedData_v4 provider error to a stable
+ * classification. Priority: explicit cancellations first, then the
+ * security layer (which can ride on generic codes), then known RPC codes,
+ * then account-change text, else unknown. Never throws.
+ */
+export function classifySignError(err: unknown): SignClassification {
+  try {
+    const code = errorCodeOf(err);
+    const rpc = signRpcCodeOf(err);
+    const msg = errorMessageOf(err);
+    // Wrapped cancellation: outer 53 carrying an inner 4001.
+    if (code === 53 && rpc === 4001) return "USER_REJECTED";
+    if (code === 4001 || rpc === 4001) return "USER_REJECTED";
+    if (isUserRejection(err)) return "USER_REJECTED";
+    // Security layer can accompany generic codes — check before them.
+    if (isSecurityRefusalMessage(msg) || isSecurityBlocked(err)) return "SECURITY_BLOCKED";
+    if (code === -32002 || rpc === -32002) return "REQUEST_ALREADY_PENDING";
+    if (isRequestPending(err)) return "REQUEST_ALREADY_PENDING";
+    if (code === 4100 || rpc === 4100) return "UNAUTHORIZED";
+    if (code === 4200 || rpc === 4200) return "UNSUPPORTED_METHOD";
+    if (code === -32602 || rpc === -32602) return "INVALID_PARAMS";
+    if (code === -32603 || rpc === -32603) return "PROVIDER_INTERNAL_ERROR";
+    if (/unknown account|account (changed|mismatch)|selected account/i.test(msg)) return "ACCOUNT_CHANGED";
+    return "UNKNOWN_SIGNING_ERROR";
+  } catch {
+    return "UNKNOWN_SIGNING_ERROR";
+  }
+}
+
+/**
+ * Sanitized provider message for the owner-only panel: hex material
+ * redacted, whitespace collapsed, truncated. Never includes a stack.
+ */
+export function safeSignMessage(err: unknown, maxLen = 280): string {
+  let msg = errorMessageOf(err);
+  msg = msg.replace(/0x[0-9a-fA-F]{32,}/g, "[redacted]");
+  msg = msg.replace(/\s+/g, " ").trim();
+  if (!msg) return "The wallet returned an error with no message.";
+  const limit = Math.max(40, maxLen);
+  if (msg.length > limit) return `${msg.slice(0, limit - 1)}…`;
+  return msg;
+}
+
+/** Extract only safe fields from a thrown signing error. Never throws. */
+export function normalizeSignError(err: unknown): SafeSignError {
+  try {
+    return {
+      code: errorCodeOf(err),
+      rpcCode: signRpcCodeOf(err),
+      message: safeSignMessage(err),
+      classification: classifySignError(err),
+    };
+  } catch {
+    return { code: null, rpcCode: null, message: "The wallet returned an unreadable error.", classification: "UNKNOWN_SIGNING_ERROR" };
+  }
+}
+
+/**
+ * Truthful user-facing copy per signing classification. Security copy never
+ * suggests bypassing the wallet warning; nothing here exposes codes,
+ * objects, or secrets beyond the separate owner-only diagnostic fields.
+ */
+export function signFailureCopy(classification: SignClassification, walletName = "MetaMask"): string {
+  switch (classification) {
+    case "USER_REJECTED":
+      return "Signature request was rejected. Nothing was registered.";
+    case "REQUEST_ALREADY_PENDING":
+      return "A MetaMask signature request is already open. Finish or cancel it in MetaMask, then try again.";
+    case "UNAUTHORIZED":
+      return `${walletName} has not authorized this account for the site. Reconnect the wallet and try again.`;
+    case "UNSUPPORTED_METHOD":
+      return `${walletName} did not support this signing request. No wallet was registered.`;
+    case "INVALID_PARAMS":
+      return "The signing request was rejected as invalid. No wallet was registered.";
+    case "PROVIDER_INTERNAL_ERROR":
+      return `${walletName} returned an internal signing error. No wallet was registered.`;
+    case "SECURITY_BLOCKED":
+      return `${walletName}'s security layer prevented the signature request. No wallet was registered.`;
+    case "ACCOUNT_CHANGED":
+      return "Your active wallet changed. Re-select the company wallet.";
+    case "UNKNOWN_SIGNING_ERROR":
+    default:
+      return `${walletName} could not sign. Try again.`;
+  }
+}
+
+/**
+ * Exact-shape signing call with normalized failure detail. Exactly one
+ * provider.request, method eth_signTypedData_v4, params [selected account,
+ * JSON.stringify(frozen server typedData)] — no retry, no fallback method,
+ * no transaction. On failure the caller receives only safe fields.
+ */
+export async function signCompanyWalletTypedDataDetailed(
+  provider: InjectedProvider,
+  account: string,
+  typedData: CompanyWalletTypedData,
+): Promise<{ signature: string } | { signError: SafeSignError }> {
+  if (!provider || typeof provider.request !== "function") {
+    return {
+      signError: {
+        code: null,
+        rpcCode: null,
+        message: "No signing provider is available.",
+        classification: "UNKNOWN_SIGNING_ERROR",
+      },
+    };
+  }
+  try {
+    const signature = (await provider.request({
+      method: "eth_signTypedData_v4",
+      params: [account, JSON.stringify(typedData)],
+    })) as unknown;
+    if (typeof signature !== "string" || !signature.startsWith("0x")) {
+      return {
+        signError: {
+          code: null,
+          rpcCode: null,
+          message: "The wallet returned an unexpected signing result.",
+          classification: "UNKNOWN_SIGNING_ERROR",
+        },
+      };
+    }
+    return { signature };
+  } catch (err) {
+    return { signError: normalizeSignError(err) };
   }
 }
 
@@ -520,4 +709,218 @@ export function fundingEntryState(args: {
 export function truncateAddress(address: string | null | undefined): string {
   if (!address || address.length < 10) return address ?? "—";
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Temporary owner-only provider-identity diagnostics (P0).             */
+/* Read-only: never signs, sends, stores, or mutates selection.        */
+/* No signatures, nonces, or secrets are captured here.                */
+/* ------------------------------------------------------------------ */
+
+/** One-line summary of an EIP-6963 announcement. No signing is ever invoked. */
+export interface AnnouncedProviderSummary {
+  name: string | null;
+  rdns: string | null;
+  uuid: string | null;
+  isMetaMask: boolean;
+}
+
+/**
+ * Pure list of every announced provider (no request calls, no signing).
+ * Used to render "Injected providers discovered" without touching keys.
+ */
+export function summarizeAnnouncedProviders(details: EIP6963Detail[] | null | undefined): AnnouncedProviderSummary[] {
+  if (!Array.isArray(details)) return [];
+  return details
+    .filter((d) => d && d.provider && typeof d.provider.request === "function")
+    .map((d) => ({
+      name: typeof d.info?.name === "string" && d.info.name ? d.info.name : null,
+      rdns: typeof d.info?.rdns === "string" && d.info.rdns ? d.info.rdns : null,
+      uuid: typeof d.info?.uuid === "string" && d.info.uuid ? d.info.uuid : null,
+      isMetaMask: d.provider?.isMetaMask === true || isMetaMaskDetail(d),
+    }));
+}
+
+/** window.ethereum snapshot relative to the selected provider. Sync, read-only. */
+export interface WindowEthereumSnapshot {
+  hasWindow: boolean;
+  hasEthereum: boolean;
+  /** window.ethereum === selectedProvider (object identity). Null when no selection. */
+  sameAsSelected: boolean | null;
+  /** window.ethereum.providers?.length when an array; null otherwise. */
+  providersCount: number | null;
+}
+
+/**
+ * Snapshot window.ethereum without prompting or signing. Pure reads of
+ * object identity and providers[] length only.
+ */
+export function snapshotWindowEthereum(selectedProvider: InjectedProvider | null): WindowEthereumSnapshot {
+  if (typeof window === "undefined") {
+    return { hasWindow: false, hasEthereum: false, sameAsSelected: null, providersCount: null };
+  }
+  const w = window as unknown as { ethereum?: InjectedProvider };
+  const root = w?.ethereum ?? null;
+  if (!root) return { hasWindow: true, hasEthereum: false, sameAsSelected: null, providersCount: null };
+  const list = Array.isArray(root.providers) ? root.providers : null;
+  return {
+    hasWindow: true,
+    hasEthereum: true,
+    sameAsSelected: selectedProvider ? root === (selectedProvider as unknown) : null,
+    providersCount: list ? list.length : null,
+  };
+}
+
+/** Which provider object handled one JSON-RPC method. */
+export interface ProviderRequestLogEntry {
+  method: string;
+  /** Human label of the handling provider (no addresses, no secrets). */
+  handledBy: string;
+  /** True when the handler is the selected provider object (identity check). */
+  sameAsSelected: boolean;
+}
+
+export type TracedWalletMethod =
+  | "eth_accounts"
+  | "eth_requestAccounts"
+  | "eth_chainId"
+  | "eth_signTypedData_v4";
+
+const TRACED_METHODS: ReadonlySet<string> = new Set([
+  "eth_accounts",
+  "eth_requestAccounts",
+  "eth_chainId",
+  "eth_signTypedData_v4",
+]);
+
+/** Stable label for a provider in request logs. Address-free. */
+export function labelProviderForLog(provider: InjectedProvider | null, info?: EIP6963Info | null): string {
+  if (!provider) return "<none>";
+  const infoName = typeof info?.name === "string" && info.name ? info.name : null;
+  const infoRdns = typeof info?.rdns === "string" && info.rdns ? ` (${info.rdns})` : "";
+  if (provider.isMetaMask === true) return `MetaMask${infoName && infoName !== "MetaMask" ? ` / ${infoName}` : ""}${infoRdns}`;
+  if (infoName) return `${infoName}${infoRdns}`;
+  return "Injected wallet";
+}
+
+/**
+ * Read-only request tracer. Wraps ONE selected provider so every tracked
+ * method (eth_accounts, eth_requestAccounts, eth_chainId,
+ * eth_signTypedData_v4) records which object handled it. Delegates 1:1 to
+ * the target — no retry, no reorder, no selection change. The wrapper
+ * exposes __target (the exact selected object) so tests and diagnostics can
+ * assert `handler === selectedProvider` by identity.
+ */
+export function wrapProviderWithRequestLog(
+  target: InjectedProvider,
+  opts?: { label?: string; info?: EIP6963Info | null; log?: ProviderRequestLogEntry[] },
+): InjectedProvider & { __target: InjectedProvider; __log: ProviderRequestLogEntry[] } {
+  const log = opts?.log ?? [];
+  const label = opts?.label ?? labelProviderForLog(target, opts?.info ?? null);
+  const wrapped = {
+    ...target,
+    __target: target,
+    __log: log,
+    async request(args: { method: string; params?: unknown }): Promise<unknown> {
+      if (TRACED_METHODS.has(args?.method)) {
+        log.push({ method: args.method, handledBy: label, sameAsSelected: true });
+      }
+      return target.request(args);
+    },
+    on(event: string, handler: (...a: unknown[]) => void) {
+      return target.on?.(event, handler);
+    },
+    removeListener(event: string, handler: (...a: unknown[]) => void) {
+      return target.removeListener?.(event, handler);
+    },
+  } as unknown as InjectedProvider & { __target: InjectedProvider; __log: ProviderRequestLogEntry[] };
+  return wrapped;
+}
+
+/** Full identity snapshot for the temporary owner-only panel. No secrets. */
+export interface SelectedProviderIdentity {
+  /** EIP-6963 info when the selection came from an announcement; null otherwise. */
+  infoName: string | null;
+  infoRdns: string | null;
+  infoUuid: string | null;
+  isMetaMask: boolean;
+  selectionSource: DiscoveredWallet["source"] | null;
+  sameAsWindowEthereum: boolean | null;
+  windowEthereumProvidersCount: number | null;
+  accounts: string[] | null;
+  selectedAddress: string | null;
+  chainId: string | null;
+}
+
+/**
+ * Diagnose the EXACT selected provider object. Read-only: eth_accounts +
+ * eth_chainId only, never eth_signTypedData_v4, never eth_sendTransaction.
+ * Returns full addresses (not secrets) so a collision is provable.
+ */
+export async function diagnoseSelectedProvider(
+  provider: InjectedProvider | null,
+  opts?: { info?: EIP6963Info | null; source?: DiscoveredWallet["source"] | null },
+): Promise<SelectedProviderIdentity> {
+  const base: SelectedProviderIdentity = {
+    infoName: typeof opts?.info?.name === "string" && opts.info.name ? opts.info.name : null,
+    infoRdns: typeof opts?.info?.rdns === "string" && opts.info.rdns ? opts.info.rdns : null,
+    infoUuid: typeof opts?.info?.uuid === "string" && opts.info.uuid ? opts.info.uuid : null,
+    isMetaMask: provider?.isMetaMask === true,
+    selectionSource: opts?.source ?? null,
+    sameAsWindowEthereum: null,
+    windowEthereumProvidersCount: null,
+    accounts: null,
+    selectedAddress:
+      typeof provider?.selectedAddress === "string" && provider.selectedAddress ? (provider.selectedAddress as string) : null,
+    chainId: null,
+  };
+  if (!provider || typeof provider.request !== "function") return base;
+  try {
+    const snap = snapshotWindowEthereum(provider);
+    base.sameAsWindowEthereum = snap.sameAsSelected;
+    base.windowEthereumProvidersCount = snap.providersCount;
+  } catch {
+    // Snapshot is best-effort; account reads continue below.
+  }
+  try {
+    const accounts = (await provider.request({ method: "eth_accounts" })) as unknown;
+    base.accounts = Array.isArray(accounts) ? accounts.filter((a): a is string => typeof a === "string") : null;
+  } catch {
+    base.accounts = null;
+  }
+  try {
+    const chainId = (await provider.request({ method: "eth_chainId" })) as unknown;
+    base.chainId = typeof chainId === "string" ? chainId : null;
+  } catch {
+    base.chainId = null;
+  }
+  return base;
+}
+
+/**
+ * Collect every EIP-6963 announcement WITHOUT selecting or signing.
+ * Diagnostic only: returns raw details so the UI can list name/rdns/uuid
+ * for each discovered provider. Never calls provider.request.
+ */
+export async function collectEIP6963Announcements(timeoutMs = 700): Promise<EIP6963Detail[]> {
+  if (typeof window === "undefined") return [];
+  const collected: EIP6963Detail[] = [];
+  const onAnnounce = (event: Event) => {
+    const detail = (event as CustomEvent<EIP6963Detail>).detail;
+    if (detail && typeof detail.provider?.request === "function") collected.push(detail);
+  };
+  try {
+    window.addEventListener("eip6963:announceProvider", onAnnounce as EventListener);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, timeoutMs)));
+  } catch {
+    return collected;
+  } finally {
+    try {
+      window.removeEventListener("eip6963:announceProvider", onAnnounce as EventListener);
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+  return collected;
 }
