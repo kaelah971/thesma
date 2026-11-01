@@ -342,7 +342,23 @@ export const COMPANY_WALLET_DOMAIN = {
   chainId: 5042,
 } as const;
 
-export const COMPANY_WALLET_REGISTRATION_TYPES = {
+export const COMPANY_WALLET_REGISTRATION_TYPES: Record<string, { name: string; type: string }[]> = {
+  // Explicit EIP712Domain: MetaMask's eth_signTypedData_v4 implementation
+  // hashes the RAW RPC payload and requires this type to be present.
+  // Viem infers the domain type from the `domain` object, so viem-only
+  // digests matched even without it — while MetaMask signed a DIFFERENT
+  // digest (valid signature, wrong recovered signer). The canonical
+  // payload below is the single source of truth: server challenge,
+  // browser verbatim signing, diagnostics hashing, server recovery.
+  // No verifyingContract: the domain genuinely has none.
+  // NOTE: intentionally a loose Record (not `as const`) so viem keeps its
+  // generic domain typing (numeric chainId); the runtime value is what
+  // MetaMask hashes, and golden tests pin it byte-for-byte.
+  EIP712Domain: [
+    { name: "name", type: "string" },
+    { name: "version", type: "string" },
+    { name: "chainId", type: "uint256" },
+  ],
   CompanyWalletRegistration: [
     { name: "workspaceId", type: "string" },
     { name: "purpose", type: "string" },
@@ -350,7 +366,7 @@ export const COMPANY_WALLET_REGISTRATION_TYPES = {
     { name: "issuedAt", type: "string" },
     { name: "expiresAt", type: "string" },
   ],
-} as const;
+};
 
 export const COMPANY_WALLET_PURPOSE =
   "Register this wallet as the organization's company wallet for Thesma campaign funding. This never moves funds.";

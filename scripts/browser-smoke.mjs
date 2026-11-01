@@ -247,7 +247,11 @@ async function runWalletDiscovery(browser) {
   const SMOKE_ACCOUNT = smokePKTA(SMOKE_KEY);
   const SMOKE_TYPED = {
     domain: { name: "Thesma", version: "1", chainId: 5042 },
-    types: { CompanyWalletRegistration: [
+    types: { EIP712Domain: [
+      { name: "name", type: "string" },
+      { name: "version", type: "string" },
+      { name: "chainId", type: "uint256" },
+    ], CompanyWalletRegistration: [
       { name: "workspaceId", type: "string" },
       { name: "purpose", type: "string" },
       { name: "nonce", type: "string" },
