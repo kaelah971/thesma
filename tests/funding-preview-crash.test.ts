@@ -208,9 +208,9 @@ describe("prepare returns a render-safe preview DTO", () => {
 });
 
 describe("preview failure containment", () => {
-  it("7. zero wallet balance cannot crash the preview (no balance fields involved)", () => {
-    // No balance data exists anywhere in the preview path — the DTO
-    // carries actions only. A wallet with 0 USDC normalizes identically.
+  it("7. zero wallet balance cannot crash the preview (read-only gate)", () => {
+    // A 0-USDC wallet normalizes exactly like any other DTO: the preview
+    // renders, the balance gate reports INSUFFICIENT, signing stays off.
     const preview = normalizeFundingPreview({
       actions: [
         {
@@ -228,7 +228,8 @@ describe("preview failure containment", () => {
     expect(preview.completed).toEqual([]);
     expect(preview.confirmReady).toBe(false);
     const component = readFileSync(join(root, "src/components/app/CampaignFunding.tsx"), "utf8");
-    expect(component).not.toMatch(/balance/i);
+    expect(component).toContain("Wallet balance");
+    expect(component).toContain("disabled={!canSign}");
   });
 
   it("8. prepare API failure surfaces as a string message", async () => {

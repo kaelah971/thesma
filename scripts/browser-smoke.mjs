@@ -596,6 +596,100 @@ async function runWalletConnectionStates(browser) {
   }
 }
 
+async function runFundingBalance(browser) {
+  const label = "funding-balance";
+  console.log(`\n[${label}]`);
+  // Bundle the REAL balance preflight and drive it in real Chromium
+  // against a mode-driven mock Arc USDC: 0 / 4 / 50 / 75 USDC and an
+  // RPC failure. Asserts gating + button state with zero signing or
+  // transactions on the read path.
+  let bundle;
+  try {
+    const esbuild = await import("esbuild");
+    const out = await esbuild.build({
+      entryPoints: [path.join(ROOT, "src", "lib", "fundingPreview.ts")],
+      bundle: true,
+      format: "iife",
+      globalName: "ThesmaFundingPreview",
+      platform: "browser",
+      write: false,
+    });
+    bundle = `${out.outputFiles[0].text}\n;window.ThesmaFundingPreview = ThesmaFundingPreview;`;
+  } catch (e) {
+    check(`${label}: funding preview helper bundles for browser test`, false, String(e?.message ?? e));
+    return;
+  }
+  const USDC = "0x3600000000000000000000000000000000000000";
+  const ACCOUNT = "0x85520000000000000000000000000000000094A3";
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript(bundle);
+  await context.addInitScript(() => {
+    window.__balanceCalls = [];
+    window.__balanceMode = "zero";
+    const hex = (n) => `0x${BigInt(n).toString(16)}`;
+    window.ethereum = {
+      isMetaMask: true,
+      async request({ method, params }) {
+        window.__balanceCalls.push(method);
+        if (method === "eth_chainId") return "0x13b2";
+        if (method === "eth_call") {
+          const mode = window.__balanceMode;
+          if (mode === "rpc-fail") throw new Error("rpc down");
+          const micro = mode === "zero" ? 0n : mode === "four" ? 4_000_000n : mode === "exact" ? 50_000_000n : 75_000_000n;
+          window.__balanceLastCall = params;
+          return hex(micro);
+        }
+        return null;
+      },
+    };
+  });
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") consoleErrors.push(msg.text());
+  });
+  page.on("pageerror", (err) => pageErrors.push(String(err?.message ?? err)));
+  try {
+    await page.goto(BASE, { waitUntil: "load", timeout: 30_000 });
+    await page.waitForTimeout(800);
+    const matrix = await page.evaluate(async ({ usdc, account, required }) => {
+      const FP = window.ThesmaFundingPreview;
+      const eth = window.ethereum;
+      const run = async (mode) => {
+        window.__balanceMode = mode;
+        window.__balanceCalls.length = 0;
+        const read = await FP.readUsdcBalanceMicro(eth, { usdcAddress: usdc, account, chainId: 5042 });
+        const verdict = read.ok ? FP.evaluateBalance(read.balanceMicro, BigInt(required)) : null;
+        // Same gating rule as the funding preview Start signing control.
+        // Bigints stay inside the page: only strings cross evaluate().
+        const canSign = verdict !== null && verdict.status === "SUFFICIENT";
+        return { mode, ok: read.ok, balance: read.ok ? String(read.balanceMicro) : null, status: verdict?.status ?? null, canSign, calls: window.__balanceCalls.slice() };
+      };
+      const out = {};
+      for (const mode of ["zero", "four", "exact", "more", "rpc-fail"]) out[mode] = await run(mode);
+      out.callShape = FP.buildBalanceOfCall(usdc, account);
+      out.selector = FP.BALANCE_OF_SELECTOR;
+      out.lastCall = window.__balanceLastCall ?? null;
+      return out;
+    }, { usdc: USDC, account: ACCOUNT, required: "50000000" });
+    check(`${label}: 0 USDC blocks signing`, matrix.zero?.status === "INSUFFICIENT" && matrix.zero?.canSign === false, JSON.stringify(matrix.zero));
+    check(`${label}: 4 USDC blocks signing`, matrix.four?.status === "INSUFFICIENT" && matrix.four?.canSign === false, JSON.stringify(matrix.four));
+    check(`${label}: exactly 50 USDC allows signing`, matrix.exact?.status === "SUFFICIENT" && matrix.exact?.canSign === true, JSON.stringify(matrix.exact));
+    check(`${label}: 75 USDC allows signing`, matrix.more?.status === "SUFFICIENT" && matrix.more?.canSign === true, JSON.stringify(matrix.more));
+    check(`${label}: RPC failure fails closed (not zero, no signing)`, matrix["rpc-fail"]?.ok === false && matrix["rpc-fail"]?.canSign === false, JSON.stringify(matrix["rpc-fail"]));
+    check(`${label}: read targets canonical Arc USDC balanceOf for the company wallet`, (matrix.lastCall?.[0]?.to ?? "").toLowerCase() === USDC.toLowerCase() && String(matrix.lastCall?.[0]?.data ?? "").startsWith(matrix.selector) && String(matrix.callShape?.data ?? "").startsWith(matrix.selector), JSON.stringify(matrix.lastCall?.[0]));
+    const allCalls = ["zero", "four", "exact", "more", "rpc-fail"].flatMap((m) => matrix[m]?.calls ?? []);
+    check(`${label}: balance path sends zero transactions and zero signing`, !allCalls.some((c) => /eth_sendTransaction|eth_sign|personal_sign|approve|permit/i.test(c)), allCalls.join(","));
+    check(`${label}: balance path reads chain then contract only`, allCalls.every((c) => c === "eth_chainId" || c === "eth_call"), allCalls.join(","));
+    const { csp, hydration } = firstPartyFailures(consoleErrors, pageErrors);
+    check(`${label}: no CSP-blocked scripts during balance matrix`, csp.length === 0, csp.slice(0, 2).join(" | "));
+    check(`${label}: no hydration errors (balance matrix)`, hydration.length === 0, hydration.slice(0, 2).join(" | "));
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   if (!existsSync(path.join(ROOT, ".next", "required-server-files.json"))) {
     console.error("No production build found. Run `npm run build` first, then `npm run test:browser`.");
@@ -628,6 +722,7 @@ async function main() {
     await runDemoProof(browser);
     await runWalletDiscovery(browser);
     await runWalletConnectionStates(browser);
+    await runFundingBalance(browser);
   } finally {
     await browser.close().catch(() => {});
     server.kill();

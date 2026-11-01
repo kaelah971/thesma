@@ -11,6 +11,7 @@ import { Card, EmptyState, Facts, Kpi, PageHeader, Pill } from "@/components/app
 import styles from "@/components/app/app.module.css";
 import { campaignName, formatCalendarDate, formatDateTime, formatHoldSeconds, formatUsdc, shortHash } from "@/lib/format";
 import { summarizeFunnel } from "@/server/services/markets";
+import { arcConfigFromEnv } from "@/server/chain/arc";
 import { getDb } from "@/server/db/client";
 import { partnerTerms, partners, referralEvents, referrals, userPersonas, users } from "@/server/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
@@ -117,6 +118,14 @@ export default async function CampaignPage({
 
   const now = Date.parse(snapshot.generatedAt);
   const arcChainId = Number.parseInt(process.env.ARC_CHAIN_ID ?? "5042", 10);
+  // Canonical Arc USDC for the balance preflight. Null when unconfigured —
+  // the funding preview then fails the balance check closed (no signing).
+  let arcUsdcAddress: string | null = null;
+  try {
+    arcUsdcAddress = arcConfigFromEnv()?.usdcAddress ?? null;
+  } catch {
+    arcUsdcAddress = null;
+  }
   const f = campaignFinancials(campaign.id, snapshot);
   const rows = outcomeRows(snapshot, now, campaign.id);
   const counts = stageCounts(rows);
@@ -265,6 +274,7 @@ export default async function CampaignPage({
                       expectedAmountMicro={campaign.funding.expectedMicro}
                       expectedSender={snapshot.workspace.companyWallet}
                       chainId={arcChainId}
+                      usdcAddress={arcUsdcAddress}
                       />
                     </FundingErrorBoundary>
                   </div>
@@ -281,6 +291,7 @@ export default async function CampaignPage({
                   expectedAmountMicro={campaign.budgetMicro}
                   expectedSender={snapshot.workspace.companyWallet}
                   chainId={arcChainId}
+                  usdcAddress={arcUsdcAddress}
                 />
               </FundingErrorBoundary>
             ) : (

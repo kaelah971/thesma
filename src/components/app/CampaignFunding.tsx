@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getJson, postJson } from "@/lib/api";
-import { normalizeFundingPreview, previewErrorMessage } from "@/lib/fundingPreview";
+import {
+  evaluateBalance,
+  normalizeFundingPreview,
+  previewErrorMessage,
+  readUsdcBalanceMicro,
+} from "@/lib/fundingPreview";
 import {
   connectWallet,
   connectionFailureCopy,
@@ -91,6 +96,7 @@ export function CampaignFunding({
   expectedAmountMicro,
   expectedSender,
   chainId,
+  usdcAddress,
 }: {
   campaignId: string;
   version: number;
@@ -100,6 +106,8 @@ export function CampaignFunding({
   expectedAmountMicro: string | null;
   expectedSender: string | null;
   chainId: number;
+  /** Canonical Arc USDC contract. Null when unconfigured → balance check fails closed. */
+  usdcAddress: string | null;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -113,6 +121,63 @@ export function CampaignFunding({
   const [completed, setCompleted] = useState<Purpose[]>([]);
   const [activeStep, setActiveStep] = useState<Purpose | null>(null);
   const [lastHash, setLastHash] = useState<string | null>(null);
+  // Read-only USDC balance preflight. LOADING and UNAVAILABLE both fail
+  // closed: signing is only enabled on an explicitly SUFFICIENT read.
+  const [balance, setBalance] = useState<
+    | { status: "LOADING" }
+    | { status: "SUFFICIENT"; balanceMicro: bigint }
+    | { status: "INSUFFICIENT"; balanceMicro: bigint; shortfallMicro: bigint }
+    | { status: "UNAVAILABLE" }
+  >({ status: "LOADING" });
+  const [balanceAttempt, setBalanceAttempt] = useState(0);
+
+  // Balance preflight: one eth_call round per preflight entry or explicit
+  // retry. Read-only and idempotent — never prepares an intent, never
+  // touches the funding row, campaign, or market. Runs on every render
+  // (above the early returns) and no-ops unless the preview is showing.
+  // LOADING is set by begin()/retry (event handlers), never synchronously
+  // in this effect body.
+  useEffect(() => {
+    if (phase !== "preflight" || !account || !wallet) return;
+    const provider = wallet.provider;
+    const usdc = usdcAddress;
+    const requiredMicro = expectedAmountMicro;
+    const chain = chainId;
+    let cancelled = false;
+    readUsdcBalanceMicro(provider, { usdcAddress: usdc ?? "", account, chainId: chain })
+      .then(async (read) => {
+        if (cancelled) return;
+        if (!read.ok || usdc === null) {
+          setBalance({ status: "UNAVAILABLE" });
+          return;
+        }
+        let required: bigint;
+        try {
+          if (requiredMicro === null) throw new Error("missing amount");
+          required = BigInt(requiredMicro);
+        } catch {
+          if (!cancelled) setBalance({ status: "UNAVAILABLE" });
+          return;
+        }
+        const verdict = evaluateBalance(read.balanceMicro, required);
+        if (cancelled) return;
+        if (verdict.status === "SUFFICIENT") {
+          setBalance({ status: "SUFFICIENT", balanceMicro: read.balanceMicro });
+        } else {
+          setBalance({
+            status: "INSUFFICIENT",
+            balanceMicro: read.balanceMicro,
+            shortfallMicro: verdict.shortfallMicro,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBalance({ status: "UNAVAILABLE" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, account, wallet, usdcAddress, expectedAmountMicro, chainId, balanceAttempt]);
 
   if (!isOwner) return null;
   if (state === "LIVE" || fundingStatus === "CONFIRMED") return null;
@@ -213,10 +278,17 @@ export function CampaignFunding({
       setAccount(connected);
       setActions(preview.actions);
       setCompleted(preview.completed);
+      setBalance({ status: "LOADING" });
       setPhase("preflight");
     } catch (e) {
       fail(previewErrorMessage(e, "Could not start the funding flow."));
     }
+  }
+
+  function retryBalanceCheck() {
+    // Explicit retry only: re-reads the balance, nothing else.
+    setBalance({ status: "LOADING" });
+    setBalanceAttempt((n) => n + 1);
   }
 
   async function recordHash(purpose: Purpose, hash: string): Promise<boolean> {
@@ -347,6 +419,7 @@ export function CampaignFunding({
   const vaultDestination = actions.find((a) => a.purpose === "fund-campaign")?.to ?? null;
 
   if (phase === "preflight") {
+    const canSign = balance.status === "SUFFICIENT";
     return (
       <div style={{ display: "grid", gap: 8 }}>
         <p style={{ fontSize: 14 }}>
@@ -359,13 +432,47 @@ export function CampaignFunding({
         )}
         <p style={{ fontSize: 14 }}>Connected wallet: <span className="mono" title={account ?? ""}>{truncateAddress(account)}</span>{wallet ? ` (${wallet.name})` : ""}</p>
         <p style={{ fontSize: 14 }}>Expected company wallet: <span className="mono" title={expectedSender ?? ""}>{truncateAddress(expectedSender)}</span></p>
+        <div style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 4 }}>
+          <strong style={{ fontSize: 14 }}>Wallet balance</strong>
+          <span style={{ fontSize: 13 }}>
+            Available:{" "}
+            {balance.status === "LOADING" ? (
+              "Checking…"
+            ) : balance.status === "UNAVAILABLE" ? (
+              "—"
+            ) : (
+              <strong>{fmtMicro(balance.balanceMicro.toString())} USDC</strong>
+            )}
+          </span>
+          <span style={{ fontSize: 13 }}>Required: <strong>{expectedAmountMicro ? `${fmtMicro(expectedAmountMicro)} USDC` : "—"}</strong></span>
+          {balance.status === "INSUFFICIENT" && (
+            <span style={{ fontSize: 13 }}>Shortfall: <strong>{fmtMicro(balance.shortfallMicro.toString())} USDC</strong></span>
+          )}
+          {balance.status === "SUFFICIENT" && (
+            <span style={{ fontSize: 13 }}>Balance sufficient</span>
+          )}
+          {balance.status === "INSUFFICIENT" && (
+            <span style={{ fontSize: 13 }} role="alert">Insufficient USDC on {chainName} to fund this campaign.</span>
+          )}
+          {balance.status === "UNAVAILABLE" && (
+            <>
+              <span style={{ fontSize: 13 }} role="alert">USDC balance could not be checked.</span>
+              <span style={{ fontSize: 13 }}>Funding cannot start until the balance check succeeds.</span>
+              <div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={retryBalanceCheck}>
+                  Retry balance check
+                </button>
+              </div>
+            </>
+          )}
+        </div>
         <p style={{ fontSize: 13, opacity: 0.8 }}>{actions.length} wallet confirmation{actions.length === 1 ? "" : "s"} may be required — one at a time.</p>
         <ol style={{ fontSize: 14, margin: 0, paddingLeft: 20 }}>
           {actions.map((a) => (
             <li key={a.purpose}>{STEP_LABEL[a.purpose]}{a.expectedAmountMicroUsdc ? ` — ${fmtMicro(a.expectedAmountMicroUsdc)} USDC` : ""}</li>
           ))}
         </ol>
-        <button type="button" className="btn btn-primary" onClick={execute}>
+        <button type="button" className="btn btn-primary" onClick={execute} disabled={!canSign}>
           Start signing ({actions.length} confirmation{actions.length === 1 ? "" : "s"})
         </button>
         {completed.length > 0 && (
