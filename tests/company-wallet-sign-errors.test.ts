@@ -221,20 +221,18 @@ describe("sign call truth (single exact-shape request)", () => {
 });
 
 describe("component + helper safety rails", () => {
-  it("10. raw error object never rendered — failure panel uses safe fields only", () => {
+  it("10. failures surface as normal product errors, never raw provider data", () => {
     const src = readFileSync(join(root, "src/components/app/CompanyWalletRegistration.tsx"), "utf8");
-    const start = src.indexOf("SIGNATURE REQUEST FAILED");
-    expect(start).toBeGreaterThan(-1);
-    const end = src.indexOf("Request routing", start);
-    const panel = src.slice(start, end);
-    expect(panel).toContain("signError.code");
-    expect(panel).toContain("signError.rpcCode");
-    expect(panel).toContain("signError.classification");
-    expect(panel).toContain("signError.message");
-    expect(panel).not.toContain("JSON.stringify");
-    expect(panel).not.toContain("String(err");
-    expect(panel).not.toContain("stack");
-    expect(panel).not.toContain(".signature");
+    // No failure panel with safe-field dumps remains in production UX.
+    expect(src).not.toContain("SIGNATURE REQUEST FAILED");
+    expect(src).not.toContain("safe message");
+    expect(src).not.toContain("classified as");
+    expect(src).not.toContain("rpcCode");
+    // The classification still drives a friendly product error.
+    expect(src).toContain("signFailureCopy(signed.signError.classification");
+    expect(src).toContain("form-error");
+    expect(src).not.toContain("JSON.stringify(err");
+    expect(src).not.toContain("String(err");
   });
 
   it("11. signature never logged", () => {
@@ -244,14 +242,16 @@ describe("component + helper safety rails", () => {
     }
   });
 
-  it("12. nonce never rendered in diagnostic panels", () => {
+  it("12. no diagnostic panels remain in production UX", () => {
     const src = readFileSync(join(root, "src/components/app/CompanyWalletRegistration.tsx"), "utf8");
-    const failStart = src.indexOf("SIGNATURE REQUEST FAILED");
-    const failPanel = src.slice(failStart, src.indexOf("Request routing", failStart));
-    expect(failPanel).not.toContain("nonce");
-    const diagStart = src.indexOf("Provider identity + EIP-712 diagnostic");
-    const diagPanel = src.slice(diagStart, src.indexOf("Read-only: no secret material", diagStart));
-    expect(diagPanel).not.toContain("nonce");
+    expect(src).not.toMatch(/diagnostic/i);
+    expect(src).not.toMatch(/temporary/i);
+    expect(src).not.toMatch(/debug/i);
+    expect(src).not.toContain("EIP-712 diagnostic");
+    expect(src).not.toContain("Request routing");
+    expect(src).not.toContain("Injected providers discovered");
+    expect(src).not.toContain("client typed-data hash");
+    expect(src).not.toContain("server typed-data hash");
   });
 
   it("14/15. no fallback signing methods in component or helper", () => {
@@ -288,7 +288,6 @@ describe("component + helper safety rails", () => {
     expect(failStart).toBeGreaterThan(-1);
     expect(throwAt).toBeGreaterThan(failStart);
     const failHead = src.slice(failStart, throwAt);
-    expect(failHead).toContain("setSignError");
     expect(failHead).not.toContain("postJson");
     expect(throwAt).toBeLessThan(src.indexOf("/company-wallet/prove"));
     // Exactly one registration call site (confirm), never in register().

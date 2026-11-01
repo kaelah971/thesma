@@ -101,7 +101,7 @@ export default async function SettingsPage() {
             />
             <p className={styles.muted} style={{ fontSize: 13, marginTop: 12 }}>
               Company wallet — your organization&apos;s address, used to sign and fund campaigns. Campaign vault —
-              Thesma&apos;s Arc contract where campaign USDC is deposited. Thesma never holds your wallet keys.
+              Thesma&apos;s Arc contract where campaign USDC is deposited. Thesma never stores your wallet keys.
             </p>
           </Card>
           {current && current.role === "ORGANIZATION_OWNER" && (
@@ -112,7 +112,10 @@ export default async function SettingsPage() {
                   {
                     label: "Status",
                     value: current.companyWallet ? (
-                      <span className="mono">{shortHash(current.companyWallet, 8, 6)}</span>
+                      <span>
+                        <Pill tone="mint">Verified</Pill>{" "}
+                        <span className="mono">{shortHash(current.companyWallet, 8, 6)}</span>
+                      </span>
                     ) : (
                       "Not registered"
                     ),

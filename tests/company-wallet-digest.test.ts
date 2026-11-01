@@ -93,16 +93,28 @@ describe("EIP-712 digest parity", () => {
     expect(hashCompanyWalletTypedData(buildCompanyWalletTypedData({ ...base, expiresAt: "2026-06-01T12:11:00.000Z" }))).not.toBe(honest);
   });
 
-  it("component computes the digest client-side and renders the temporary panel", () => {
+  it("component shows a clean production UX with no diagnostic surfaces", () => {
     const src = readFileSync(join(root, "src/components/app/CompanyWalletRegistration.tsx"), "utf8");
-    expect(src).toContain("hashCompanyWalletTypedData");
-    expect(src).toContain("recoverCompanyWalletSigner");
-    expect(src).toContain("EIP-712 diagnostic");
+    // Verified production view for the registered wallet.
+    expect(src).toContain("Company wallet");
+    expect(src).toContain("Verified");
+    expect(src).toContain("Used to sign and fund campaigns.");
+    expect(src).toContain("Change wallet");
+    expect(src).toContain("truncateAddress(account)");
+    // Registration flow internals stay intact (frozen challenge → prove → confirm).
+    expect(src).toContain("selectChallengePayload");
+    expect(src).toContain("/company-wallet/prove");
     expect(src).toContain("typedDataHash");
-    // No signature, nonce, or secrets leave the client in the panel.
-    const diagStart = src.indexOf("EIP-712 DIAGNOSTIC");
-    const diagBlock = src.slice(diagStart, diagStart + 2500);
-    expect(diagBlock).not.toMatch(/signature/i);
-    expect(diagBlock).not.toMatch(/private/i);
+    // No temporary debugging surfaces remain in production UX.
+    expect(src).not.toMatch(/diagnostic/i);
+    expect(src).not.toMatch(/temporary/i);
+    expect(src).not.toMatch(/debug/i);
+    expect(src).not.toContain("SIGNATURE REQUEST FAILED");
+    expect(src).not.toContain("Request routing");
+    expect(src).not.toContain("Injected providers discovered");
+    expect(src).not.toMatch(/\{signed\.signature\}/);
+    // Failures surface as normal product errors, never raw provider data.
+    expect(src).toContain("signFailureCopy");
+    expect(src).toContain("form-error");
   });
 });

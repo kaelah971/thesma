@@ -4,38 +4,20 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { postJson } from "@/lib/api";
 import {
-  collectEIP6963Announcements,
   connectWallet,
   connectionFailureCopy,
   defaultSelectedAccount,
-  diagnoseSelectedProvider,
   discoverWallet,
-  labelProviderForLog,
   resolveAccountChange,
   selectChallengePayload,
   signCompanyWalletTypedDataDetailed,
   signFailureCopy,
-  snapshotWindowEthereum,
-  summarizeAnnouncedProviders,
   truncateAddress,
-  wrapProviderWithRequestLog,
-  type AnnouncedProviderSummary,
   type CompanyWalletTypedData,
   type DiscoveredWallet,
-  type ProviderRequestLogEntry,
-  type SafeSignError,
-  type SelectedProviderIdentity,
 } from "@/lib/wallet";
-import { hashCompanyWalletTypedData, recoverCompanyWalletSigner } from "@/lib/walletCrypto";
 
 type Phase = "idle" | "working" | "connected" | "verified" | "done" | "error";
-
-// Display labels built without the injected-root source literal so the
-// single-provider guard keeps proving the component never reads another
-// extension's injected object directly.
-// Rendered text is still exactly the injected root versus selectedProvider.
-const WIN_ETH_LABEL = ["window", "ethereum"].join(".");
-const WIN_ETH_PROVIDERS_LABEL = ["window", "ethereum", "providers"].join(".");
 
 /**
  * Owner-only company-wallet registration with EIP-712 ownership proof.
@@ -64,26 +46,8 @@ export function CompanyWalletRegistration({
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([]);
   const [confirmChange, setConfirmChange] = useState(false);
   const [proof, setProof] = useState<{ nonce: string; provedWallet: string } | null>(null);
-  // Temporary owner-only digest diagnostic (no signature, nonce, or secrets).
-  const [diagnostic, setDiagnostic] = useState<{
-    accountParam: string;
-    clientRecovered: string | null;
-    clientHash: string | null;
-    serverRecovered: string | null;
-    serverHash: string | null;
-  } | null>(null);
-  // Temporary owner-only provider-identity diagnostics (P0). Read-only,
-  // address-bearing (not secret), never carries signatures or nonces.
-  const [providerDiag, setProviderDiag] = useState<SelectedProviderIdentity | null>(null);
-  const [announced, setAnnounced] = useState<AnnouncedProviderSummary[] | null>(null);
-  const [requestLog, setRequestLog] = useState<ProviderRequestLogEntry[]>([]);
-  const requestLogRef = useRef<ProviderRequestLogEntry[]>([]);
-  // Temporary owner-only signing-failure detail (P0). Safe fields only:
-  // code, rpcCode, classification, sanitized message. Never the raw
-  // error object, never key material, never the challenge nonce.
-  const [signError, setSignError] = useState<SafeSignError | null>(null);
-  // Explicit pending flag so the Sign control stays disabled while the
-  // single request is in flight (phase gating unmounts it regardless).
+  // While the single signing request is in flight the Sign control stays
+  // disabled (phase gating unmounts it regardless; belt and braces).
   const [signPending, setSignPending] = useState(false);
   const availableRef = useRef<string[]>([]);
 
@@ -129,11 +93,6 @@ export function CompanyWalletRegistration({
   async function connect() {
     setError(null);
     setNote(null);
-    setDiagnostic(null);
-    setProviderDiag(null);
-    setAnnounced(null);
-    requestLogRef.current = [];
-    setRequestLog([]);
     setPhase("working");
     try {
       setNote("Looking for an injected wallet…");
@@ -141,48 +100,15 @@ export function CompanyWalletRegistration({
       if (!found) {
         throw new Error("MetaMask or another compatible wallet was not detected. Install it, unlock it, then try again.");
       }
-      // P0 identity diagnostics (read-only, no selection change): snapshot
-      // window.ethereum identity BEFORE tracing, then trace every tracked
-      // method through the EXACT selected object. No signing here.
-      const raw = found.provider;
-      const preSnap = snapshotWindowEthereum(raw);
-      const info = found.info ?? null;
-      const label = labelProviderForLog(raw, info);
-      const log = requestLogRef.current;
-      const traced = wrapProviderWithRequestLog(raw, { label, info, log });
-      const tracedFound: DiscoveredWallet = { ...found, provider: traced };
-      setWallet(tracedFound);
-      // Identity snapshot (eth_accounts + eth_chainId only, via traced
-      // provider so routing is recorded). Never signs.
-      try {
-        const diag = await diagnoseSelectedProvider(traced, { info, source: found.source });
-        // Preserve the pre-trace window.ethereum identity verdict (wrapping
-        // must not affect the === comparison shown in the panel).
-        diag.sameAsWindowEthereum = preSnap.sameAsSelected;
-        diag.windowEthereumProvidersCount = preSnap.providersCount;
-        setProviderDiag(diag);
-      } catch {
-        setProviderDiag(null);
-      }
-      setRequestLog([...log]);
-      // List every EIP-6963 announcement (name/rdns/uuid only, no signing).
-      try {
-        const details = await collectEIP6963Announcements(300);
-        setAnnounced(summarizeAnnouncedProviders(details));
-      } catch {
-        setAnnounced([]);
-      }
-      setRequestLog([...log]);
+      setWallet(found);
       setNote(`Waiting for ${found.name} — approve the connection request.`);
-      const res = await connectWallet(traced);
-      setRequestLog([...log]);
+      const res = await connectWallet(found.provider);
       if ("failure" in res) throw new Error(connectionFailureCopy(res.failure, found.name));
-      const exposed = (await traced.request({ method: "eth_accounts" }).catch(() => null)) as unknown;
-      setRequestLog([...log]);
+      const exposed = (await found.provider.request({ method: "eth_accounts" }).catch(() => null)) as unknown;
       const list = Array.isArray(exposed) ? exposed.filter((a): a is string => typeof a === "string") : [res.account];
       if (list.length === 0) throw new Error(connectionFailureCopy("NO_ACCOUNT", found.name));
       // Explicit selection: never assume accounts[0] is the UI-selected one.
-      const selected = defaultSelectedAccount(list, traced.selectedAddress) ?? list[0];
+      const selected = defaultSelectedAccount(list, found.provider.selectedAddress) ?? list[0];
       commitAccounts(list);
       setAccount(selected);
       setPhase("connected");
@@ -202,20 +128,15 @@ export function CompanyWalletRegistration({
     signingRef.current = true;
     setSignPending(true);
     setError(null);
-    setDiagnostic(null);
-    setSignError(null);
     setPhase("working");
     try {
       // The explicitly selected account — never accounts[0] by assumption.
       const selected = account;
-      // Fresh availability read from the SAME provider (never window.ethereum).
-      // Routed through the traced wrapper so the panel records exactly which
-      // object handled eth_accounts.
+      // Fresh availability read from the SAME provider.
       setNote("Confirming the selected wallet is still active…");
       const current = (await wallet.provider
         .request({ method: "eth_accounts" })
         .catch(() => null)) as unknown;
-      setRequestLog([...requestLogRef.current]);
       const fresh = Array.isArray(current) ? current.filter((a): a is string => typeof a === "string") : [];
       if (!fresh.some((a) => a.toLowerCase() === selected.toLowerCase())) {
         setAccount(null);
@@ -256,36 +177,12 @@ export function CompanyWalletRegistration({
       setNote(`Waiting for ${wallet.name} — review and sign the registration request. It never moves funds.`);
       // Single signing request: exactly one eth_signTypedData_v4 call with
       // the selected account and the frozen server typedData verbatim.
-      // No retry, no fallback signing method, no transaction. Failures
-      // surface the normalized provider error; crypto diagnostics keep the
-      // account param and client hash, never a recovery without a signature.
+      // No retry, no fallback signing method, no transaction. A failure
+      // surfaces as a normal product error (safe classification copy).
       const signed = await signCompanyWalletTypedDataDetailed(wallet.provider, selected, typedData);
-      setRequestLog([...requestLogRef.current]);
       if ("signError" in signed) {
-        const detail = signed.signError;
-        let clientHash: string | null = null;
-        try {
-          clientHash = hashCompanyWalletTypedData(typedData);
-        } catch {
-          clientHash = null;
-        }
-        setDiagnostic({ accountParam: selected, clientRecovered: null, clientHash, serverRecovered: null, serverHash: null });
-        setSignError(detail);
-        throw new Error(signFailureCopy(detail.classification, wallet.name));
+        throw new Error(signFailureCopy(signed.signError.classification, wallet.name));
       }
-      // Digest-level diagnostic (temporary, owner-only): hash and recover
-      // the EXACT object sent to MetaMask, before the server sees anything.
-      // No signature, nonce, or secrets are stored or displayed.
-      let clientHash: string | null = null;
-      let clientRecovered: string | null = null;
-      try {
-        clientHash = hashCompanyWalletTypedData(typedData);
-        clientRecovered = await recoverCompanyWalletSigner(typedData, signed.signature);
-      } catch {
-        clientHash = null;
-        clientRecovered = null;
-      }
-      setDiagnostic({ accountParam: selected, clientRecovered, clientHash, serverRecovered: null, serverHash: null });
       const proof = await postJson<{ provedWallet: string; typedDataHash: string }>(
         `/api/workspaces/${workspaceId}/company-wallet/prove`,
         { nonce, signature: signed.signature },
@@ -305,7 +202,6 @@ export function CompanyWalletRegistration({
       }
       // Phase A complete: the SERVER recovered this wallet. Nothing is
       // registered yet — the user now explicitly confirms THAT wallet.
-      setDiagnostic((d) => (d ? { ...d, serverRecovered: proof.data.provedWallet, serverHash: proof.data.typedDataHash } : d));
       setProof({ nonce, provedWallet: proof.data.provedWallet });
       setConfirmChange(false);
       setPhase("verified");
@@ -325,12 +221,6 @@ export function CompanyWalletRegistration({
     setWallet(null);
     setConfirmChange(false);
     setProof(null);
-    setDiagnostic(null);
-    setSignError(null);
-    setProviderDiag(null);
-    setAnnounced(null);
-    requestLogRef.current = [];
-    setRequestLog([]);
     setError(null);
     setNote(null);
     setPhase("idle");
@@ -386,10 +276,18 @@ export function CompanyWalletRegistration({
 
   if (phase === "done") {
     return (
-      <div style={{ display: "grid", gap: 8 }}>
-        <p style={{ fontSize: 14 }}>
-          Company wallet registered: <span className="mono" title={account ?? ""}>{truncateAddress(account)}</span>
-        </p>
+      <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+        <div style={{ border: "1px solid var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 6 }}>
+          <strong style={{ fontSize: 14 }}>Company wallet</strong>
+          <span style={{ fontSize: 13 }}>✓ Verified</span>
+          <span className="mono" style={{ fontSize: 13, overflowWrap: "anywhere" }} title={account ?? ""}>{truncateAddress(account)}</span>
+          <span style={{ fontSize: 13, opacity: 0.85 }}>Used to sign and fund campaigns.</span>
+        </div>
+        <div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={restart}>
+            Change wallet
+          </button>
+        </div>
       </div>
     );
   }
@@ -479,61 +377,6 @@ export function CompanyWalletRegistration({
       )}
       {phase === "error" && error && (
         <p className="form-error" role="alert" style={{ fontSize: 13 }}>{error}</p>
-      )}
-      {(providerDiag || diagnostic || requestLog.length > 0 || announced) && (phase === "connected" || phase === "working" || phase === "verified" || phase === "error") && (
-        <div style={{ border: "1px dashed var(--line, #e5e5e5)", borderRadius: 12, padding: "12px 14px", display: "grid", gap: 4 }}>
-          <strong style={{ fontSize: 13 }}>Provider identity + EIP-712 diagnostic (temporary, owner-only)</strong>
-          <span style={{ fontSize: 12 }}>Selected provider name (info.name): <span className="mono" style={{ overflowWrap: "anywhere" }}>{providerDiag?.infoName ?? (wallet ? wallet.name : "<pending>")}</span></span>
-          <span style={{ fontSize: 12 }}>Selected provider rdns (info.rdns): <span className="mono" style={{ overflowWrap: "anywhere" }}>{providerDiag?.infoRdns ?? "<none>"}</span></span>
-          <span style={{ fontSize: 12 }}>Selected provider uuid (info.uuid): <span className="mono" style={{ overflowWrap: "anywhere" }}>{providerDiag?.infoUuid ?? "<none>"}</span></span>
-          <span style={{ fontSize: 12 }}>isMetaMask: <span className="mono">{providerDiag ? String(providerDiag.isMetaMask) : "<pending>"}</span></span>
-          <span style={{ fontSize: 12 }}>Selection source: <span className="mono">{providerDiag?.selectionSource ?? wallet?.source ?? "<pending>"}</span></span>
-          <span style={{ fontSize: 12 }}>{WIN_ETH_LABEL} === selectedProvider: <span className="mono">{providerDiag?.sameAsWindowEthereum === null || providerDiag?.sameAsWindowEthereum === undefined ? "<pending>" : String(providerDiag.sameAsWindowEthereum)}</span></span>
-          <span style={{ fontSize: 12 }}>{WIN_ETH_PROVIDERS_LABEL} count: <span className="mono">{providerDiag?.windowEthereumProvidersCount === null || providerDiag?.windowEthereumProvidersCount === undefined ? "<none>" : String(providerDiag.windowEthereumProvidersCount)}</span></span>
-          <span style={{ fontSize: 12 }}>Selected provider eth_accounts: <span className="mono" style={{ overflowWrap: "anywhere" }}>{providerDiag?.accounts ? (providerDiag.accounts.length > 0 ? providerDiag.accounts.join(", ") : "<empty>") : "<pending>"}</span></span>
-          <span style={{ fontSize: 12 }}>Selected provider selectedAddress: <span className="mono" style={{ overflowWrap: "anywhere" }}>{providerDiag?.selectedAddress ?? "<unavailable>"}</span></span>
-          <span style={{ fontSize: 12 }}>Selected provider chainId: <span className="mono" style={{ overflowWrap: "anywhere" }}>{providerDiag?.chainId ?? "<pending>"}</span></span>
-          <span style={{ fontSize: 12 }}>Account param sent to eth_signTypedData_v4: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic?.accountParam ?? account ?? "<not yet signed>"}</span></span>
-          <span style={{ fontSize: 12 }}>Client recovered signer: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic?.clientRecovered ?? "<not yet signed>"}</span></span>
-          <span style={{ fontSize: 12 }}>Client typed-data hash: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic?.clientHash ?? "<not yet signed>"}</span></span>
-          <span style={{ fontSize: 12 }}>Server recovered signer: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic?.serverRecovered ?? "<pending>"}</span></span>
-          <span style={{ fontSize: 12 }}>Server typed-data hash: <span className="mono" style={{ overflowWrap: "anywhere" }}>{diagnostic?.serverHash ?? "<pending>"}</span></span>
-          <span style={{ fontSize: 12 }}>Sign call truth: method eth_signTypedData_v4 · params [selected account, frozen server typedData verbatim]</span>
-          {signError && (
-            <>
-              <strong style={{ fontSize: 13 }}>SIGNATURE REQUEST FAILED</strong>
-              <span style={{ fontSize: 12 }}>code: <span className="mono" style={{ overflowWrap: "anywhere" }}>{signError.code === null ? "<none>" : String(signError.code)}</span></span>
-              <span style={{ fontSize: 12 }}>rpcCode: <span className="mono" style={{ overflowWrap: "anywhere" }}>{signError.rpcCode === null ? "<none>" : String(signError.rpcCode)}</span></span>
-              <span style={{ fontSize: 12 }}>classified as: <span className="mono">{signError.classification}</span></span>
-              <span style={{ fontSize: 12 }}>safe message: <span className="mono" style={{ overflowWrap: "anywhere" }}>{signError.message}</span></span>
-            </>
-          )}
-          <span style={{ fontSize: 12 }}>Request routing (which object handled each call):</span>
-          {requestLog.length > 0 ? (
-            <ul style={{ fontSize: 12, margin: 0, paddingLeft: 18 }}>
-              {requestLog.map((entry, i) => (
-                <li key={`${entry.method}-${i}`}><span className="mono">{entry.method}</span> handled by <span className="mono">{entry.handledBy}</span> (same object as selected: {String(entry.sameAsSelected)})</li>
-              ))}
-            </ul>
-          ) : (
-            <span style={{ fontSize: 12, opacity: 0.85 }}>No tracked requests yet — signing calls appear here once made.</span>
-          )}
-          <span style={{ fontSize: 12 }}>Injected providers discovered (EIP-6963 announcements, no signing):</span>
-          {announced ? (
-            announced.length > 0 ? (
-              <ul style={{ fontSize: 12, margin: 0, paddingLeft: 18 }}>
-                {announced.map((a, i) => (
-                  <li key={`${a.rdns ?? a.name ?? "provider"}-${i}`}><span className="mono">{a.name ?? "<unnamed>"}</span> · rdns <span className="mono">{a.rdns ?? "<none>"}</span> · uuid <span className="mono">{a.uuid ?? "<none>"}</span> · isMetaMask {String(a.isMetaMask)}</li>
-                ))}
-              </ul>
-            ) : (
-              <span style={{ fontSize: 12, opacity: 0.85 }}>No EIP-6963 announcements observed.</span>
-            )
-          ) : (
-            <span style={{ fontSize: 12, opacity: 0.85 }}>Collecting announcements…</span>
-          )}
-          <span style={{ fontSize: 12, opacity: 0.85 }}>Read-only: no secret material is shown. The two hashes should match. No wallet was registered by this panel.</span>
-        </div>
       )}
       {phase === "error" && (
         <div style={{ display: "flex", gap: 8 }}>
