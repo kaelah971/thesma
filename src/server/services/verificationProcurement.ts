@@ -2,19 +2,24 @@ import { getAddress, isAddress } from "viem";
 import type { AuditSink, MarketStore } from "./campaignStore";
 import {
   ARC_MAINNET_CAIP2,
+  assertTestnetTerms,
   checkTypeForSignals,
   decideVerificationProcurement,
+  evaluateValueOfInformation,
   getProcurementSigner,
+  getRemoteX402Config,
   normalizeProviderVerdict,
   providerKindForId,
   purchaseWithX402,
   requestFingerprint,
+  stableIdempotencyKey,
   type ApprovedPayment,
   type CheckType,
   type FetchImpl,
   type NormalizedResult,
   type ProcurementDecision,
   type ProcurementPolicy,
+  type ProcurementSigner,
   type ProcurementState,
   type VerificationQuote,
 } from "./verification";
@@ -38,6 +43,8 @@ export interface ProcurementDeps {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: FetchImpl;
   allowedHosts?: string[];
+  /** Injected Circle buyer (tests / proof runner). When absent, the remote path resolves it from env. */
+  circleBuyer?: ProcurementSigner | null;
 }
 
 export interface ProcurementExecution {
@@ -148,7 +155,11 @@ async function auditEvent(
  */
 export async function evaluateVerificationCheck(
   deps: ProcurementDeps,
-  params: { workspaceId: string; campaignId: string; outcomeId?: string; providerId?: string; checkType?: CheckType },
+  params: {
+    workspaceId: string; campaignId: string; outcomeId?: string; providerId?: string; checkType?: CheckType;
+    /** Explicit verification confidence (bps) for the value-of-information gate. Absent → gate defers to policy. */
+    confidenceBps?: { current: number; required: number };
+  },
 ): Promise<EvaluateResult> {
   const now = deps.now?.() ?? new Date();
   const env = deps.env ?? process.env;
@@ -221,14 +232,26 @@ export async function evaluateVerificationCheck(
   const reserve = opPolicy?.minReserveMicroUsdc ?? DEFAULT_OPERATOR_POLICY.minReserveMicroUsdc;
 
   const { spentMicroUsdc: periodSpent } = await verificationSpendForWorkspace(store, params.workspaceId, now.getTime());
+  const remoteConfig = kind === "remote-x402" ? getRemoteX402Config(env) : null;
   let signerConfigured = true;
-  try {
-    getProcurementSigner(env);
-  } catch {
-    signerConfigured = false;
+  if (kind === "remote-x402") {
+    // The remote buyer signs ONLY through Circle. Never the raw-key signer.
+    try {
+      const { getCircleVerificationConfig } = await import("../chain/circle");
+      signerConfigured = deps.circleBuyer != null || getCircleVerificationConfig(env) !== null;
+    } catch {
+      signerConfigured = deps.circleBuyer != null;
+    }
+  } else {
+    try {
+      getProcurementSigner(env);
+    } catch {
+      signerConfigured = false;
+    }
   }
 
-  // Quote (no spend): local-test is deterministic; anything else needs config.
+  // Quote (no spend): local-test is deterministic; remote-x402 reads the
+  // live 402 challenge (terms only, no payment); anything else needs config.
   let quote: VerificationQuote | null = null;
   let quoteError: string | null = null;
   if (checkType && outcomeId) {
@@ -241,6 +264,26 @@ export async function evaluateVerificationCheck(
         resourceUrl: "http://localhost/x402-test/verify",
         expiresAt: new Date(now.getTime() + 5 * 60_000), quoteVersion: "test-1",
       };
+    } else if (kind === "remote-x402" && remoteConfig) {
+      try {
+        const { fetchRemoteX402Quote } = await import("./verificationRemote");
+        const extraHosts = (env.THESMA_VERIFICATION_ALLOWED_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+        const fetched = await fetchRemoteX402Quote({
+          url: remoteConfig.providerUrl,
+          providerId: remoteConfig.providerId,
+          checkType,
+          campaignId: params.campaignId,
+          outcomeId,
+          expected: { network: remoteConfig.network, asset: remoteConfig.asset },
+          allowedHosts: [...(deps.allowedHosts ?? []), new URL(remoteConfig.providerUrl).hostname, ...extraHosts],
+          fetchImpl: deps.fetchImpl,
+          nowMs: now.getTime(),
+        });
+        if (fetched.quote) quote = fetched.quote;
+        else quoteError = "NO_CHARGE_RESOURCE";
+      } catch (e) {
+        quoteError = (e as { code?: string }).code ?? "QUOTE_FAILED";
+      }
     } else {
       quoteError = "CONFIGURATION_REQUIRED";
     }
@@ -265,14 +308,14 @@ export async function evaluateVerificationCheck(
     return {
       procurement: toDto(existing),
       decision,
-      execution: { evaluated: true, signed: false, purchased: false, ambiguous: false, result: null, paymentReference: null, route: kind === "local-test" ? "local-test" : "unconfigured" },
+      execution: { evaluated: true, signed: false, purchased: false, ambiguous: false, result: null, paymentReference: null, route: kind === "local-test" ? "local-test" : kind === "remote-x402" ? "real" : "unconfigured" },
     };
   }
 
   const providerAllowlisted = policy.allowedProviders.includes(providerId);
   const checkTypeSupported = checkType !== null && policy.allowedCheckTypes.includes(checkType) &&
-    (kind === "local-test" ? true : false);
-  const decision = decideVerificationProcurement({
+    (kind === "local-test" || kind === "remote-x402");
+  let decision = decideVerificationProcurement({
     readiness: outcomeId ? readiness : "NONE",
     reviewSeverity: reviewAnomalies.length > 0 ? "REVIEW" : "NONE",
     economicExposureMicroUsdc: exposure,
@@ -291,10 +334,49 @@ export async function evaluateVerificationCheck(
     nowMs: now.getTime(),
   });
 
+  // Value-of-information gate: runs only with explicit confidence inputs
+  // on a live external-check candidate with a priced quote. NOT_NEEDED /
+  // REFUSED / REVIEW override the policy decision; BUY defers to it
+  // (liquidity/signer gates still apply). Absent confidence → gate
+  // defers entirely, preserving legacy behavior.
+  if (
+    params.confidenceBps &&
+    readiness === "EXTERNAL_CHECK_CANDIDATE" &&
+    quote &&
+    outcomeId &&
+    checkType
+  ) {
+    const periodRemaining =
+      policy.maxVerificationSpendPerPeriodMicroUsdc - periodSpent > 0n
+        ? policy.maxVerificationSpendPerPeriodMicroUsdc - periodSpent
+        : 0n;
+    const voi = evaluateValueOfInformation({
+      payoutAtRiskMicroUsdc: exposure,
+      currentConfidenceBps: params.confidenceBps.current,
+      requiredConfidenceBps: params.confidenceBps.required,
+      providerPriceMicroUsdc: quote.costMicroUsdc,
+      remainingVerificationBudgetMicroUsdc:
+        kind === "remote-x402" && remoteConfig
+          ? (remoteConfig.budgetMicroUsdc - periodSpent > 0n ? remoteConfig.budgetMicroUsdc - periodSpent : 0n)
+          : periodRemaining,
+      maxPerCheckMicroUsdc:
+        kind === "remote-x402" && remoteConfig ? remoteConfig.maxPerCheckMicroUsdc : policy.maxCostPerCheckMicroUsdc,
+      maxEvidenceCostShareBps: policy.maxCostBpsOfExposure,
+      humanApprovalThresholdMicroUsdc: policy.humanApprovalThresholdMicroUsdc,
+    });
+    if (voi.decision === "NOT_NEEDED") {
+      decision = { ...decision, decision: "NO_CHECK", reasons: voi.reasons };
+    } else if (voi.decision === "REFUSED") {
+      decision = { ...decision, decision: "REFUSE", reasons: voi.reasons };
+    } else if (voi.decision === "REVIEW") {
+      decision = { ...decision, decision: "ESCALATE", reasons: voi.reasons };
+    }
+  }
+
   const execBase = {
     evaluated: true, signed: false, purchased: false, ambiguous: false,
     result: null as import("./verification").NormalizedResult | null, paymentReference: null as string | null,
-    route: (kind === "local-test" ? "local-test" : "unconfigured") as "local-test" | "unconfigured" | "real",
+    route: (kind === "local-test" ? "local-test" : kind === "remote-x402" ? "real" : "unconfigured") as "local-test" | "unconfigured" | "real",
   };
   await auditEvent(deps.audit, "verification.procurement.evaluated", {
     workspaceId: params.workspaceId, campaignId: params.campaignId, outcomeId: outcomeId ?? "",
@@ -347,7 +429,10 @@ export async function evaluateVerificationCheck(
   if (!record) throw Object.assign(new Error("Could not persist procurement."), { status: 500, code: "INTERNAL" });
   await auditEvent(deps.audit, "verification.procurement.approved", {
     workspaceId: params.workspaceId, campaignId: params.campaignId, outcomeId, providerId: quote.providerId,
-    metadata: { costMicroUsdc: quote.costMicroUsdc.toString(), exposureMicroUsdc: exposure.toString() },
+    metadata: {
+      costMicroUsdc: quote.costMicroUsdc.toString(), exposureMicroUsdc: exposure.toString(),
+      idempotencyKey: stableIdempotencyKey(dedupeKey as string),
+    },
   });
 
   // Atomic pre-sign re-check: period cap + state gate inside the transaction (no network inside).
@@ -375,13 +460,36 @@ export async function evaluateVerificationCheck(
   }
 
   // Sign + purchase (outside any transaction). Ambiguous errors never repay.
+  // Remote testnet path: the ONLY spendable network/asset is Arc Testnet +
+  // canonical testnet USDC — enforced here again at the signing gate, and
+  // the signer is ALWAYS the Circle buyer, never a raw private key.
   const approved: ApprovedPayment = {
     providerId: quote.providerId, resourceUrl: quote.resourceUrl, checkType: quote.checkType,
     campaignId: params.campaignId, outcomeId, amountMicroUsdc: quote.costMicroUsdc,
     asset: quote.asset, network: quote.network, payTo: quote.payTo,
     quoteVersion: quote.quoteVersion, expiresAtMs: quote.expiresAt.getTime(),
   };
-  const signer = getProcurementSigner(env);
+  let signer: ProcurementSigner;
+  let timeoutCapSec: number | undefined;
+  if (kind === "remote-x402") {
+    if (!remoteConfig) {
+      throw Object.assign(new Error("Remote verification is not configured."), { status: 503, code: "NOT_CONFIGURED" });
+    }
+    assertTestnetTerms({ network: approved.network, asset: approved.asset });
+    if (approved.amountMicroUsdc > remoteConfig.maxPerCheckMicroUsdc) {
+      throw Object.assign(new Error("Approved amount exceeds the remote per-check ceiling."), { status: 409, code: "OVER_PER_CHECK_LIMIT" });
+    }
+    timeoutCapSec = remoteConfig.timeoutCapSec;
+    if (deps.circleBuyer) {
+      signer = deps.circleBuyer;
+    } else {
+      const { createCircleVerificationBuyer } = await import("../chain/circle");
+      const buyer = await createCircleVerificationBuyer(env);
+      signer = { address: buyer.address, sign: buyer.sign };
+    }
+  } else {
+    signer = getProcurementSigner(env);
+  }
   const allowedHosts = [...(deps.allowedHosts ?? []), ...allowedHostsFor(env, quote.resourceUrl)];
   // Fetch resolution: explicit test seam wins; local-test wires its guarded
   // in-process resource (throws in production); everything else uses global fetch.
@@ -404,7 +512,7 @@ export async function evaluateVerificationCheck(
     purchase = await purchaseWithX402({
       url: quote.resourceUrl, approved,
       signer: { address: signer.address, sign: signer.sign },
-      allowedHosts, fetchImpl, nowMs: now.getTime(),
+      allowedHosts, fetchImpl, nowMs: now.getTime(), timeoutCapSec,
     });
   } catch (e) {
     const ambiguous = (e as { ambiguousAfterSign?: boolean }).ambiguousAfterSign === true;
@@ -420,7 +528,7 @@ export async function evaluateVerificationCheck(
       execution: { ...execBase, signed: true, ambiguous },
     };
   }
-  const paymentRef = paymentReferenceFrom(purchase.paymentResponse);
+  const paymentRef = paymentReferenceFrom(purchase.paymentResponse, kind === "remote-x402" ? null : "local-purchase");
   const purchased = await store.updateProcurement(record.id, {
     state: "PURCHASED", paymentReference: paymentRef, purchasedAt: now,
   }).catch(() => null);
@@ -454,9 +562,9 @@ export async function evaluateVerificationCheck(
   };
 }
 
-function paymentReferenceFrom(resp: Record<string, unknown> | null): string | null {
-  const ref = resp?.paymentReference ?? resp?.reference ?? resp?.txHash ?? resp?.id;
-  return typeof ref === "string" && ref.length > 0 ? ref.slice(0, 128) : "local-purchase";
+function paymentReferenceFrom(resp: Record<string, unknown> | null, fallback: string | null = "local-purchase"): string | null {
+  const ref = resp?.paymentReference ?? resp?.reference ?? resp?.txHash ?? resp?.receiptId ?? resp?.settlementTx ?? resp?.id;
+  return typeof ref === "string" && ref.length > 0 ? ref.slice(0, 128) : fallback;
 }
 
 function allowedHostsFor(env: NodeJS.ProcessEnv, resourceUrl: string): string[] {

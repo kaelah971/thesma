@@ -10,6 +10,8 @@ const evaluateSchema = z.object({
   outcomeId: z.string().min(1).optional(),
   providerId: z.string().min(1).max(80).optional(),
   checkType: z.enum(["TRANSACTION_RISK", "ATTRIBUTION_INTEGRITY", "SUBJECT_DUPLICATION", "PAYMENT_REFERENCE_CHECK", "OUTCOME_ENRICHMENT"]).optional(),
+  currentConfidenceBps: z.number().int().min(0).max(10000).optional(),
+  requiredConfidenceBps: z.number().int().min(0).max(10000).optional(),
 });
 
 /**
@@ -23,7 +25,7 @@ export async function POST(req: Request) {
     const user = await requireUser();
     const parsed = evaluateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return badRequest("workspaceId and campaignId are required");
-    const { workspaceId, campaignId, outcomeId, providerId, checkType } = parsed.data;
+    const { workspaceId, campaignId, outcomeId, providerId, checkType, currentConfidenceBps, requiredConfidenceBps } = parsed.data;
     try {
       await requireOwner(workspaceId, user.userId);
     } catch {
@@ -31,7 +33,16 @@ export async function POST(req: Request) {
     }
     const wired = marketDepsOr503();
     if ("response" in wired) return wired.response;
-    const result = await evaluateVerificationCheck(wired.deps, { workspaceId, campaignId, outcomeId, providerId, checkType });
+    const result = await evaluateVerificationCheck(wired.deps, {
+      workspaceId,
+      campaignId,
+      outcomeId,
+      providerId,
+      checkType,
+      ...(currentConfidenceBps !== undefined && requiredConfidenceBps !== undefined
+        ? { confidenceBps: { current: currentConfidenceBps, required: requiredConfidenceBps } }
+        : {}),
+    });
     return Response.json(result);
   } catch (err) {
     return toApiError(err);

@@ -72,7 +72,7 @@ DECISION LEDGER ──► shows why every important action occurred
 | Status | Capability |
 |---|---|
 | SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger |
-| LIVE but NOT CONFIGURED | External verification procurement (no provider, no funded signer — fails closed to `NOT_CONFIGURED`) |
+| SHIPPED, runtime NOT_CONFIGURED | External verification procurement — value-of-information gate, Arc Testnet x402 buyer via dedicated Circle wallet, live 402-challenge validation; stays NOT_CONFIGURED until Circle/provider credentials are supplied (no fake spend, no fallback keys) |
 | SUPPORTED LOCALLY / PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness; real provider interop unproven) |
 | KNOWN UNSUPPORTED | Cross-campaign onchain fund transfer; autonomous settlement of hybrid base/milestone obligations (recorded truthfully as payable without an onchain path) |
 
@@ -550,6 +550,7 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 - [`docs/current-state.md`](docs/current-state.md) — current production checkpoint: shipped surfaces, Northstar truth, wallet/EIP-712 safety, funding balance safety, canonical Aster proof, release gate.
 - [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) — integrated no-spend acceptance record: full product-journey verification, zero-spend statement, final test/CI status.
 - [`docs/judge-demo.md`](docs/judge-demo.md) — judge demo guide: 90-second and 3-minute paths, exact routes, proof stories, screenshot capture list.
+- [`docs/verification-procurement.md`](docs/verification-procurement.md) — value-of-information buyer: formula, decision states, Circle buyer architecture, x402 lifecycle, testnet boundary, idempotency, first provider evidence.
 - [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md) — mainnet runtime provisioning runbook.
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
 - [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.

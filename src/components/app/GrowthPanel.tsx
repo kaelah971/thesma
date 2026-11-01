@@ -36,6 +36,9 @@ interface Procurement {
   checkType: string;
   economicExposureMicroUsdc: string;
   quotedCostMicroUsdc: string;
+  asset: string;
+  network: string;
+  payTo: string;
   decision: string;
   state: string;
   normalizedResult: string | null;
@@ -88,10 +91,21 @@ function VerificationAgent({ workspaceId, campaignId, isOwner }: { workspaceId: 
       )}
       {rows !== null &&
         rows.slice(0, 3).map((p) => (
-          <p key={p.id} className={styles.summary}>
-            {p.checkType.replaceAll("_", " ")} · {formatUsdc(p.quotedCostMicroUsdc)} USDC · {p.decision} · {p.state}
-            {p.normalizedResult ? ` · result: ${p.normalizedResult}` : ""}
-          </p>
+          <div key={p.id} className="verification-row" style={{ marginTop: 8, borderTop: "1px solid var(--line, #e5e5e5)", paddingTop: 8 }}>
+            <p className={styles.summary} style={{ margin: 0 }}>
+              <strong>EXTERNAL VERIFICATION</strong> · {p.checkType.replaceAll("_", " ")} · {formatUsdc(p.quotedCostMicroUsdc)} USDC · {p.decision} · {p.state}
+              {p.normalizedResult ? ` · result: ${p.normalizedResult}` : ""}
+            </p>
+            <p className={styles.summary} style={{ margin: "4px 0 0" }}>
+              Provider: {p.providerId} · Rail: x402 · Network: {p.network}
+              {p.network === "eip155:5042002" ? " · TESTNET (Arc Testnet — not mainnet)" : ""}
+            </p>
+            {p.paymentReference && (
+              <p className={styles.summary} style={{ margin: "4px 0 0" }}>
+                Payment: <span className="mono">{p.paymentReference}</span>
+              </p>
+            )}
+          </div>
         ))}
       {result?.decision && (
         <p className={styles.summary}>

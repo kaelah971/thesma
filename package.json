@@ -17,9 +17,12 @@
     "mainnet:preflight": "tsx ./scripts/mainnet-preflight.ts",
     "production:doctor": "tsx ./scripts/mainnet-preflight.ts",
     "secret:hygiene": "bash scripts/secret-hygiene.sh",
-    "test:browser": "node ./scripts/browser-smoke.mjs"
+    "test:browser": "node ./scripts/browser-smoke.mjs",
+    "verification:x402:doctor": "tsx ./scripts/verification-x402-doctor.ts",
+    "verification:x402:proof": "tsx ./scripts/verification-x402-proof.ts"
   },
   "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.8.1",
     "bcryptjs": "3.0.3",
     "drizzle-orm": "0.45.4",
     "next": "16.4.2",

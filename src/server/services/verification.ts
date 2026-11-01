@@ -1,4 +1,5 @@
-import { getAddress, isAddress, type Hex } from "viem";
+import { createHash } from "node:crypto";
+import { getAddress, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { AuditSink, MarketStore } from "./campaignStore";
 import { loadCampaignQuality } from "./reliability";
@@ -31,6 +32,13 @@ import { loadCampaignQuality } from "./reliability";
 
 export const X402_VERSION = 2;
 export const ARC_MAINNET_CAIP2 = "eip155:5042";
+/** Arc Testnet: the ONLY network verification procurement may spend on. */
+export const ARC_TESTNET_CAIP2 = "eip155:5042002";
+export const ARC_TESTNET_CHAIN_ID = 5042002;
+/** Canonical Arc Testnet USDC (same deployment address as mainnet). */
+export const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
+/** Default per-call timeout ceiling (seconds) for accepted x402 terms. */
+export const DEFAULT_X402_TIMEOUT_CAP_SEC = 3600;
 export const PAYMENT_REQUIRED_HEADER = "payment-required";
 export const PAYMENT_SIGNATURE_HEADER = "payment-signature";
 export const PAYMENT_RESPONSE_HEADER = "payment-response";
@@ -169,6 +177,10 @@ export function assertAllowedUrl(rawUrl: string, allowedHosts: string[]): URL {
   return u;
 }
 
+function isHexAddress(v: unknown): v is `0x${string}` {
+  return typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
+}
+
 function fail(status: number, code: string, message: string): never {
   throw Object.assign(new Error(message), { status, code });
 }
@@ -183,12 +195,14 @@ export function parsePaymentRequired(header: string | null): X402PaymentRequired
   } catch {
     throw fail(400, "MALFORMED_402", "PAYMENT-REQUIRED is not valid base64 JSON.");
   }
-  const v = (body ?? {}) as { x402Version?: unknown; resource?: unknown; accepted?: unknown };
+  const v = (body ?? {}) as { x402Version?: unknown; resource?: unknown; accepted?: unknown; accepts?: unknown };
   if (v.x402Version !== X402_VERSION) {
     throw fail(400, "WRONG_X402_VERSION", `Unsupported x402 version (want ${X402_VERSION}; v1 X-PAYMENT semantics are never accepted).`);
   }
   const resource = v.resource as { url?: unknown } | undefined;
-  const accepted = v.accepted as X402Accepted[] | undefined;
+  // Real-world providers send `accepts`; older fixtures use `accepted`.
+  // Accept either key (never both conflicting — `accepted` wins for legacy).
+  const accepted = (Array.isArray(v.accepted) ? v.accepted : Array.isArray(v.accepts) ? v.accepts : null) as X402Accepted[] | null;
   if (!resource || typeof resource.url !== "string" || !Array.isArray(accepted) || accepted.length === 0) {
     throw fail(400, "MALFORMED_402", "PAYMENT-REQUIRED is missing resource or accepted terms.");
   }
@@ -196,8 +210,31 @@ export function parsePaymentRequired(header: string | null): X402PaymentRequired
 }
 
 /** Fail closed on anything unexpected. Amounts must fit the approved quote exactly. */
-export function selectAcceptedTerms(req: X402PaymentRequired, approved: ApprovedPayment, nowMs: number = Date.now()): X402Accepted {
-  if (req.resource.url !== approved.resourceUrl) {
+export function selectAcceptedTerms(
+  req: X402PaymentRequired,
+  approved: ApprovedPayment,
+  nowMs: number = Date.now(),
+  opts?: { timeoutCapSec?: number; baseUrlForRelativeResource?: string },
+): X402Accepted {
+  // Providers may name the resource path-only ("/api/...") while the
+  // approved terms carry the full fetch URL. Resolve relative names
+  // against the fetch origin so the comparison stays exact, never loose.
+  const challengeUrl = req.resource.url;
+  const effectiveChallengeUrl = (() => {
+    if (challengeUrl === approved.resourceUrl) return challengeUrl;
+    if (opts?.baseUrlForRelativeResource && challengeUrl.startsWith("/")) {
+      try {
+        const base = new URL(opts.baseUrlForRelativeResource);
+        const resolved = new URL(challengeUrl, base.origin).href;
+        const approvedUrl = new URL(approved.resourceUrl);
+        if (resolved === `${approvedUrl.origin}${approvedUrl.pathname}` || resolved === approvedUrl.href) return approved.resourceUrl;
+      } catch {
+        // Fall through to the mismatch error below.
+      }
+    }
+    return challengeUrl;
+  })();
+  if (effectiveChallengeUrl !== approved.resourceUrl) {
     throw fail(400, "RESOURCE_MISMATCH", "Payment requirement targets an unexpected resource.");
   }
   if (approved.expiresAtMs <= nowMs) fail(409, "QUOTE_EXPIRED", "Approved quote expired — re-evaluate.");
@@ -213,13 +250,192 @@ export function selectAcceptedTerms(req: X402PaymentRequired, approved: Approved
   if (amount <= 0n || amount !== approved.amountMicroUsdc) {
     throw fail(400, "AMOUNT_MISMATCH", "Accepted amount differs from the approved quote — refusing to sign.");
   }
-  if (!isAddress(match.payTo) || getAddress(match.payTo) !== getAddress(approved.payTo)) {
+  // Same address, any checksum casing: EIP-55 case is only an error-detection
+  // code, not part of the address. Real providers ship miscapitalized hex.
+  if (!isHexAddress(match.payTo) || !isHexAddress(approved.payTo) || match.payTo.toLowerCase() !== approved.payTo.toLowerCase()) {
     throw fail(400, "PAYEE_MISMATCH", "payTo differs from the approved provider payee.");
   }
-  if (!Number.isFinite(match.maxTimeoutSeconds) || match.maxTimeoutSeconds <= 0 || match.maxTimeoutSeconds > 3600) {
+  if (!Number.isFinite(match.maxTimeoutSeconds) || match.maxTimeoutSeconds <= 0) {
     throw fail(400, "BAD_TIMEOUT", "Insane payment timeout — refusing.");
   }
+  const timeoutCap = opts?.timeoutCapSec ?? DEFAULT_X402_TIMEOUT_CAP_SEC;
+  if (match.maxTimeoutSeconds > timeoutCap) {
+    throw fail(400, "BAD_TIMEOUT", `Payment timeout exceeds the ${timeoutCap}s policy ceiling — refusing.`);
+  }
   return match;
+}
+
+/* ---------------- Arc Testnet hard boundary ---------------- */
+
+/**
+ * Verification procurement may ONLY execute on Arc Testnet with canonical
+ * testnet USDC. Any other network/asset (including Arc Mainnet 5042) is
+ * refused — an environment typo can never turn this into mainnet spend.
+ */
+export function isTestnetTerms(terms: { network: string; asset: string }): boolean {
+  return terms.network === ARC_TESTNET_CAIP2 && terms.asset.toLowerCase() === ARC_TESTNET_USDC.toLowerCase();
+}
+
+export function assertTestnetTerms(terms: { network: string; asset: string }): void {
+  if (!isTestnetTerms(terms)) {
+    throw fail(
+      403,
+      "NON_TESTNET_TERMS",
+      `Refusing: verification procurement executes on Arc Testnet only (${ARC_TESTNET_CAIP2}, canonical testnet USDC).`,
+    );
+  }
+}
+
+/* ---------------- Stable idempotency keys ---------------- */
+
+/**
+ * Deterministic UUID-v4-shaped idempotency key derived from the request
+ * fingerprint. Identical logical purchases reuse the key (safe retry);
+ * distinct purchases get distinct keys (no cross-contamination).
+ */
+export function stableIdempotencyKey(dedupeKey: string): string {
+  const h = createHash("sha256").update(dedupeKey, "utf8").digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+/* ---------------- Value-of-information kernel (pure) ---------------- */
+
+export type ValueOfInformationDecision = "NOT_NEEDED" | "BUY" | "REFUSED" | "REVIEW";
+
+export interface ValueOfInformationInput {
+  /** Payout at risk if this outcome is incorrectly verified. */
+  payoutAtRiskMicroUsdc: bigint;
+  /** Current verification confidence, basis points (0–10000). */
+  currentConfidenceBps: number;
+  /** Required verification confidence, basis points (0–10000). */
+  requiredConfidenceBps: number;
+  /** Provider's quoted price for the evidence. */
+  providerPriceMicroUsdc: bigint;
+  /** Unspent verification budget for the period. */
+  remainingVerificationBudgetMicroUsdc: bigint;
+  /** Hard per-check ceiling. */
+  maxPerCheckMicroUsdc: bigint;
+  /** Max share of at-risk value spendable on one evidence check (bps). */
+  maxEvidenceCostShareBps: number;
+  /** Human-approval threshold: when set, ceiling breaches escalate to REVIEW instead of REFUSE. */
+  humanApprovalThresholdMicroUsdc?: bigint | null;
+}
+
+export interface ValueOfInformationResult {
+  decision: ValueOfInformationDecision;
+  uncertaintyBps: number;
+  riskExposureMicroUsdc: bigint;
+  economicEvidenceCapMicroUsdc: bigint;
+  maxJustifiableSpendMicroUsdc: bigint;
+  reasons: string[];
+}
+
+function voiFail(status: number, code: string, message: string): never {
+  throw Object.assign(new Error(message), { status, code });
+}
+
+function assertBps(name: string, v: unknown): asserts v is number {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 10_000) {
+    voiFail(400, "BAD_CONFIDENCE", `${name} must be an integer 0–10000 (basis points).`);
+  }
+}
+
+function assertNonNegativeMicro(name: string, v: unknown): asserts v is bigint {
+  if (typeof v !== "bigint" || v < 0n) {
+    voiFail(400, "BAD_AMOUNT", `${name} must be a non-negative bigint in micro-USDC.`);
+  }
+}
+
+/**
+ * Pure value-of-information gate. Exact bigint/integer arithmetic — never
+ * floating point. A 1-micro dust shortfall still counts as insufficient
+ * value. Returns reasons a judge can read; throws only on malformed input.
+ *
+ *   uncertaintyBps        = max(0, required − current)
+ *   riskExposureMicro     = payoutAtRisk × uncertainty / 10_000
+ *   economicEvidenceCap   = riskExposure × shareBps / 10_000
+ *   maxJustifiable        = min(cap, remainingBudget, maxPerCheck)
+ */
+export function evaluateValueOfInformation(input: ValueOfInformationInput): ValueOfInformationResult {
+  assertBps("currentConfidenceBps", input.currentConfidenceBps);
+  assertBps("requiredConfidenceBps", input.requiredConfidenceBps);
+  assertBps("maxEvidenceCostShareBps", input.maxEvidenceCostShareBps);
+  assertNonNegativeMicro("payoutAtRiskMicroUsdc", input.payoutAtRiskMicroUsdc);
+  assertNonNegativeMicro("providerPriceMicroUsdc", input.providerPriceMicroUsdc);
+  assertNonNegativeMicro("remainingVerificationBudgetMicroUsdc", input.remainingVerificationBudgetMicroUsdc);
+  assertNonNegativeMicro("maxPerCheckMicroUsdc", input.maxPerCheckMicroUsdc);
+  if (input.humanApprovalThresholdMicroUsdc !== undefined && input.humanApprovalThresholdMicroUsdc !== null) {
+    assertNonNegativeMicro("humanApprovalThresholdMicroUsdc", input.humanApprovalThresholdMicroUsdc);
+  }
+  const uncertaintyBps = Math.max(0, input.requiredConfidenceBps - input.currentConfidenceBps);
+  const riskExposureMicroUsdc = (input.payoutAtRiskMicroUsdc * BigInt(uncertaintyBps)) / 10_000n;
+  const economicEvidenceCapMicroUsdc = (riskExposureMicroUsdc * BigInt(input.maxEvidenceCostShareBps)) / 10_000n;
+  let maxJustifiableSpendMicroUsdc = economicEvidenceCapMicroUsdc;
+  if (input.remainingVerificationBudgetMicroUsdc < maxJustifiableSpendMicroUsdc) {
+    maxJustifiableSpendMicroUsdc = input.remainingVerificationBudgetMicroUsdc;
+  }
+  if (input.maxPerCheckMicroUsdc < maxJustifiableSpendMicroUsdc) {
+    maxJustifiableSpendMicroUsdc = input.maxPerCheckMicroUsdc;
+  }
+  const price = input.providerPriceMicroUsdc;
+  const reviewOrRefuse = (rule: string, reason: string): ValueOfInformationResult => ({
+    decision: input.humanApprovalThresholdMicroUsdc != null ? "REVIEW" : "REFUSED",
+    uncertaintyBps,
+    riskExposureMicroUsdc,
+    economicEvidenceCapMicroUsdc,
+    maxJustifiableSpendMicroUsdc,
+    reasons: [rule, reason],
+  });
+  if (uncertaintyBps === 0) {
+    return {
+      decision: "NOT_NEEDED",
+      uncertaintyBps,
+      riskExposureMicroUsdc,
+      economicEvidenceCapMicroUsdc,
+      maxJustifiableSpendMicroUsdc,
+      reasons: [
+        "ALREADY_CONFIDENT",
+        `Current confidence ${input.currentConfidenceBps} bps already meets required ${input.requiredConfidenceBps} bps — no evidence purchase.`,
+      ],
+    };
+  }
+  if (price <= 0n) {
+    return reviewOrRefuse("BAD_QUOTE", "Provider price is not positive — refusing to value a free-or-negative quote.");
+  }
+  if (price > input.remainingVerificationBudgetMicroUsdc) {
+    return reviewOrRefuse(
+      "OVER_BUDGET",
+      `Evidence costs ${price} micro-USDC but only ${input.remainingVerificationBudgetMicroUsdc} remains in the verification budget.`,
+    );
+  }
+  if (price > input.maxPerCheckMicroUsdc) {
+    return reviewOrRefuse(
+      "OVER_PER_CHECK_LIMIT",
+      `Evidence costs ${price} micro-USDC vs the ${input.maxPerCheckMicroUsdc} per-check ceiling.`,
+    );
+  }
+  if (price > maxJustifiableSpendMicroUsdc) {
+    return reviewOrRefuse(
+      "OVER_VALUE_CEILING",
+      `Evidence costs ${price} micro-USDC vs a ${maxJustifiableSpendMicroUsdc} value-of-information ceiling ` +
+        `(${uncertaintyBps} bps uncertainty on ${input.payoutAtRiskMicroUsdc} at-risk).`,
+    );
+  }
+  return {
+    decision: "BUY",
+    uncertaintyBps,
+    riskExposureMicroUsdc,
+    economicEvidenceCapMicroUsdc,
+    maxJustifiableSpendMicroUsdc,
+    reasons: [
+      "ECONOMICALLY_JUSTIFIED",
+      `Current confidence ${input.currentConfidenceBps} bps is below required ${input.requiredConfidenceBps} bps.`,
+      `${input.payoutAtRiskMicroUsdc} micro-USDC is exposed if this outcome is incorrectly verified.`,
+      `Additional evidence costs ${price} micro-USDC.`,
+      `Price is below the ${maxJustifiableSpendMicroUsdc} micro-USDC value-of-information ceiling.`,
+      "Purchase authorized inside the verification budget.",
+    ],
+  };
 }
 
 export function authorizationEnvelope(signerAddress: string, signature: Hex, terms: X402Accepted): string {
@@ -249,6 +465,8 @@ export async function purchaseWithX402(params: {
   body?: unknown;
   /** Evaluation clock (defaults to wall time). Threaded so frozen-time tests are honest. */
   nowMs?: number;
+  /** Override for the accepted-terms timeout ceiling (default 3600s). Remote testnet providers may advertise longer windows. */
+  timeoutCapSec?: number;
 }): Promise<{ data: unknown; paymentResponse: Record<string, unknown> | null; signed: boolean }> {
   // SSRF guard first: nothing is fetched, let alone paid, off-allowlist.
   assertAllowedUrl(params.url, params.allowedHosts);
@@ -270,7 +488,10 @@ export async function purchaseWithX402(params: {
     return { data: await first.json().catch(() => null), paymentResponse: null, signed: false };
   }
   const required = parsePaymentRequired(first.headers.get(PAYMENT_REQUIRED_HEADER));
-  const terms = selectAcceptedTerms(required, params.approved, nowMs);
+  const terms = selectAcceptedTerms(required, params.approved, nowMs, {
+    timeoutCapSec: params.timeoutCapSec,
+    baseUrlForRelativeResource: params.url,
+  });
   const canonical = JSON.stringify({
     x402Version: X402_VERSION, resource: params.url, scheme: terms.scheme, network: terms.network,
     asset: terms.asset, amount: terms.amount, payTo: terms.payTo,
@@ -516,10 +737,77 @@ function simpleHash(s: string): string {
 }
 
 /** Test/placeholder provider kinds. Real paid providers register adapters here. */
-export type ProviderKind = "local-test" | "unconfigured";
+export type ProviderKind = "local-test" | "remote-x402" | "unconfigured";
+
+export interface RemoteX402Config {
+  providerId: string;
+  providerUrl: string;
+  network: string;
+  asset: string;
+  maxPerCheckMicroUsdc: bigint;
+  budgetMicroUsdc: bigint;
+  timeoutCapSec: number;
+}
+
+/**
+ * Resolve the dedicated testnet x402 buyer configuration. Returns null
+ * when the feature is disabled or unconfigured (NOT_CONFIGURED path).
+ * The network is pinned to Arc Testnet — any other value fails closed.
+ */
+export function getRemoteX402Config(env: NodeJS.ProcessEnv = process.env): RemoteX402Config | null {
+  if ((env.THESMA_EXTERNAL_VERIFICATION_ENABLED ?? "false").trim().toLowerCase() !== "true") return null;
+  const providerUrl = (env.THESMA_EXTERNAL_VERIFICATION_PROVIDER_URL ?? "").trim();
+  if (!providerUrl) return null;
+  const network = (env.THESMA_EXTERNAL_VERIFICATION_NETWORK ?? ARC_TESTNET_CAIP2).trim();
+  if (network !== ARC_TESTNET_CAIP2) {
+    throw fail(503, "MISCONFIGURED_NETWORK", `External verification network must be exactly ${ARC_TESTNET_CAIP2}.`);
+  }
+  const asset = ARC_TESTNET_USDC;
+  let maxPerCheckMicroUsdc = 10_000n;
+  try {
+    const raw = (env.THESMA_EXTERNAL_VERIFICATION_MAX_PER_CHECK_MICRO ?? "10000").trim();
+    if (raw) maxPerCheckMicroUsdc = BigInt(raw);
+  } catch {
+    throw fail(503, "MISCONFIGURED_BUDGET", "THESMA_EXTERNAL_VERIFICATION_MAX_PER_CHECK_MICRO is not an integer.");
+  }
+  let budgetMicroUsdc = 100_000n;
+  try {
+    const raw = (env.THESMA_EXTERNAL_VERIFICATION_BUDGET_MICRO ?? "100000").trim();
+    if (raw) budgetMicroUsdc = BigInt(raw);
+  } catch {
+    throw fail(503, "MISCONFIGURED_BUDGET", "THESMA_EXTERNAL_VERIFICATION_BUDGET_MICRO is not an integer.");
+  }
+  if (maxPerCheckMicroUsdc <= 0n || budgetMicroUsdc <= 0n) {
+    throw fail(503, "MISCONFIGURED_BUDGET", "External verification caps must be positive.");
+  }
+  let timeoutCapSec = 691_200;
+  const rawTimeout = (env.THESMA_EXTERNAL_VERIFICATION_MAX_TIMEOUT_SEC ?? "").trim();
+  if (rawTimeout) {
+    const parsed = Number.parseInt(rawTimeout, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw fail(503, "MISCONFIGURED_TIMEOUT", "THESMA_EXTERNAL_VERIFICATION_MAX_TIMEOUT_SEC is not a positive integer.");
+    }
+    timeoutCapSec = parsed;
+  }
+  return {
+    providerId: (env.THESMA_EXTERNAL_VERIFICATION_PROVIDER_ID ?? "external-x402").trim() || "external-x402",
+    providerUrl,
+    network,
+    asset,
+    maxPerCheckMicroUsdc,
+    budgetMicroUsdc,
+    timeoutCapSec,
+  };
+}
 
 export function providerKindForId(providerId: string, env: NodeJS.ProcessEnv = process.env): ProviderKind {
   if (providerId === "local-test") return "local-test";
+  try {
+    const remote = getRemoteX402Config(env);
+    if (remote && providerId === remote.providerId) return "remote-x402";
+  } catch {
+    return "unconfigured";
+  }
   const url = (env.THESMA_VERIFICATION_PROVIDER_URL ?? "").trim();
   if (!url) return "unconfigured";
   return "unconfigured";
