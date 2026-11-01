@@ -90,6 +90,7 @@ DECISION LEDGER ──► shows why every important action occurred
 | Terms | [thesma.vercel.app/terms](https://thesma.vercel.app/terms) |
 | Privacy | [thesma.vercel.app/privacy](https://thesma.vercel.app/privacy) |
 | Current production state | [`docs/current-state.md`](docs/current-state.md) |
+| Integrated acceptance (no-spend) | [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) |
 | Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
 | Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
 | Arc testnet operator proof | [`docs/proof/operator-testnet.md`](docs/proof/operator-testnet.md) |
@@ -546,6 +547,7 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 
 - [`docs/mainnet-proof.md`](docs/mainnet-proof.md) — canonical S8.2 mainnet evidence (detailed record).
 - [`docs/current-state.md`](docs/current-state.md) — current production checkpoint: shipped surfaces, Northstar truth, wallet/EIP-712 safety, funding balance safety, canonical Aster proof, release gate.
+- [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) — integrated no-spend acceptance record: full product-journey verification, zero-spend statement, final test/CI status.
 - [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md) — mainnet runtime provisioning runbook.
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
 - [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.

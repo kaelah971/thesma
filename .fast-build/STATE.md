@@ -135,3 +135,12 @@
 - QUALITY_AGENT: reliability PROVISIONAL/ESTABLISHED/STRONG_EVIDENCE; quality states (6); anomaly INFO/REVIEW; readiness NONE/REVIEW/EXTERNAL_CHECK_CANDIDATE; events: creator.reliability.evaluated, outcome.quality.review_flagged, retention.qualified, outcome.verified, checkout.confirmed.
 - HYBRID (via invitation agent): PERFORMANCE_ONLY/BASE_PLUS/MILESTONE/HYBRID_FULL; base PENDING→VERIFIED→SETTLEMENT_NOT_SUPPORTED; milestones one-time; settlement UNSUPPORTED onchain; events: creator.deal.accepted/milestone.awarded/base.verified.
 - Unified layer changes NONE of the above; it only names agentType/authorityState/executionState per row.
+
+## Milestone — Integrated no-spend acceptance (2026-11-01, on top of 71f0168)
+- VERDICT: PASS. Zero code changes, zero new tests — full existing coverage already pins every composed flow.
+- Reconciled truth: main head 71f0168; full suite 836 passing / 2 intentional Anvil skips (not 515 — that number is stale history); CI 6/6 green.
+- Verified composition: org policy/matching/invitations → creator inbox/auto-join gating → wallet EIP-712 ownership → funding prepare/resume + USDC balance preflight (fails closed on 0) → attribution/checkout/verification → holds/reservations/settlement → CFO/operator/ledger → public proof (Aster SETTLED, Beaconfield historical).
+- Production sweep (read-only GETs): / /start /markets /demo /@bgirl /security /privacy /terms /security.txt /api/health + both canonical market pages — all 200, no error-boundary copy, correct titles/content markers.
+- Zero-spend statement: no prod DB writes, no Northstar/@bgirl mutation, no signature, no broadcast, 0 USDC spent. Northstar remains FUNDING/PREPARED/0-funded/no-tx/market-closed.
+- Record: docs/integrated-acceptance.md (linked from README Judge quick links + Docs).
+- Production migration caveat STANDS: do not blindly run db:migrate against production.
