@@ -283,6 +283,11 @@ export async function prepareFundingIntent(
   actions: UnsignedAction[];
   campaignKey: Hex32;
   policyHash: Hex32;
+  /** Fresh intent: nothing completed yet. Present so the preview DTO
+   * always matches the resume shape (a missing field once crashed the
+   * whole campaign route on first render). */
+  completed: Array<"create-campaign" | "approve-usdc" | "fund-campaign">;
+  confirmReady: false;
 }> {
   const { campaign, version } = await campaignInScope(deps, params.campaignId, params.userId);
   await ownerOrFail(deps, campaign.workspaceId, params.userId);
@@ -388,6 +393,8 @@ export async function prepareFundingIntent(
     actions,
     campaignKey,
     policyHash,
+    completed: [],
+    confirmReady: false,
   };
 }
 

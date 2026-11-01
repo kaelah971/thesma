@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CampaignActions } from "@/components/app/CampaignActions";
 import { CampaignFunding } from "@/components/app/CampaignFunding";
+import { FundingErrorBoundary } from "@/components/app/FundingErrorBoundary";
 import { CreatorMatchesPanel } from "@/components/app/CreatorMatches";
 import { HoldList, OutcomeTable, PayoutTable, Pipeline } from "@/components/app/DataViews";
 import { NoWorkspace } from "@/components/app/NoWorkspace";
@@ -254,7 +255,8 @@ export default async function CampaignPage({
                 />
                 {campaign.version !== null && (
                   <div style={{ marginTop: 12 }}>
-                    <CampaignFunding
+                    <FundingErrorBoundary>
+                      <CampaignFunding
                       campaignId={campaign.id}
                       version={campaign.version}
                       state={campaign.state}
@@ -263,21 +265,24 @@ export default async function CampaignPage({
                       expectedAmountMicro={campaign.funding.expectedMicro}
                       expectedSender={snapshot.workspace.companyWallet}
                       chainId={arcChainId}
-                    />
+                      />
+                    </FundingErrorBoundary>
                   </div>
                 )}
               </>
             ) : campaign.state === "APPROVED" && campaign.version !== null ? (
-              <CampaignFunding
-                campaignId={campaign.id}
-                version={campaign.version}
-                state={campaign.state}
-                isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"}
-                fundingStatus={null}
-                expectedAmountMicro={campaign.budgetMicro}
-                expectedSender={snapshot.workspace.companyWallet}
-                chainId={arcChainId}
-              />
+              <FundingErrorBoundary>
+                <CampaignFunding
+                  campaignId={campaign.id}
+                  version={campaign.version}
+                  state={campaign.state}
+                  isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"}
+                  fundingStatus={null}
+                  expectedAmountMicro={campaign.budgetMicro}
+                  expectedSender={snapshot.workspace.companyWallet}
+                  chainId={arcChainId}
+                />
+              </FundingErrorBoundary>
             ) : (
               <p className={styles.muted} style={{ fontSize: 14 }}>
                 Funding opens once the policy is approved by the organization owner.

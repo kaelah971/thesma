@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getJson, postJson } from "@/lib/api";
+import { normalizeFundingPreview, previewErrorMessage } from "@/lib/fundingPreview";
 import {
   connectWallet,
   connectionFailureCopy,
@@ -193,18 +194,28 @@ export function CampaignFunding({
           `${found.name} is on ${currentChain ?? "an unknown network"} — switch to ${chainName} (${chainHex}) to continue.`,
         );
       }
-      const data = await loadActions();
-      if (data.confirmReady || data.actions.length === 0) {
+      let data: ResumeData;
+      try {
+        data = await loadActions();
+      } catch (e) {
+        // Inline, actionable, never a route crash: the specific backend
+        // reason is preserved, never an object.
+        throw new Error(`Funding preview couldn't be prepared. ${previewErrorMessage(e, "Try again.")}`);
+      }
+      // Failure-contained normalization: a shorter/older DTO shape must
+      // degrade to a safe empty preview, never crash the route on render.
+      const preview = normalizeFundingPreview(data);
+      if (preview.confirmReady || preview.actions.length === 0) {
         // Nothing left to sign: move straight to server reconciliation.
         await reconcile();
         return;
       }
       setAccount(connected);
-      setActions(data.actions);
-      setCompleted(data.completed);
+      setActions(preview.actions);
+      setCompleted(preview.completed);
       setPhase("preflight");
     } catch (e) {
-      fail(e instanceof Error ? e.message : "Could not start the funding flow.");
+      fail(previewErrorMessage(e, "Could not start the funding flow."));
     }
   }
 
