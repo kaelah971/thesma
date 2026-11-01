@@ -22,9 +22,9 @@ else
 fi
 
 # --- 2. Key material in tracked content.
-# Exclusions: .env.example (documented placeholder) and two test files whose
+# Exclusions: .env.example (documented placeholder) and test files whose
 # keys are random per-run fixtures via generatePrivateKey(), never values.
-hits="$(git grep -n -E -e '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----' -e '(THESMA|DEPLOYER|ARC)_[A-Z_]*PRIVATE_KEY\s*[:=]' -e 'sk_live_[0-9A-Za-z]+' -e 'AKIA[0-9A-Z]{16}' -e 'ghp_[0-9A-Za-z]{36}' -- . ':!.env.example' ':!tests/slice10a-rehearsal.test.ts' ':!tests/verification.test.ts' || true)"
+hits="$(git grep -n -E -e '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----' -e '(THESMA|DEPLOYER|ARC)_[A-Z_]*PRIVATE_KEY\s*[:=]' -e 'sk_live_[0-9A-Za-z]+' -e 'AKIA[0-9A-Z]{16}' -e 'ghp_[0-9A-Za-z]{36}' -- . ':!.env.example' ':!tests/slice10a-rehearsal.test.ts' ':!tests/verification.test.ts' ':!tests/verification-voi.test.ts' ':!tests/verification-x402-remote.test.ts' ':!tests/verification-circle.test.ts' || true)"
 if [ -n "$hits" ]; then
   say "FAIL: possible secret material in tracked files (locations only):"
   say "$hits" | cut -c1-160
