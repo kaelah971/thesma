@@ -15,6 +15,7 @@ import {
 } from "./growth";
 import { getGrowthPolicy, DEFAULT_GROWTH_POLICY } from "./growth";
 import { getOperatorPolicy, DEFAULT_OPERATOR_POLICY, type OperatorPolicy } from "./operator";
+import type { OutcomePortfolioPlan } from "./outcomePortfolio";
 
 /**
  * Campaign CFO + Cross-Campaign Capital Allocator (Slice 5).
@@ -93,6 +94,9 @@ export interface CfoCampaignRow {
   marketStatus: string | null;
   publicBountyMicroUsdc: string;
   targetOutcomeCount: number | null;
+  /** Existing campaign policy fields composed by the portfolio objective. */
+  budgetMicroUsdc?: string | null;
+  maxVerifiedCacMicroUsdc?: string | null;
   financials: CfoFinancials;
   pace: { status: string; targetProgressPct: number; timeProgressPct: number; projectedOutcomes: number };
   evidence: CfoCampaignEvidence;
@@ -161,6 +165,8 @@ export interface CapitalPlan {
   overallConfidence: Confidence;
   /** Always UNAVAILABLE: no cross-campaign transfer primitive exists onchain. */
   chainMovement: typeof CAPITAL_MOVEMENT;
+  /** Added by the operator boundary/API; buildCapitalPlan itself remains backward-compatible. */
+  portfolio?: OutcomePortfolioPlan;
   campaigns: CfoCampaignDecision[];
   escalations: { campaignId: string; reason: string }[];
 }
@@ -420,6 +426,8 @@ export async function loadCfoSnapshot(
         marketStatus: market?.status ?? null,
         publicBountyMicroUsdc: "0",
         targetOutcomeCount: null,
+        budgetMicroUsdc: null,
+        maxVerifiedCacMicroUsdc: null,
         financials: zeroFinancials(),
         pace: { status: "UNKNOWN", targetProgressPct: 0, timeProgressPct: 0, projectedOutcomes: 0 },
         evidence: { verifiedOutcomes: 0, totalActions: 0, realizedCostPerVerifiedMicroUsdc: null, confidence: "LOW", topLabel: null },
@@ -526,6 +534,8 @@ export async function loadCfoSnapshot(
       marketStatus: market.status,
       publicBountyMicroUsdc: market.publicBountyMicroUsdc.toString(),
       targetOutcomeCount: target,
+      budgetMicroUsdc: version.budgetMicroUsdc?.toString() ?? null,
+      maxVerifiedCacMicroUsdc: version.bountyCeilingMicroUsdc?.toString() ?? null,
       financials: {
         fundedMicroUsdc: funded.toString(),
         spentMicroUsdc: spent.toString(),
@@ -654,7 +664,9 @@ export async function buildCapitalPlan(
       evidenceConfidence: row.evidence.confidence,
       realizedCostPerVerifiedMicroUsdc: realized,
       currentBountyMicroUsdc: bounty,
-      bountyCeilingMicroUsdc: null,
+      bountyCeilingMicroUsdc: row.maxVerifiedCacMicroUsdc === null || row.maxVerifiedCacMicroUsdc === undefined
+        ? null
+        : BigInt(row.maxVerifiedCacMicroUsdc),
       paceStatus: row.pace.status,
       targetRemaining: row.targetOutcomeCount !== null ? Math.max(0, row.targetOutcomeCount - verified) : null,
       targetTotal: row.targetOutcomeCount,

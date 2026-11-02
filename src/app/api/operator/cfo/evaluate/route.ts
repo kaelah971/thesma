@@ -3,6 +3,7 @@ import { requireOwner, requireUser } from "@/server/auth/guard";
 import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
 import { buildCapitalPlan, loadCfoSnapshot, recordCfoPlan } from "@/server/services/cfo";
+import { loadOutcomePortfolioPlan, recordOutcomePortfolioDecision } from "@/server/services/outcomePortfolio";
 
 const evaluateSchema = z.object({ workspaceId: z.string().min(1) });
 
@@ -31,9 +32,12 @@ export async function POST(req: Request) {
     const now = new Date();
     const { snapshot, growthPolicy, operatorPolicy } = await loadCfoSnapshot(wired.deps.store, workspaceId, { now });
     const plan = await buildCapitalPlan(snapshot, { store: wired.deps.store, growthPolicy, operatorPolicy, now });
-    await recordCfoPlan(wired.deps.audit, plan);
+    const portfolio = await loadOutcomePortfolioPlan(snapshot, { store: wired.deps.store, operatorPolicy, now });
+    const planWithPortfolio = { ...plan, portfolio };
+    await recordCfoPlan(wired.deps.audit, planWithPortfolio);
+    await recordOutcomePortfolioDecision(wired.deps.audit, portfolio);
     return Response.json({
-      plan,
+      plan: planWithPortfolio,
       execution: { executed: false, chainMovement: plan.chainMovement, note: "Allocations are prospective funding recommendations. No onchain movement primitive exists; nothing was moved, reserved, or paid." },
     });
   } catch (err) {

@@ -29,7 +29,7 @@
 <img src="https://img.shields.io/badge/settlement-USDC-66F2A2?style=flat-square" alt="Settlement: USDC" />
 <img src="https://img.shields.io/badge/proof-reconciled-66F2A2?style=flat-square" alt="Proof: reconciled" />
 <img src="https://img.shields.io/badge/safety-no_double_pay-66F2A2?style=flat-square" alt="Safety: no double pay" />
-<img src="https://img.shields.io/badge/tests-836_passing-66F2A2?style=flat-square" alt="Tests: 836 passing" />
+<img src="https://img.shields.io/badge/tests-900_passing-66F2A2?style=flat-square" alt="Tests: 900 passing" />
 <img src="https://img.shields.io/badge/next.js-16-111111?style=flat-square" alt="Next.js 16" />
 <img src="https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square" alt="TypeScript strict" />
 </p>
@@ -58,7 +58,7 @@ finds creators ──► invites  finds/accepts inside         measures verified
 with frozen economics        creator Scout rules          outcome quality
         │                          │                              │
         ▼                          ▼                              ▼
-              Campaign CFO allocates prospective capital
+              Outcome Portfolio Operator allocates prospective capital
                               │
 VERIFICATION AGENT ──► is an external check economically worth buying?
                               │
@@ -71,7 +71,7 @@ DECISION LEDGER ──► shows why every important action occurred
 
 | Status | Capability |
 |---|---|
-| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger |
+| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, Outcome Portfolio Operator, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger |
 | LIVE PROVEN ON ARC TESTNET / production remains opt-in | External verification procurement — value-of-information gate, dedicated Circle buyer, live AuraGate x402 challenge, one guarded 0.002 USDC proof; production stays NOT_CONFIGURED unless its own server credentials are supplied (no fake spend, no fallback keys) |
 | LIVE-PROVIDER PROVEN + PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness plus the live Arc Testnet proof below) |
 | KNOWN UNSUPPORTED | Cross-campaign onchain fund transfer; autonomous settlement of hybrid base/milestone obligations (recorded truthfully as payable without an onchain path) |
@@ -107,6 +107,7 @@ Full runbook and evidence scope: [`docs/verification-procurement.md`](docs/verif
 | Privacy | [thesma.vercel.app/privacy](https://thesma.vercel.app/privacy) |
 | Current production state | [`docs/current-state.md`](docs/current-state.md) |
 | Integrated acceptance (no-spend) | [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) |
+| Outcome Portfolio Operator | [`docs/outcome-portfolio-operator.md`](docs/outcome-portfolio-operator.md) |
 | Judge demo guide | [`docs/judge-demo.md`](docs/judge-demo.md) |
 | Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
 | Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
@@ -173,6 +174,14 @@ Funding safety:
 - Start signing disabled when insufficient
 - balance read failure != zero balance
 - balance check creates no transaction/signature/approval/new funding intent
+
+### Outcome Portfolio Operator
+
+Thesma does not merely run campaigns. The organization CFO now compares every eligible campaign destination using settled payouts, verified outcomes, reliability/retention evidence, hybrid obligations and production verification expense, then answers **where should the next dollar go?**
+
+The portfolio surface shows the objective, verified CAC ceiling, remaining target, allocatable capital, required reserve and a deterministic `INCREASE` / `HOLD` / `REDUCE` / `PAUSE` / `REVIEW` decision for each member. Recommendations are prospective only: `INCREASE 50 USDC` means the next 50 USDC of still-uncommitted capital, not a transfer from another campaign.
+
+`chainMovement` remains `UNAVAILABLE` and `executionStatus` remains `RECOMMENDED` because the current vault has no cross-campaign transfer primitive. The decision is recorded in the existing ledger with a portfolio snapshot hash, policy constraints, reasons and evidence confidence. Arc-Testnet x402 proof spend is reported separately and excluded from production CAC.
 
 No-spend development:
 
@@ -508,7 +517,7 @@ No secrets are committed. Server secrets are never exposed via `NEXT_PUBLIC` var
 ```bash
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest run — 836 passing, 2 env-gated (Anvil) skipped
+npm test             # vitest run — 900 passing, 2 env-gated (Anvil) skipped
 npm run build        # production build
 npm run arc:doctor   # read-only chain check (never signs/broadcasts)
 npm run mainnet:preflight  # read-only production readiness gate (never signs/broadcasts; exit 1 when BLOCKED)
@@ -516,7 +525,7 @@ npm run secret:hygiene    # tracked-secret hygiene (filenames + key material; fi
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **836 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **900 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Release gate (CI)
 

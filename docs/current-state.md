@@ -14,9 +14,24 @@ Thesma is live as an autonomous growth-finance operator and multi-sided outcome 
 - Hybrid creator deal economics.
 - Creator reliability, outcome quality and retention scoring.
 - Campaign CFO and prospective capital allocation.
+- Outcome Portfolio Operator: deterministic next-dollar recommendations above campaigns, with reserve, concentration, evidence and all-in verified CAC controls.
 - Verification procurement logic that fails closed when a provider is unavailable.
 - Autonomy ladder and unified decision ledger.
 - Public markets, creator profiles and zero-login mainnet proof.
+
+### Outcome Portfolio Operator
+
+The organization CFO now exposes an Outcome Portfolio section. It composes existing campaign policies, vault accounting, settled payouts, verified outcomes, reliability/retention evidence, hybrid obligations and production verification procurement expense into one prospective capital plan.
+
+The operator answers:
+
+- objective and remaining verified outcomes
+- budget and maximum verified CAC
+- allocatable capital and required reserve
+- each eligible campaign's `INCREASE`, `HOLD`, `REDUCE`, `PAUSE` or `REVIEW` recommendation
+- recommended next allocation, reasons and evidence confidence
+
+All recommendations are deterministic and ledgered. `chainMovement` remains `UNAVAILABLE` and `executionStatus` remains `RECOMMENDED`: the current vault cannot physically move capital between campaigns. The full model and constraints are in [`docs/outcome-portfolio-operator.md`](outcome-portfolio-operator.md).
 
 ### Northstar production truth
 
@@ -64,7 +79,7 @@ Canonical Arc USDC:
 
 ### Release gate
 
-- 836 tests passing
+- 900 tests passing
 - 2 intentional Anvil/env-gated skips
 - GitHub Actions: 6 required repository checks
 - critical/high npm audit findings: 0
@@ -75,7 +90,7 @@ Canonical Arc USDC:
 
 ## Current development rule
 
-No additional mainnet spending is required for product proof.
+No additional mainnet spending is required for product proof. The Outcome Portfolio Operator slice made zero production DB writes, mainnet transactions or real-money purchases.
 
 Use:
 - Northstar for organization → creator → invitation → funding-preparation UX

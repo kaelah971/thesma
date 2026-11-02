@@ -25,6 +25,47 @@ interface CfoCampaign {
   bountyExecution: string;
 }
 
+interface PortfolioMember {
+  memberId: string;
+  memberType: string;
+  label: string;
+  verifiedOutcomeCount: number;
+  allInVerifiedAcquisitionCostMicro: string | null;
+  reliability: string;
+  sampleConfidence: string;
+  availableCapacityMicro: string;
+  recommendation: string;
+  recommendedNextAllocationMicro: string;
+  humanReadableReasons: string[];
+  retainedOutcomeCount: number | null;
+  retentionDataAvailable: boolean;
+  verificationSpendMicro: string;
+  verificationSpendExcludedMicro: string;
+}
+
+interface PortfolioPlan {
+  objective: {
+    targetOutcomeType: string | null;
+    targetOutcomeCount: number | null;
+    maxVerifiedCacMicro: string | null;
+    totalBudgetMicro: string;
+    reserveFloorBps: number;
+  };
+  members: PortfolioMember[];
+  remainingTargetOutcomeCount: number | null;
+  availableCapitalMicro: string;
+  allocatableCapitalMicro: string;
+  recommendedCapitalMicro: string;
+  reserveMicro: string;
+  unallocatedMicro: string;
+  verificationSpendMicro: string;
+  arcTestnetVerificationSpendExcludedMicro: string;
+  retentionDataAvailable: boolean;
+  chainMovement: string;
+  executionStatus: string;
+  accounting: { identityBalanced: boolean };
+}
+
 interface CfoPlan {
   generatedAt: string;
   totals: {
@@ -38,6 +79,7 @@ interface CfoPlan {
   chainMovement: string;
   campaigns: CfoCampaign[];
   escalations: { campaignId: string; reason: string }[];
+  portfolio?: PortfolioPlan;
 }
 
 /** Organization CFO: capital truth, plan, and per-campaign why. Recommendations only — nothing moves. */
@@ -130,6 +172,105 @@ export function CfoPanel({ workspaceId, isOwner }: { workspaceId: string; isOwne
             <button type="button" className="btn btn-primary btn-sm" disabled={running} onClick={evaluate} style={{ marginTop: 8 }}>
               {running ? "Evaluating…" : "Run CFO evaluation"}
             </button>
+          )}
+          {plan.portfolio && (
+            <section className={styles.portfolio} aria-labelledby="outcome-portfolio-title">
+              <div className={styles.portfolioHead}>
+                <div>
+                  <span className={styles.ctxLabel}>OUTCOME PORTFOLIO</span>
+                  <h3 id="outcome-portfolio-title">Where should the next dollar go?</h3>
+                </div>
+                <span className={styles.portfolioStatus}>{plan.portfolio.executionStatus}</span>
+              </div>
+              <p className={styles.portfolioIntro}>
+                Campaigns are implementation details. This deterministic operator compares verified economics and recommends the next
+                prospective allocation without moving existing funds.
+              </p>
+              <dl className={styles.portfolioFacts}>
+                <div>
+                  <dt>Objective</dt>
+                  <dd>{plan.portfolio.objective.targetOutcomeType ?? "Existing verified outcomes"}</dd>
+                </div>
+                <div>
+                  <dt>Target</dt>
+                  <dd>{plan.portfolio.objective.targetOutcomeCount ?? "—"} outcomes</dd>
+                </div>
+                <div>
+                  <dt>Budget</dt>
+                  <dd>{formatUsdc(plan.portfolio.objective.totalBudgetMicro)} USDC</dd>
+                </div>
+                <div>
+                  <dt>Verified CAC ceiling</dt>
+                  <dd>{plan.portfolio.objective.maxVerifiedCacMicro === null ? "—" : `${formatUsdc(plan.portfolio.objective.maxVerifiedCacMicro)} USDC`}</dd>
+                </div>
+                <div>
+                  <dt>Remaining target</dt>
+                  <dd>{plan.portfolio.remainingTargetOutcomeCount ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>Allocatable now</dt>
+                  <dd>{formatUsdc(plan.portfolio.allocatableCapitalMicro)} USDC</dd>
+                </div>
+                <div>
+                  <dt>Required reserve</dt>
+                  <dd>{formatUsdc(plan.portfolio.reserveMicro)} USDC</dd>
+                </div>
+                <div>
+                  <dt>Next-dollar plan</dt>
+                  <dd>{formatUsdc(plan.portfolio.recommendedCapitalMicro)} USDC</dd>
+                </div>
+              </dl>
+              <p className={styles.portfolioNext}>
+                <strong>NEXT {formatUsdc(plan.portfolio.recommendedCapitalMicro)} USDC</strong>{" "}
+                {plan.portfolio.members.filter((member) => BigInt(member.recommendedNextAllocationMicro) > 0n).map((member) => `${formatUsdc(member.recommendedNextAllocationMicro)} → ${member.label}`).join(" · ") || "No member receives new capital until evidence or capacity changes."}
+              </p>
+              <div className={styles.portfolioMembers}>
+                {plan.portfolio.members.length === 0 && <p className={styles.muted}>No eligible portfolio members yet.</p>}
+                {plan.portfolio.members.map((member) => (
+                  <article className={styles.portfolioMember} key={member.memberId}>
+                    <div className={styles.portfolioMemberHead}>
+                      <div>
+                        <strong>{member.label}</strong>
+                        <span>{member.memberType} · {member.verifiedOutcomeCount} verified outcomes</span>
+                      </div>
+                      <span className={styles.portfolioRecommendation} data-recommendation={member.recommendation}>
+                        {member.recommendation}
+                      </span>
+                    </div>
+                    <dl className={styles.portfolioMetrics}>
+                      <div>
+                        <dt>All-in verified CAC</dt>
+                        <dd>{member.allInVerifiedAcquisitionCostMicro === null ? "—" : `${formatUsdc(member.allInVerifiedAcquisitionCostMicro)} USDC`}</dd>
+                      </div>
+                      <div>
+                        <dt>Reliability</dt>
+                        <dd>{member.reliability.replaceAll("_", " ")}</dd>
+                      </div>
+                      <div>
+                        <dt>Evidence</dt>
+                        <dd>{member.sampleConfidence}</dd>
+                      </div>
+                      <div>
+                        <dt>Capacity</dt>
+                        <dd>{formatUsdc(member.availableCapacityMicro)} USDC</dd>
+                      </div>
+                    </dl>
+                    <p className={styles.portfolioReason}>{member.humanReadableReasons[0] ?? "No decision explanation available."}</p>
+                    <div className={styles.portfolioMeta}>
+                      <span>Next allocation · {formatUsdc(member.recommendedNextAllocationMicro)} USDC</span>
+                      <span>{member.retentionDataAvailable ? `${member.retainedOutcomeCount ?? 0} retained` : "RETENTION DATA UNAVAILABLE"}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <p className={styles.portfolioFoot}>
+                {formatUsdc(plan.portfolio.reserveMicro)} USDC retained as operating reserve · {formatUsdc(plan.portfolio.unallocatedMicro)} USDC intentionally unallocated ·
+                verification expense included {formatUsdc(plan.portfolio.verificationSpendMicro)} USDC · Arc-Testnet proof excluded {formatUsdc(plan.portfolio.arcTestnetVerificationSpendExcludedMicro)} USDC.
+              </p>
+              <p className={styles.portfolioBoundary}>
+                Chain movement: {plan.portfolio.chainMovement} · execution: {plan.portfolio.executionStatus} · accounting identity {plan.portfolio.accounting.identityBalanced ? "balanced" : "review required"}.
+              </p>
+            </section>
           )}
         </>
       )}

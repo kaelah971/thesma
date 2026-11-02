@@ -272,6 +272,21 @@ export function normalizeAuditRow(row: LedgerAuditRow): DecisionEnvelope | null 
         reasons: reasons.length ? reasons : [`Capital plan is prospective — no chain movement primitive exists.`],
         policyRefs: ["Operator policy", "Growth policy"],
       });
+    case "cfo.portfolio.plan.generated":
+      return base(row, {
+        agentType: "CAMPAIGN_CFO", decisionType: "OUTCOME_PORTFOLIO", decision: "PLANNED",
+        authorityState: "ADVISORY", executionState: "PROPOSED",
+        reasons: reasons.length ? reasons : [`Outcome portfolio recommendation is prospective — no chain movement primitive exists.`],
+        policyRefs: ["Outcome portfolio policy", "Operator policy"],
+      });
+    case "cfo.portfolio.member.decision":
+      return base(row, {
+        agentType: "CAMPAIGN_CFO", decisionType: "OUTCOME_PORTFOLIO",
+        decision: String(str(m, "recommendation") ?? "REVIEW"),
+        authorityState: "ADVISORY", executionState: "PROPOSED",
+        reasons: reasons.length ? reasons : [`Portfolio member recommendation is advisory and does not move capital.`],
+        policyRefs: ["Outcome portfolio policy", "Operator policy"],
+      });
     case "cfo.campaign.decision":
       return base(row, {
         agentType: "CAMPAIGN_CFO", decisionType: "SPEND_DECISION",
