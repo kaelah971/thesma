@@ -6,6 +6,7 @@ import styles from "@/components/app/app.module.css";
 
 const ITEMS = [
   { href: "/build", label: "Overview", icon: "M3 3h6v6H3zM11 3h6v4h-6zM11 9h6v8h-6zM3 11h6v6H3z" },
+  { href: "/build/programs", label: "Growth Programs", icon: "M3 5h14M5 3v4M15 3v4M4 9h4M12 9h4M4 13h4M12 13h4M4 17h12" },
   { href: "/build/integrations", label: "Integrations", icon: "M7 13l-2 2a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0M13 7l2-2a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0M7 13l6-6" },
   { href: "/build/outcomes", label: "Outcome definitions", icon: "M4 4h12v12H4zM7 8h6M7 11h6M7 14h3" },
   { href: "/build/events", label: "Events", icon: "M3 10h3l2-5 4 10 2-5h3" },

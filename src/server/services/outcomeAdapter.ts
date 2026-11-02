@@ -319,19 +319,24 @@ export function validateOccurredAt(value: unknown, now = new Date()): Date {
 export function requestFingerprint(input: {
   definitionId: string;
   schemaVersion: number;
+  growthProgramId?: string | null;
   externalEventId: string;
   externalSubjectId: string;
   occurredAt: Date;
   evidence: unknown;
 }): string {
-  return sha256Hex(stableJson({
+  const payload: Record<string, unknown> = {
     definitionId: input.definitionId,
     schemaVersion: input.schemaVersion,
     externalEventId: input.externalEventId,
     externalSubjectId: input.externalSubjectId,
     occurredAt: input.occurredAt.toISOString(),
     evidence: input.evidence,
-  }));
+  };
+  // Keep the legacy unbound fingerprint byte-for-byte compatible. Program
+  // association is part of the fingerprint only for newly bound events.
+  if (input.growthProgramId) payload.growthProgramId = input.growthProgramId;
+  return sha256Hex(stableJson(payload));
 }
 
 export function requiredEvidenceFields(schema: ExternalEvidenceSchema): string[] {

@@ -3,6 +3,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb, isDbConfigured, type Db } from "../db/client";
 import {
   auditEvents,
+  developerGrowthPrograms,
   developerIntegrations,
   externalOutcomeDefinitions,
   externalOutcomeEvents,
@@ -70,6 +71,7 @@ export interface ExternalOutcomeEventRow {
   workspaceId: string;
   integrationId: string;
   definitionId: string;
+  growthProgramId: string | null;
   externalEventId: string;
   externalSubjectId: string;
   occurredAt: Date;
@@ -175,6 +177,7 @@ export interface SafeOutcomeEvent {
   receiptId: string;
   definition: Pick<SafeDefinition, "id" | "slug" | "name" | "outcomeType" | "unitValueMicroUsdc" | "asset">;
   integrationId: string;
+  growthProgramId: string | null;
   externalEventId: string;
   externalSubjectId: string;
   submittedAt: string;
@@ -197,6 +200,7 @@ export interface SafeOutcomeReceipt {
   eventId: string;
   outcome: SafeOutcomeEvent["definition"];
   submittedByIntegrationId: string;
+  growthProgramId: string | null;
   externalEventId: string;
   externalSubjectId: string;
   schemaVersion: number;
@@ -234,6 +238,13 @@ export interface OutcomeApiDependencies {
   repository: OutcomeApiRepository;
   audit: AuditSink;
   getMode?: (workspaceId: string) => Promise<OrganizationOperatorMode>;
+  getGrowthProgramBinding?: (workspaceId: string, growthProgramId: string) => Promise<{
+    id: string;
+    workspaceId: string;
+    integrationId: string | null;
+    outcomeDefinitionId: string;
+    operatorMode: "SHADOW" | "REVIEW" | "AUTONOMOUS";
+  } | null>;
   now?: () => Date;
 }
 
@@ -318,6 +329,7 @@ function toEvent(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefini
       asset: definition.asset,
     },
     integrationId: row.integrationId,
+    growthProgramId: row.growthProgramId,
     externalEventId: row.externalEventId,
     externalSubjectId: row.externalSubjectId,
     submittedAt: row.createdAt.toISOString(),
@@ -342,6 +354,7 @@ function toReceipt(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefi
     eventId: row.id,
     outcome: toEvent(row, definition).definition,
     submittedByIntegrationId: row.integrationId,
+    growthProgramId: row.growthProgramId,
     externalEventId: row.externalEventId,
     externalSubjectId: row.externalSubjectId,
     schemaVersion: row.schemaVersion,
@@ -496,6 +509,12 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       return (await deps.repository.listDefinitions(workspaceId)).map(toDefinition);
     },
 
+    async getDefinitionById(params: { workspaceId: string; id: string }): Promise<SafeDefinition> {
+      const row = await deps.repository.getDefinitionById(params.workspaceId, params.id);
+      if (!row) fail(404, "OUTCOME_NOT_FOUND", "Outcome definition not found.");
+      return toDefinition(row);
+    },
+
     async authenticate(request: Request): Promise<OutcomeApiPrincipal> {
       const header = request.headers.get("authorization") ?? "";
       const match = /^Bearer\s+([^\s]+)$/i.exec(header);
@@ -517,10 +536,13 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       enforceSubmissionRateLimit(params.principal.integration.id, now());
       if (!params.input || typeof params.input !== "object" || Array.isArray(params.input)) fail(400, "INVALID_REQUEST", "Request body must be an object.");
       const body = params.input as Record<string, unknown>;
-      const unsupported = Object.keys(body).filter((key) => !["externalEventId", "externalSubjectId", "occurredAt", "evidence", "schemaVersion"].includes(key));
+      const unsupported = Object.keys(body).filter((key) => !["externalEventId", "externalSubjectId", "occurredAt", "evidence", "schemaVersion", "growthProgramId"].includes(key));
       if (unsupported.length > 0) fail(400, "INVALID_REQUEST", `Unsupported request fields: ${unsupported.join(", ")}.`);
       const externalEventId = validateExternalIdentity(body.externalEventId, "externalEventId");
       const externalSubjectId = validateExternalIdentity(body.externalSubjectId, "externalSubjectId");
+      const growthProgramId = body.growthProgramId === undefined || body.growthProgramId === null
+        ? null
+        : validateExternalIdentity(body.growthProgramId, "growthProgramId");
       const schemaVersion = body.schemaVersion === undefined ? undefined : body.schemaVersion;
       if (schemaVersion !== undefined && (typeof schemaVersion !== "number" || !Number.isSafeInteger(schemaVersion) || schemaVersion < 1)) {
         fail(400, "SCHEMA_VERSION_MISMATCH", "schemaVersion must be a positive integer.");
@@ -538,9 +560,22 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         evidence: body.evidence,
         occurredAt,
       });
+      const programBinding = growthProgramId && deps.getGrowthProgramBinding
+        ? await deps.getGrowthProgramBinding(params.principal.workspaceId, growthProgramId)
+        : null;
+      if (growthProgramId && deps.getGrowthProgramBinding && !programBinding) {
+        fail(404, "PROGRAM_NOT_FOUND", "The Growth Program is not available in this project.");
+      }
+      if (programBinding && programBinding.outcomeDefinitionId !== definition.id) {
+        fail(409, "PROGRAM_OUTCOME_MISMATCH", "The Growth Program is bound to a different outcome definition.");
+      }
+      if (programBinding?.integrationId && programBinding.integrationId !== params.principal.integration.id) {
+        fail(409, "PROGRAM_INTEGRATION_MISMATCH", "This API key is not bound to the selected Growth Program.");
+      }
       const fingerprint = requestFingerprint({
         definitionId: definition.id,
         schemaVersion: definition.evidenceSchemaVersion,
+        growthProgramId,
         externalEventId,
         externalSubjectId,
         occurredAt,
@@ -555,7 +590,12 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       const replay = await deps.repository.getEventByExternalId(params.principal.workspaceId, externalEventId);
       if (replay) fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this project.");
 
-      const mode = await getMode(params.principal.workspaceId);
+      const organizationMode = await getMode(params.principal.workspaceId);
+      const mode: OrganizationOperatorMode = !programBinding
+        ? organizationMode
+        : programBinding.operatorMode === "AUTONOMOUS" && organizationMode === "AUTONOMOUS"
+          ? "AUTONOMOUS"
+          : "SHADOW";
       const at = now();
       const verified = decision.verificationState === "VERIFIED";
       const held = verified && definition.holdSeconds > 0;
@@ -587,6 +627,7 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         workspaceId: params.principal.workspaceId,
         integrationId: params.principal.integration.id,
         definitionId: definition.id,
+        growthProgramId,
         externalEventId,
         externalSubjectId,
         occurredAt,
@@ -638,6 +679,7 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         metadata: {
           integrationId: row.integrationId,
           definitionId: row.definitionId,
+          growthProgramId: row.growthProgramId,
           externalEventIdHash: sha256Hex(row.externalEventId),
           externalSubjectIdHash: sha256Hex(row.externalSubjectId),
           schemaVersion: row.schemaVersion,
@@ -844,6 +886,7 @@ function mapEvent(row: typeof externalOutcomeEvents.$inferSelect): ExternalOutco
     workspaceId: row.workspaceId,
     integrationId: row.integrationId,
     definitionId: row.definitionId,
+    growthProgramId: row.growthProgramId,
     externalEventId: row.externalEventId,
     externalSubjectId: row.externalSubjectId,
     occurredAt: row.occurredAt,
@@ -915,6 +958,19 @@ export function createProductionOutcomeApiService() {
     repository: createDrizzleOutcomeApiRepository(db),
     audit: (input) => recordAuditEvent(db, input),
     getMode: getOrganizationOperatorMode,
+    getGrowthProgramBinding: async (workspaceId, growthProgramId) => {
+      const [row] = await db.select({
+        id: developerGrowthPrograms.id,
+        workspaceId: developerGrowthPrograms.workspaceId,
+        integrationId: developerGrowthPrograms.integrationId,
+        outcomeDefinitionId: developerGrowthPrograms.outcomeDefinitionId,
+        operatorMode: developerGrowthPrograms.operatorMode,
+      }).from(developerGrowthPrograms).where(and(eq(developerGrowthPrograms.workspaceId, workspaceId), eq(developerGrowthPrograms.id, growthProgramId))).limit(1);
+      return row ? {
+        ...row,
+        operatorMode: row.operatorMode as "SHADOW" | "REVIEW" | "AUTONOMOUS",
+      } : null;
+    },
   });
 }
 

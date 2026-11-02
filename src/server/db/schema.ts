@@ -887,6 +887,54 @@ export const externalOutcomeDefinitions = pgTable(
   ],
 );
 
+export const developerGrowthPrograms = pgTable(
+  "developer_growth_programs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    policyVersionId: text("policy_version_id")
+      .notNull()
+      .references(() => campaignPolicyVersions.id, { onDelete: "cascade" }),
+    integrationId: text("integration_id").references(() => developerIntegrations.id, { onDelete: "set null" }),
+    outcomeDefinitionId: text("outcome_definition_id")
+      .notNull()
+      .references(() => externalOutcomeDefinitions.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    objectiveOutcomeType: text("objective_outcome_type").notNull(),
+    maxVerifiedCacMicroUsdc: bigint("max_verified_cac_micro_usdc", { mode: "bigint" }).notNull(),
+    participantTypes: text("participant_types").array().notNull().default([]),
+    rewardStructure: text("reward_structure").notNull().default("PERFORMANCE_ONLY"),
+    operatorMode: text("operator_mode").notNull().default("SHADOW"),
+    status: text("status").notNull().default("DRAFT"),
+    participationStatus: text("participation_status").notNull().default("CLOSED"),
+    attributionStatus: text("attribution_status").notNull().default("NOT_CONFIGURED"),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("developer_growth_programs_workspace_slug_unique").on(t.workspaceId, t.slug),
+    index("developer_growth_programs_workspace_idx").on(t.workspaceId),
+    index("developer_growth_programs_campaign_idx").on(t.campaignId),
+    index("developer_growth_programs_definition_idx").on(t.outcomeDefinitionId),
+    check("developer_growth_programs_outcome_type_check", sql`${t.objectiveOutcomeType} IN ('PURCHASE','ACTIVATED_USER','QUALIFIED_REFERRAL','SUBSCRIPTION_STARTED')`),
+    check("developer_growth_programs_cac_check", sql`${t.maxVerifiedCacMicroUsdc} > 0`),
+    check("developer_growth_programs_reward_structure_check", sql`${t.rewardStructure} IN ('PERFORMANCE_ONLY','BASE_PLUS_PERFORMANCE','MILESTONE_PLUS_PERFORMANCE','HYBRID_FULL')`),
+    check("developer_growth_programs_operator_mode_check", sql`${t.operatorMode} IN ('SHADOW','REVIEW','AUTONOMOUS')`),
+    check("developer_growth_programs_status_check", sql`${t.status} IN ('DRAFT','READY','LIVE','PAUSED','COMPLETED')`),
+    check("developer_growth_programs_participation_check", sql`${t.participationStatus} IN ('CLOSED','INVITE_ONLY','OPEN')`),
+    check("developer_growth_programs_attribution_check", sql`${t.attributionStatus} IN ('NOT_CONFIGURED','CONFIGURED')`),
+  ],
+);
+
 export const externalOutcomeEvents = pgTable(
   "external_outcome_events",
   {
@@ -901,6 +949,7 @@ export const externalOutcomeEvents = pgTable(
     definitionId: text("definition_id")
       .notNull()
       .references(() => externalOutcomeDefinitions.id, { onDelete: "restrict" }),
+    growthProgramId: text("growth_program_id").references(() => developerGrowthPrograms.id, { onDelete: "set null" }),
     externalEventId: text("external_event_id").notNull(),
     externalSubjectId: text("external_subject_id").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
@@ -930,6 +979,7 @@ export const externalOutcomeEvents = pgTable(
     index("external_outcome_events_workspace_idx").on(t.workspaceId),
     index("external_outcome_events_integration_idx").on(t.integrationId),
     index("external_outcome_events_definition_idx").on(t.definitionId),
+    index("external_outcome_events_program_idx").on(t.growthProgramId),
     check("external_outcome_events_verification_state_check", sql`${t.verificationState} IN ('SUBMITTED','REVIEW','VERIFIED','REFUSED')`),
     check("external_outcome_events_hold_state_check", sql`${t.holdState} IN ('NOT_HELD','HELD','RELEASED')`),
     check("external_outcome_events_settlement_state_check", sql`${t.settlementState} IN ('NOT_ELIGIBLE','HELD','ELIGIBLE_NOT_REQUESTED','SHADOW_BLOCKED','SETTLED')`),
@@ -1185,6 +1235,7 @@ export type DbReferralEvent = typeof referralEvents.$inferSelect;
 export type DbInvite = typeof privateInvites.$inferSelect;
 export type DbCampaign = typeof campaigns.$inferSelect;
 export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
+export type DbGrowthProgram = typeof developerGrowthPrograms.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;
 export type DbVerificationProcurement = typeof verificationProcurements.$inferSelect;
 export type DbProcurementPolicy = typeof verificationProcurementPolicies.$inferSelect;

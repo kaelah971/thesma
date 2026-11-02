@@ -16,7 +16,7 @@ Thesma is live as an autonomous growth-finance operator and multi-sided outcome 
 - Campaign CFO and prospective capital allocation.
 - Outcome Portfolio Operator: deterministic next-dollar recommendations above campaigns, with reserve, concentration, evidence and all-in verified CAC controls.
 - Shadow Operator Mode: owner-controlled organization shadow posture for portfolio, verification and settlement recommendations, immutable input/policy snapshots, human agreement/override telemetry, and a central no-execution boundary.
-- Build with Thesma Outcome API: project-scoped developer integrations and one-time API keys, versioned bounded evidence schemas, idempotent/replay-safe event intake, deterministic verification decisions, hold/settlement state and safe outcome receipts.
+- Build with Thesma embedded growth foundation: project-scoped Growth Programs compose existing campaign/policy drafts with bounded outcome definitions, exact bigint economics, supported creator/referral participant classes, product integrations and default Shadow posture; the existing Outcome API remains the event/evidence/receipt plumbing.
 - Verification procurement logic that fails closed when a provider is unavailable.
 - Autonomy ladder and unified decision ledger.
 - Public markets, creator profiles and zero-login mainnet proof.
@@ -37,9 +37,9 @@ All recommendations are deterministic and ledgered. `chainMovement` remains `UNA
 
 ### Build with Thesma Outcome API
 
-The developer surface at `/build` now issues project-scoped API keys and explains the external outcome path. V1 supports `PURCHASE`, `ACTIVATED_USER`, `QUALIFIED_REFERRAL` and `SUBSCRIPTION_STARTED` with deterministic JSON schemas. Events are bound to the project, integration, definition, subject and external event id; duplicate economic outcomes are rejected by idempotency and replay controls.
+The developer surface at `/build` now starts with **BUILD GROWTH INTO YOUR PRODUCT** and `/build/programs`. Slice 1 creates project-scoped Growth Programs from a business objective, composes an underlying campaign/policy draft with `PURCHASE`, `ACTIVATED_USER`, `QUALIFIED_REFERRAL` or `SUBSCRIPTION_STARTED`, and binds optional integrations without funding. Programs expose exact bigint budget/CAC/reward values, bounded `CREATORS` / `REFERRAL_PARTNERS`, `SHADOW` default, and honest `NOT_CONFIGURED` attribution/readiness states. Events may remain legacy-unbound or carry a validated `growthProgramId`.
 
-The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. In `SHADOW` mode, events can be evaluated but execution and settlement are blocked; ambiguous evidence can record `WOULD_BUY` without an x402 purchase. The built-in Acme example is a sandbox/quickstart example, not external traction.
+The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. Program-bound Shadow events can be evaluated but execution and settlement are blocked; ambiguous evidence can record `WOULD_BUY` without an x402 purchase. Participant enrollment, attribution primitives, SDK/components and live settlement remain follow-on slices. The built-in ProofPilot example is a sandbox/quickstart example, not external traction.
 
 See [`build-with-thesma.md`](build-with-thesma.md) for request examples, error codes, limits and known limitations.
 

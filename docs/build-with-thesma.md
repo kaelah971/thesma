@@ -1,8 +1,20 @@
 # Build with Thesma
 
-Build with Thesma is the external outcome boundary: a product defines a bounded business outcome, submits evidence, and reads the verification decision and receipt. It uses Thesma's existing audit ledger, deterministic verification vocabulary, hold semantics, value-of-information kernel and settlement boundary. An API submission never means that money was paid.
+**Build with Thesma means embedded growth infrastructure.** A product team starts with a growth objective and uses Thesma underneath its own application for participant programs, attribution, outcome evidence, deterministic verification, holds, settlement eligibility, receipts and operator recommendations.
 
-The built-in example is a **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**, not a real customer integration.
+Direct Thesma runs verified-outcome growth programs in Thesma's application. Build with Thesma brings the same infrastructure into another product. The `/build` surface therefore starts with a **Growth Program**, while API keys, bounded definitions, events and receipts remain supporting infrastructure.
+
+Slice 1 ships the project-scoped Growth Program foundation at `/build/programs` and `/build/programs/:id`. It composes an existing Thesma campaign and policy draft with a bounded external outcome definition. It does not require funding, a wallet or an integration before configuration. `SHADOW` is the default and blocks every financial or external execution side effect.
+
+The built-in ProofPilot example is a **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**, not a real customer integration.
+
+## Growth Program foundation
+
+A Growth Program configures the objective, target, exact micro-USDC budget and CAC/reward ceilings, supported participant classes (`CREATORS` and `REFERRAL_PARTNERS`), outcome definition, product connection and operator posture. Attribution is honestly `NOT_CONFIGURED` until participant and attribution slices wire the existing referral primitives. A program can be `PROGRAM CONFIGURED` while remaining `NOT FUNDED`; creating it never creates a company wallet or moves money.
+
+The existing Outcome API remains the plumbing under the program. Legacy events may remain unbound. New event submissions may include `growthProgramId` after the event's definition and integration are bound to the same project and program.
+
+See [`embedded-growth-programs.md`](embedded-growth-programs.md) for the product model and slice boundaries.
 
 ## 1. Authentication
 

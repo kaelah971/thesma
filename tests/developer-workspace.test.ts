@@ -26,7 +26,7 @@ describe("developer project workspace", () => {
 
   it("uses project-oriented navigation and excludes organization operating surfaces", () => {
     const navigation = src("src/components/build/DeveloperNav.tsx");
-    for (const label of ["Overview", "Integrations", "Outcome definitions", "Events", "Receipts", "Usage / telemetry", "Docs / quickstart", "Settings"]) {
+    for (const label of ["Overview", "Growth Programs", "Integrations", "Outcome definitions", "Events", "Receipts", "Usage / telemetry", "Docs / quickstart", "Settings"]) {
       expect(navigation).toContain(`label: "${label}"`);
     }
     expect(buildSurface).toContain('wsLabel}>Project');
@@ -41,6 +41,14 @@ describe("developer project workspace", () => {
     expect(form).toContain('router.replace("/build")');
     expect(form).not.toContain("/onboarding/organization");
     expect(src("src/app/build/page.tsx")).toContain("Create a developer project");
+  });
+
+  it("exposes the Growth Program foundation without removing the existing API tools", () => {
+    expect(src("src/app/build/programs/page.tsx")).toContain("Create a Growth Program");
+    expect(src("src/app/build/programs/[id]/page.tsx")).toContain("NOT CONFIGURED");
+    expect(src("src/server/services/growthPrograms.ts")).toContain('operatorMode ?? "SHADOW"');
+    expect(src("src/app/api/v1/programs/route.ts")).toContain("requireOwner");
+    expect(src("src/server/services/buildWithThesma.ts")).toContain("growthProgramId");
   });
 
   it("keeps developer API tools bounded to the existing project-scoped service", () => {

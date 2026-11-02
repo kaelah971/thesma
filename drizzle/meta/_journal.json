@@ -134,6 +134,13 @@
       "when": 1793614614703,
       "tag": "0018_stormy_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793626513003,
+      "tag": "0019_safe_stranger",
+      "breakpoints": true
     }
   ]
 }
