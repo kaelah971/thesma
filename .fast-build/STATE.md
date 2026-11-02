@@ -63,22 +63,24 @@
 ## Slice 4 result
 - Program-bound Outcome API events now expose one deterministic evaluation combining attribution, existing verification/VOI state, frozen participant reward terms, bigint program economics, holds, settlement eligibility, operator recommendation, execution status and receipt context.
 - Production evaluation maps each Growth Program to its existing campaign id/Campaign CFO and settlement authority; performance-only is supported, hybrid legs are explicit `UNSUPPORTED_SETTLEMENT_PATH`, and Outcome Portfolio remains campaign-only.
-- Shadow records `WOULD_SETTLE`/review recommendations through the existing decision ledger; payout, procurement, Circle, x402 and chain execution remain blocked. No migration was added or applied.
+- Shadow records `WOULD_SETTLE`/review recommendations through the existing decision ledger; payout, procurement, Circle, x402 and chain execution remain blocked. Production schema was manually reconciled through 0018→0021 without product data or migration-journal writes.
 
 ## Verification
-- Production health read: `https://thesma.vercel.app/api/health` returned HTTP 200 with `checks.db: ok`.
-- Read-only production schema review: blocked because no production `DATABASE_URL` is available; no connection or SQL write was attempted.
+- Production health read: `https://thesma.vercel.app/api/health` returned HTTP 200 with `checks.db: ok`; the unknown ProofPilot program endpoint now returns HTTP 404 `PROGRAM_NOT_FOUND`.
+- Read-only production schema review: all 0018–0021 objects were initially missing with no conflicts; the minimum chain was rehearsed transactionally, rolled back cleanly, then applied exactly once.
 - External proof client safety guard: verified; it refuses to create records without explicit `THESMA_PROOF_CONFIRM` and `THESMA_API_KEY`.
 - Typecheck: pass. Lint: pass.
-- Full suite/build/browser not rerun because no application runtime code changed; Slice 4 checkpoint remains valid.
-- `git diff --check`: pending final checkpoint.
+- Typecheck, lint, production build, browser smoke, and tracked-secret hygiene pass.
+- Full suite: 965 passed, 2 skipped; the default 5-second run had one transient timeout, and the retry with `--testTimeout=10000` passed.
+- `git diff --check`: pass.
 
 ## Blockers / truth
-- Slice 5 is blocked: no production `DATABASE_URL`, Vercel/Neon access, authenticated ProofPilot session, or `ths_api_` key is available in this agent session.
-- Production health is reachable and reports `checks.db: ok`; the public ProofPilot program endpoint currently returns HTTP 500, so production schema/program state cannot be inferred safely.
-- Migrations 0019, 0020 and 0021 are reviewed locally but remain NOT APPLIED; the historical migration journal remains untrusted and unchanged.
+- Slice 5 is blocked only on authenticated ProofPilot product/API access and a usable `ths_api_` key; the production schema blocker is resolved.
+- Vercel CLI is authenticated and linked to project `thesma`; production env retrieval succeeded into an ignored temporary file, but its `DATABASE_URL` is not a usable URL and fails the repository TLS guard. No `THESMA_API_KEY` or Neon CLI/authentication is available.
+- Production health is reachable and reports `checks.db: ok`; the public ProofPilot program endpoint returns the expected `PROGRAM_NOT_FOUND` for the absent program.
+- Exact 0018→0021 SQL: 51 statements, transactional rehearsal PASS with rollback verified, then one production transaction committed. All six new tables are present with zero rows; the historical migration journal remains untrusted and unchanged.
 - No mainnet transactions, testnet transactions, x402 payments, Circle calls, real USDC or test USDC were made.
 - Unrelated worktree changes preserved: `next-env.d.ts`, `.circle-register-existing.mjs`, `AGENTS.md`, `contracts/verification/`, `docs/ui redesign/`, `docs/ui refresh/`.
 
 ## Next action
-- Unblock Slice 5 with temporary authenticated ProofPilot access and a reviewed production database connection; run the read-only schema checker, manually apply only missing migration objects in dependency order, then execute the explicit external-style Shadow pilot once.
+- Resume the existing explicit ProofPilot Shadow pilot after authenticated product/API access and a usable integration key are available through the secure process; do not paste secrets into chat.

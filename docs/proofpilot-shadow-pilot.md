@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-11-02
-- **BLOCKED — production authenticated access was not available in this session.**
+- **BLOCKED — the production schema is reconciled; authenticated ProofPilot product access is still unavailable in this session.**
 
 This document is the bounded proof artifact and runbook for the first real production software pilot. It does not claim that the pilot was executed.
 
@@ -16,9 +16,9 @@ This document is the bounded proof artifact and runbook for the first real produ
 
 ## Why execution stopped
 
-The agent session has no production `DATABASE_URL`, Vercel/Neon access, authenticated ProofPilot session, or `ths_api_` key. The production health endpoint is reachable and reports `checks.db: ok`, but authenticated developer records cannot be inspected or mutated safely without those credentials.
+Vercel CLI access was found for the linked `thesma` project. A repo-local production-safe connection was used without printing credentials. The shipped Outcome API and embedded Growth schema were manually reconciled through 0018→0021 in one transaction; the Drizzle migration journal remains untrusted and unchanged. No Neon CLI/authentication, `ths_api_` key, or authenticated ProofPilot product session exists. The production health endpoint is reachable and reports `checks.db: ok`.
 
-A read-only request to the public ProofPilot program endpoint currently returns HTTP 500, so it is not safe to infer that the production schema or program exists. No migration, account, program, participant, integration, attribution identity, event or receipt was created.
+The public ProofPilot program endpoint now returns the expected HTTP 404 `PROGRAM_NOT_FOUND` because no program exists. No account, program, participant, integration, attribution identity, event or receipt was created.
 
 ## Migration review
 
@@ -51,9 +51,11 @@ The pending migrations were reviewed manually:
 - Dependency: `0019` program table.
 - Assessment: **SAFE if the column is missing; no-op if already present.**
 
-A read-only checker is available at `scripts/review-production-growth-migrations.ts`. It requires a locally supplied production `DATABASE_URL`, prints only a sanitized host/database summary, performs no writes, and reports missing/present/conflicting tables, columns, indexes and constraints.
+A read-only checker is available at `scripts/review-production-growth-migrations.ts`. It requires a locally supplied production `DATABASE_URL`, prints only a sanitized host/database summary, performs no writes, and reports missing/present/conflicting tables, columns, indexes and constraints. It now also blocks manual application when prerequisite Outcome API tables are absent.
 
-**Production migration status: NOT APPLIED.** The historical Drizzle migration journal remains untrusted and was not modified.
+The authenticated production connection resolved to the safe host/database identifier `ep-bitter-fog-b4i36qj8.c-6.us-east-2.aws.neon.tech` / `thesma_mainnet`. The production preflight confirmed the existing `workspaces`, `campaigns`, `campaign_policy_versions` and `users` dependencies with compatible text IDs; all six new tables were absent and empty by definition. A 51-statement transactional rehearsal passed all schema assertions and rollback. The exact 0018→0021 SQL then committed in one transaction, and the post-apply checker reports zero missing, partial or conflicting objects. PostgreSQL-truncated constraint names were verified against their actual names.
+
+**Production migration status: APPLIED — 0018, 0019, 0020 and 0021 manually reconciled.** No rows were inserted, no existing rows were modified, and the historical Drizzle migration journal remains untrusted and unchanged.
 
 ## External-style proof client
 
@@ -98,4 +100,4 @@ This pilot proves the production Build with Thesma integration path. It is not c
 
 ## Next unblock
 
-Provide temporary authenticated ProofPilot access and a reviewed production database connection through the existing secure deployment process. Then run the read-only schema checker first, manually apply only missing migration objects in dependency order, and execute the proof client once.
+Provide authenticated ProofPilot product/API access through the existing secure process; do not paste secrets into chat. The schema blocker is resolved. Then resume the existing explicit Shadow pilot once.

@@ -1,5 +1,5 @@
 # Thesma — Current Production State
-_Last updated: November 1, 2026_
+_Last updated: November 2, 2026_
 
 ## Current checkpoint
 
@@ -42,6 +42,19 @@ The developer surface at `/build` now starts with **BUILD GROWTH INTO YOUR PRODU
 The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. Events may remain legacy-unbound or carry a validated `growthProgramId` and attribution identity. `DIRECT_ATTRIBUTION`, `UNATTRIBUTED`, `INVALID_ATTRIBUTION` and `AMBIGUOUS` are explicit event states. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. Slice 4 program-bound events now expose a deterministic evaluation of frozen reward eligibility, exposure, remaining budget, verified CAC, hold, settlement readiness, operator decision and execution boundary. The program maps to its existing campaign id; no parallel payout or settlement engine is introduced. Program-bound Shadow events can be evaluated but execution and settlement remain blocked; creator invitations are also blocked in Shadow and open enrollment remains a no-notification request. Slice 3 adds public safe config, `/g/:slug`, browser local attribution storage, a server-only SDK with explicit idempotency and receipt reads. Ambiguous evidence can record `WOULD_BUY` without an x402 purchase. The built-in ProofPilot example is a sandbox/quickstart example, not external traction.
 
 See [`build-with-thesma.md`](build-with-thesma.md) for request examples, error codes, limits and known limitations.
+
+### Production schema reconciliation
+
+On November 2, 2026, production was manually reconciled to the shipped Build with Thesma schema without using `npm run db:migrate` and without modifying the untrusted Drizzle migration journal.
+
+- Minimum proven chain: `0018_stormy_sprite.sql` → `0019_safe_stranger.sql` → `0020_salty_sunspot.sql` → `0021_abnormal_eternals.sql`.
+- `0018` depends only on the already-present `workspaces` table; `0019` additionally uses existing campaigns, campaign policy versions and users; `0020` and `0021` depend on the preceding Growth Program objects.
+- A 51-statement transactional rehearsal passed schema assertions and rollback. The same exact SQL then committed in one transaction; no drops, deletes, rewrites or seed rows were used.
+- Post-apply verification reports all Outcome API, Growth Program, participant and attribution tables, columns, indexes and constraints present. PostgreSQL-truncated constraint identifiers were verified against their actual names.
+- All six new tables contain zero rows. No ProofPilot, participant, attribution, event or receipt data was created.
+- `/api/health` remains HTTP 200 with `database: ok`; an unknown public Growth Program now returns HTTP 404 `PROGRAM_NOT_FOUND` instead of HTTP 500.
+
+This resolves the production schema blocker only. Slice 5 remains blocked on authenticated ProofPilot product/API access.
 
 ### Northstar production truth
 
