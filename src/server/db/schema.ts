@@ -828,8 +828,117 @@ export const outcomes = pgTable(
 );
 
 /**
+ * External outcome definitions and event receipts.
+ */
+/**
+ * Build with Thesma developer boundary. API keys are represented only by a
+ * display prefix and a SHA-256 digest; the plaintext key is returned once at
+ * integration creation and is never persisted.
+ */
+export const developerIntegrations = pgTable(
+  "developer_integrations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("ACTIVE"),
+    apiKeyId: text("api_key_id").notNull().unique(),
+    apiKeyPrefix: text("api_key_prefix").notNull(),
+    apiKeyDigest: text("api_key_digest").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("developer_integrations_workspace_idx").on(t.workspaceId),
+    check("developer_integrations_status_check", sql`${t.status} IN ('ACTIVE','REVOKED')`),
+  ],
+);
+
+export const externalOutcomeDefinitions = pgTable(
+  "external_outcome_definitions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    outcomeType: text("outcome_type").notNull(),
+    unitValueMicroUsdc: bigint("unit_value_micro_usdc", { mode: "bigint" }).notNull(),
+    asset: text("asset").notNull().default("USDC"),
+    evidenceSchemaVersion: integer("evidence_schema_version").notNull(),
+    evidenceSchemaJson: jsonb("evidence_schema_json").notNull(),
+    verificationPolicyId: text("verification_policy_id").notNull(),
+    holdSeconds: integer("hold_seconds").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("external_outcome_definitions_workspace_slug_version_unique").on(t.workspaceId, t.slug, t.evidenceSchemaVersion),
+    index("external_outcome_definitions_workspace_slug_idx").on(t.workspaceId, t.slug),
+    check("external_outcome_definitions_value_check", sql`${t.unitValueMicroUsdc} > 0`),
+    check("external_outcome_definitions_hold_check", sql`${t.holdSeconds} >= 0 AND ${t.holdSeconds} <= 2592000`),
+  ],
+);
+
+export const externalOutcomeEvents = pgTable(
+  "external_outcome_events",
+  {
+    id: text("id").primaryKey(),
+    receiptId: text("receipt_id").notNull().unique(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => developerIntegrations.id, { onDelete: "restrict" }),
+    definitionId: text("definition_id")
+      .notNull()
+      .references(() => externalOutcomeDefinitions.id, { onDelete: "restrict" }),
+    externalEventId: text("external_event_id").notNull(),
+    externalSubjectId: text("external_subject_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    evidenceJson: jsonb("evidence_json").notNull(),
+    normalizedEvidenceJson: jsonb("normalized_evidence_json").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    verificationState: text("verification_state").notNull().default("SUBMITTED"),
+    holdState: text("hold_state").notNull().default("NOT_HELD"),
+    settlementState: text("settlement_state").notNull().default("NOT_ELIGIBLE"),
+    executionState: text("execution_state").notNull().default("NOT_REQUESTED"),
+    decisionReasonsJson: jsonb("decision_reasons_json").notNull().default([]),
+    policySnapshotJson: jsonb("policy_snapshot_json").notNull().default({}),
+    procurementRecommendation: text("procurement_recommendation").notNull().default("NOT_NEEDED"),
+    rejectionCode: text("rejection_code"),
+    holdUntil: timestamp("hold_until", { withTimezone: true }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("external_outcome_events_workspace_event_unique").on(t.workspaceId, t.externalEventId),
+    uniqueIndex("external_outcome_events_workspace_definition_idempotency_unique").on(t.workspaceId, t.definitionId, t.idempotencyKey),
+    index("external_outcome_events_workspace_idx").on(t.workspaceId),
+    index("external_outcome_events_integration_idx").on(t.integrationId),
+    index("external_outcome_events_definition_idx").on(t.definitionId),
+    check("external_outcome_events_verification_state_check", sql`${t.verificationState} IN ('SUBMITTED','REVIEW','VERIFIED','REFUSED')`),
+    check("external_outcome_events_hold_state_check", sql`${t.holdState} IN ('NOT_HELD','HELD','RELEASED')`),
+    check("external_outcome_events_settlement_state_check", sql`${t.settlementState} IN ('NOT_ELIGIBLE','HELD','ELIGIBLE_NOT_REQUESTED','SHADOW_BLOCKED','SETTLED')`),
+  ],
+);
+
+/**
  * S5 spend reservations: campaign-scoped budget locks. Exactly one active
- * reservation per outcome; committed amounts bound concurrent payouts so
+ * reservation per outcome; committed amounts bind concurrent payouts so
  * simultaneous VERIFIED outcomes can never overcommit funded budget.
  */
 export const spendReservations = pgTable(

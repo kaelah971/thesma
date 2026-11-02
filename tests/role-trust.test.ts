@@ -101,7 +101,7 @@ describe("role-specific signin copy", () => {
     const headlines = Object.values(ROLE_SIGNIN_COPY).map((c) => c.headline);
     expect(new Set(headlines).size).toBe(4);
     expect(ROLE_SIGNIN_COPY.customer.sub).toContain("qualifying action");
-    expect(ROLE_SIGNIN_COPY.developer.sub).toContain("coming next");
+    expect(ROLE_SIGNIN_COPY.developer.sub).toContain("bounded Outcome API");
     const signin = src("src/app/signin/page.tsx");
     expect(signin).toContain("ROLE_SIGNIN_COPY");
     expect(signin).toContain("Continuing as");

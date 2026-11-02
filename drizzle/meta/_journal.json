@@ -127,6 +127,13 @@
       "when": 1793114981952,
       "tag": "0017_outstanding_misty_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793614614703,
+      "tag": "0018_stormy_sprite",
+      "breakpoints": true
     }
   ]
 }

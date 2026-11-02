@@ -16,6 +16,7 @@ Thesma is live as an autonomous growth-finance operator and multi-sided outcome 
 - Campaign CFO and prospective capital allocation.
 - Outcome Portfolio Operator: deterministic next-dollar recommendations above campaigns, with reserve, concentration, evidence and all-in verified CAC controls.
 - Shadow Operator Mode: owner-controlled organization shadow posture for portfolio, verification and settlement recommendations, immutable input/policy snapshots, human agreement/override telemetry, and a central no-execution boundary.
+- Build with Thesma Outcome API: organization-scoped integrations and one-time API keys, versioned bounded evidence schemas, idempotent/replay-safe event intake, deterministic verification decisions, hold/settlement state and safe outcome receipts.
 - Verification procurement logic that fails closed when a provider is unavailable.
 - Autonomy ladder and unified decision ledger.
 - Public markets, creator profiles and zero-login mainnet proof.
@@ -33,6 +34,14 @@ The operator answers:
 - recommended next allocation, reasons and evidence confidence
 
 All recommendations are deterministic and ledgered. `chainMovement` remains `UNAVAILABLE` and `executionStatus` remains `RECOMMENDED`: the current vault cannot physically move capital between campaigns. The full model and constraints are in [`docs/outcome-portfolio-operator.md`](outcome-portfolio-operator.md).
+
+### Build with Thesma Outcome API
+
+The developer surface at `/build` now issues organization-scoped API keys and explains the external outcome path. V1 supports `PURCHASE`, `ACTIVATED_USER`, `QUALIFIED_REFERRAL` and `SUBSCRIPTION_STARTED` with deterministic JSON schemas. Events are bound to the organization, integration, definition, subject and external event id; duplicate economic outcomes are rejected by idempotency and replay controls.
+
+The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. In `SHADOW` mode, events can be evaluated but execution and settlement are blocked; ambiguous evidence can record `WOULD_BUY` without an x402 purchase. The built-in Acme example is a sandbox/quickstart example, not external traction.
+
+See [`build-with-thesma.md`](build-with-thesma.md) for request examples, error codes, limits and known limitations.
 
 ### Northstar production truth
 
@@ -80,7 +89,7 @@ Canonical Arc USDC:
 
 ### Release gate
 
-- 908 tests passing
+- 920 tests passing
 - 2 intentional Anvil/env-gated skips
 - GitHub Actions: 6 required repository checks
 - critical/high npm audit findings: 0
@@ -91,9 +100,9 @@ Canonical Arc USDC:
 
 ## Current development rule
 
-No additional mainnet spending is required for product proof. The Outcome Portfolio Operator and Shadow Operator slices make no mainnet transactions or real-money purchases. Shadow review persistence is append-only audit data; recommendations remain `NOT_EXECUTED`.
+No additional mainnet spending is required for product proof. The Outcome Portfolio Operator, Shadow Operator and Build with Thesma slices make no mainnet transactions or real-money purchases. This slice makes no x402 procurement call; Shadow review persistence and external event decisions are append-only audit data, and shadow recommendations remain `NOT_EXECUTED`.
 
-See [`shadow-operator.md`](shadow-operator.md) for the activation, review, telemetry and hard-boundary contract.
+See [`shadow-operator.md`](shadow-operator.md) for the activation, review, telemetry and hard-boundary contract, and [`build-with-thesma.md`](build-with-thesma.md) for the external API contract.
 
 Use:
 - Northstar for organization → creator → invitation → funding-preparation UX

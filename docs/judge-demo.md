@@ -19,6 +19,17 @@ Most business agents automate bills — **Thesma autonomously buys verified grow
 4. `/@bgirl` — creator-side public identity: proof-first metrics, no follower scoring, marketplace-connected proof (30s).
 5. Authenticated Northstar (org account required): Creator Matches with match reasoning → frozen 5 USDC invitation visible to both sides → PREPARED funding preview showing 50 USDC required vs 0 USDC balance with **Start signing disabled** — the safety story (45s).
 
+## Build with Thesma judge-safe path
+
+Open `/build` after developer onboarding. Create an organization-scoped integration and show the one-time key warning, then narrate the quickstart as **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**: `ACTIVATED_USER = 8 USDC`, evidence for `user_123`, deterministic decision, hold state and receipt. If using a local/test database, submit the same event twice with the same `Idempotency-Key` to show the original event is returned; change the evidence with that key to show `IDEMPOTENCY_CONFLICT`. This proves an external integration boundary without claiming external customer traction or spending money.
+
+The API base is `/api/v1`:
+
+- `POST /api/v1/integrations` — owner session creates an integration and receives the key once
+- `POST /api/v1/outcomes` — register a versioned bounded outcome definition
+- `POST /api/v1/outcomes/:slug/events` — submit idempotent evidence
+- `GET /api/v1/outcomes/events/:id` — read safe status, receipt and decision trail
+
 ## Shadow Operator judge-safe path
 
 In the authenticated Operator workspace, an organization owner can enable **SHADOW** mode, run the deterministic portfolio/verification/settlement recommendations, and review each with `AGREE`, `OVERRIDE` (reason required), or `IGNORE`. The panel shows immutable input/policy snapshots, confidence segmentation and agreement telemetry. Every row stays `NOT_EXECUTED`; shadow mode blocks payments, x402 purchases, capital movement, creator invites and settlements. This path requires no wallet signature, testnet spend or mainnet activity.
@@ -52,7 +63,8 @@ One real campaign on Arc Mainnet 5042: budget moved into `ThesmaMarketVault` (`0
 
 ## Known limitations (state explicitly, do not overclaim)
 
-- External verification procurement: `NOT_CONFIGURED` without a provider/budget — never presented as purchased.
+- External verification procurement: `NOT_CONFIGURED` without a provider/budget — never presented as purchased. Build with Thesma only records a value-of-information recommendation; this slice makes no x402 call.
+- Build with Thesma V1 is campaign-independent and does not yet attach an eligible external receipt to a new payout executor, webhook delivery or arbitrary custom workflow.
 - x402 v2: protocol-tested locally only; no live provider interoperability claimed.
 - Cross-campaign capital movement: `UNAVAILABLE` by vault design; the allocator recommends, never moves. Shadow mode additionally blocks capital movement intents and other operator side effects.
 - Hybrid base/milestone legs: settlement `UNSUPPORTED` onchain; recorded truthfully, not paid.
@@ -75,6 +87,6 @@ One real campaign on Arc Mainnet 5042: budget moved into `ThesmaMarketVault` (`0
 
 ## Verification behind this guide
 
-- Full suite 908 passing / 2 intentional skips; typecheck, lint, build green; local browser smoke (desktop + mobile) green; CI 6/6 on the shipped commit.
+- Full suite 920 passing / 2 intentional skips; typecheck, lint, build green; local browser smoke (desktop + mobile) green; CI 6/6 on the shipped commit.
 - Public routes swept read-only Nov 1, 2026: all 200, correct titles, no error-boundary copy.
 - Zero-spend: no production writes, no signatures, no broadcasts in preparing this guide.

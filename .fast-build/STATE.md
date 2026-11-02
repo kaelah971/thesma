@@ -153,3 +153,12 @@
 - UI: `ShadowOperatorPanel`; routes: `/api/operator/shadow`, `/mode`, `/run`, `/respond`.
 - Mandatory fixture covered: `INCREASE 50 USDC → AGREE`, `WOULD_BUY 0.002 USDC → AGREE`, `HOLD → OVERRIDE (BUSINESS_CONTEXT_MISSING)`; 3 generated/reviewed, 2 agreements, 1 override, 6667 bps.
 - Verification: 908 passing / 2 intentional skips; typecheck, lint, build and browser smoke green before commit.
+
+## Slice 12 — Build with Thesma Outcome API
+- Added organization-scoped developer integrations with one-time `ths_api_` keys stored only as SHA-256 digests and revocable status.
+- Added versioned bounded external outcome definitions and evidence adapter for PURCHASE, ACTIVATED_USER, QUALIFIED_REFERRAL and SUBSCRIPTION_STARTED.
+- Added idempotent/replay-safe `/api/v1` event intake, safe status/receipt reads, existing audit-ledger participation and lightweight integration telemetry.
+- External events preserve SUBMITTED/REVIEW/VERIFIED/REFUSED, hold and settlement vocabulary; no payout executor was added.
+- Shadow mode evaluates external evidence and can record WOULD_BUY, but blocks execution and x402 procurement.
+- Migration 0018 created locally and not applied to production.
+- Verification: 920 passing / 2 intentional skips; typecheck, lint, build and browser smoke green.

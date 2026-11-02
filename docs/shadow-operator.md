@@ -32,7 +32,7 @@ When the organization is in `SHADOW` mode, the operator boundary blocks:
 - creator invites
 - production settlement-worker processing
 
-Verification shadow evaluation may read a provider quote, but it exits before procurement-row approval, signer resolution, payment, or provider purchase. Settlement shadow evaluation may calculate `PAY_NOW` or `HOLD`, but it never calls reserve, payout, signer, executor, or reconciliation paths.
+Verification shadow evaluation may read a provider quote, but it exits before procurement-row approval, signer resolution, payment, or provider purchase. Settlement shadow evaluation may calculate `PAY_NOW` or `HOLD`, but it never calls reserve, payout, signer, executor, or reconciliation paths. External Build with Thesma events follow the same boundary: evidence is normalized and evaluated, ambiguous evidence may record `WOULD_BUY`, and no x402, payout or settlement call is made.
 
 The UI states this boundary directly. Shadow recommendations are not receipts, approvals, transfers, purchases, or settlements.
 

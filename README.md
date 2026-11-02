@@ -71,7 +71,7 @@ DECISION LEDGER ──► shows why every important action occurred
 
 | Status | Capability |
 |---|---|
-| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, Outcome Portfolio Operator, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger |
+| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, Outcome Portfolio Operator, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger, Build with Thesma Outcome API |
 | LIVE PROVEN ON ARC TESTNET / production remains opt-in | External verification procurement — value-of-information gate, dedicated Circle buyer, live AuraGate x402 challenge, one guarded 0.002 USDC proof; production stays NOT_CONFIGURED unless its own server credentials are supplied (no fake spend, no fallback keys) |
 | LIVE-PROVIDER PROVEN + PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness plus the live Arc Testnet proof below) |
 | KNOWN UNSUPPORTED | Cross-campaign onchain fund transfer; autonomous settlement of hybrid base/milestone obligations (recorded truthfully as payable without an onchain path) |
@@ -108,6 +108,7 @@ Full runbook and evidence scope: [`docs/verification-procurement.md`](docs/verif
 | Current production state | [`docs/current-state.md`](docs/current-state.md) |
 | Integrated acceptance (no-spend) | [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) |
 | Outcome Portfolio Operator | [`docs/outcome-portfolio-operator.md`](docs/outcome-portfolio-operator.md) |
+| Build with Thesma Outcome API | [`docs/build-with-thesma.md`](docs/build-with-thesma.md) |
 | Judge demo guide | [`docs/judge-demo.md`](docs/judge-demo.md) |
 | Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
 | Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
@@ -325,7 +326,7 @@ Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) —
 - **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
 - **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (your `/@handle` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
 - **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
-- **Build with Thesma** — use Thesma's verification, receipts and payout infrastructure in your own product. Developer onboarding explains connect → send outcomes → verify → receipts → payouts; API keys/webhooks are truthful empty states until the developer preview opens.
+- **Build with Thesma** — define a bounded outcome, submit evidence with an organization-scoped API key, and read the verification decision, hold state and immutable receipt trail. `/build` includes one-time key creation and a runnable quickstart; the built-in example is a sandbox story, not external traction.
 
 The persona is onboarding context, not authorization: workspace/partner access still comes only from membership checks. Public `/markets` never requires login.
 
@@ -525,7 +526,7 @@ npm run secret:hygiene    # tracked-secret hygiene (filenames + key material; fi
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **908 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **920 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Release gate (CI)
 
@@ -550,6 +551,7 @@ Honest boundaries of the shipped product:
 - No LLM is wired anywhere — intent parsing, pricing, negotiation, and Operator answers are deterministic kernels and fixed templates.
 - Organization company wallets are cryptographically ownership-proven with a workspace-bound EIP-712 challenge and recovered-signer confirmation. Partner wallet ownership remains registration-based.
 - Shadow Operator Mode is an owner-controlled organization posture that reuses the deterministic portfolio, verification and settlement kernels while persisting immutable input/policy snapshots. Its central boundary blocks payments, x402 purchases, capital movement, creator invites and settlement; human review is telemetry, not execution.
+- Build with Thesma V1 supports four bounded external outcome types, deterministic JSON schema versions, API-key authentication, idempotency, replay protection, safe status/receipt reads and ledger participation. It does not add a second payout executor, webhook system or arbitrary workflow engine.
 - Refund protection is the hold timer only; no refund-event detection exists.
 - No Circle Gateway/CCTP, paymasters, or fiat ramps. x402 v2 transport is protocol-tested locally, but real-provider interoperability is not yet claimed.
 - Analytics remain intentionally bounded to proof-backed campaign metrics; realized CAC is shown only where computable from verified production data.
@@ -578,6 +580,7 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 - [`docs/judge-demo.md`](docs/judge-demo.md) — judge demo guide: 90-second and 3-minute paths, exact routes, proof stories, screenshot capture list.
 - [`docs/verification-procurement.md`](docs/verification-procurement.md) — value-of-information buyer: formula, decision states, Circle buyer architecture, x402 lifecycle, testnet boundary, idempotency, first provider evidence.
 - [`docs/shadow-operator.md`](docs/shadow-operator.md) — Shadow mode contract, immutable recommendation snapshots, review responses, telemetry and no-execution boundary.
+- [`docs/build-with-thesma.md`](docs/build-with-thesma.md) — external outcome API quickstart, authentication, schemas, idempotency, receipts, shadow behavior and limits.
 - [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md) — mainnet runtime provisioning runbook.
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
 - [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.
