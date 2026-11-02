@@ -17,7 +17,9 @@ export type Persona = (typeof PERSONAS)[number];
 
 /** Pre-auth persona choice. HttpOnly, Lax, 1 year — survives the auth redirect. */
 export const PERSONA_COOKIE = "thesma_persona";
+export const PERSONA_INTENT_COOKIE = "thesma_persona_intent";
 export const PERSONA_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+export const PERSONA_INTENT_COOKIE_MAX_AGE = 60 * 5;
 
 /** Lowercase slugs used in cookies/URLs. DB enum is the UPPER_SNAKE twin. */
 export function parsePersona(value: unknown): Persona | null {
@@ -32,6 +34,38 @@ export function personaToEnum(p: Persona): "CUSTOMER" | "CREATOR" | "ORGANIZATIO
 
 export function personaFromEnum(value: unknown): Persona | null {
   return parsePersona(typeof value === "string" ? value.toLowerCase() : value);
+}
+
+export interface PersonaResolutionDecision {
+  persona: Persona | null;
+  shouldPersist: boolean;
+}
+
+/**
+ * Resolve the product shell persona without treating workspace ownership as a
+ * persona. An explicit intent is a deliberate role switch; the long-lived
+ * persona cookie is only a bounded recovery signal for pre-fix developer
+ * accounts whose old organization flow overwrote the persisted row.
+ */
+export function resolveProductPersonaIntent(input: {
+  persistedPersona: Persona | null;
+  selectedPersona: Persona | null;
+  explicitPersona: Persona | null;
+  legacyDeveloperSignal: boolean;
+}): PersonaResolutionDecision {
+  if (input.explicitPersona) {
+    return {
+      persona: input.explicitPersona,
+      shouldPersist: input.persistedPersona !== input.explicitPersona,
+    };
+  }
+  if (input.persistedPersona === "developer") return { persona: "developer", shouldPersist: false };
+  if (input.persistedPersona === "organization" && input.selectedPersona === "developer" && input.legacyDeveloperSignal) {
+    return { persona: "developer", shouldPersist: true };
+  }
+  if (input.persistedPersona) return { persona: input.persistedPersona, shouldPersist: false };
+  if (input.selectedPersona) return { persona: input.selectedPersona, shouldPersist: true };
+  return { persona: null, shouldPersist: false };
 }
 
 /** Role home. Organization keeps the existing /app workspace product. */
@@ -254,6 +288,39 @@ export async function upsertPersona(userId: string, input: PersonaUpsert) {
   }
 }
 
+/**
+ * Read the persisted persona and perform the narrow pre-fix recovery when the
+ * request carries the legacy developer selection. The resulting row becomes
+ * the source of truth for subsequent requests; workspace membership is never changed or used as an organization-persona grant.
+ */
+export async function resolveProductPersona(params: {
+  userId: string;
+  selectedPersona: Persona | null;
+  explicitPersona: Persona | null;
+  legacyDeveloperSignal: boolean;
+}) {
+  const existing = await getPersonaByUserId(params.userId);
+  const decision = resolveProductPersonaIntent({
+    persistedPersona: existing ? personaFromEnum(existing.persona) : null,
+    selectedPersona: params.selectedPersona,
+    explicitPersona: params.explicitPersona,
+    legacyDeveloperSignal: params.legacyDeveloperSignal,
+  });
+  if (!decision.shouldPersist || !decision.persona) return existing;
+  try {
+    return await upsertPersona(params.userId, {
+      persona: decision.persona,
+      complete: Boolean(existing?.onboardingCompletedAt || params.legacyDeveloperSignal),
+    });
+  } catch (error) {
+    // Two concurrent shell requests may race the one-time backfill. Re-read
+    // before surfacing an error so recovery remains idempotent.
+    const latest = await getPersonaByUserId(params.userId);
+    if (latest) return latest;
+    throw error;
+  }
+}
+
 export function serializePersonaCookie(persona: Persona, secure: boolean): string {
   const parts = [
     `${PERSONA_COOKIE}=${persona}`,
@@ -261,6 +328,18 @@ export function serializePersonaCookie(persona: Persona, secure: boolean): strin
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${PERSONA_COOKIE_MAX_AGE}`,
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+export function serializePersonaIntentCookie(persona: Persona, secure: boolean): string {
+  const parts = [
+    `${PERSONA_INTENT_COOKIE}=${persona}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${PERSONA_INTENT_COOKIE_MAX_AGE}`,
   ];
   if (secure) parts.push("Secure");
   return parts.join("; ");

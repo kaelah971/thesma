@@ -1,5 +1,9 @@
 import { isDbConfigured } from "@/server/db/client";
-import { PERSONA_COOKIE, parsePersona, serializePersonaCookie } from "@/server/services/personas";
+import {
+  parsePersona,
+  serializePersonaCookie,
+  serializePersonaIntentCookie,
+} from "@/server/services/personas";
 
 /**
  * Pre-auth persona choice. No account needed: validates the slug and stores
@@ -14,11 +18,10 @@ export async function POST(req: Request) {
   }
   void isDbConfigured();
   const secure = new URL(req.url).protocol === "https:";
-  return new Response(JSON.stringify({ ok: true, persona }), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/json",
-      "Set-Cookie": serializePersonaCookie(persona, secure),
-    },
-  });
+  // PERSONA_COOKIE is the durable selection; the short-lived intent cookie
+  // distinguishes an explicit role switch from a legacy stale selection.
+  const headers = new Headers({ "Content-Type": "application/json" });
+  headers.append("Set-Cookie", serializePersonaCookie(persona, secure));
+  headers.append("Set-Cookie", serializePersonaIntentCookie(persona, secure));
+  return new Response(JSON.stringify({ ok: true, persona }), { status: 200, headers });
 }

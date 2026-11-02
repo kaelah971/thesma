@@ -1,12 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
 import { AppNav } from "@/components/app/AppNav";
 import { SignOutButton, WorkspaceSwitcher } from "@/components/app/ShellControls";
 import styles from "@/components/app/app.module.css";
 import { getAppSession } from "./data";
-import { getPersonaByUserId, personaFromEnum } from "@/server/services/personas";
+import {
+  PERSONA_COOKIE,
+  PERSONA_INTENT_COOKIE,
+  parsePersona,
+  personaFromEnum,
+  resolveProductPersona,
+} from "@/server/services/personas";
 
 export const metadata: Metadata = { title: { default: "Overview", template: "%s · Thesma" } };
 
@@ -23,7 +30,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     );
   }
 
-  const persona = await getPersonaByUserId(session.user.userId).catch(() => null);
+  const jar = await cookies();
+  const selectedPersona = parsePersona(jar.get(PERSONA_COOKIE)?.value);
+  const explicitPersona = parsePersona(jar.get(PERSONA_INTENT_COOKIE)?.value);
+  const persona = await resolveProductPersona({
+    userId: session.user.userId,
+    selectedPersona,
+    explicitPersona,
+    // Legacy developer accounts may have an organization persona row because
+    // the pre-fix flow created their project through organization onboarding.
+    // Membership is recovery evidence only; it never grants organization UI.
+    legacyDeveloperSignal: selectedPersona === "developer" && session.workspaces.length > 0,
+  });
   if (persona && personaFromEnum(persona.persona) === "developer") redirect("/build");
   const initials = (session.user.name ?? session.user.email).slice(0, 2).toUpperCase();
 

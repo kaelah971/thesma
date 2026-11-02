@@ -1,18 +1,31 @@
 import { cache } from "react";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/server/auth/guard";
-import { getPersonaByUserId, personaFromEnum } from "@/server/services/personas";
+import {
+  PERSONA_COOKIE,
+  PERSONA_INTENT_COOKIE,
+  parsePersona,
+  personaFromEnum,
+  resolveProductPersona,
+} from "@/server/services/personas";
 import { listUserWorkspaces } from "@/server/services/workspaces";
 
 export const getDeveloperContext = cache(async () => {
   const user = await getSessionUser();
   if (!user) redirect("/signin?next=/build");
 
-  const persona = await getPersonaByUserId(user.userId);
+  const memberships = await listUserWorkspaces(user.userId).catch(() => []);
+  const jar = await cookies();
+  const persona = await resolveProductPersona({
+    userId: user.userId,
+    selectedPersona: parsePersona(jar.get(PERSONA_COOKIE)?.value),
+    explicitPersona: parsePersona(jar.get(PERSONA_INTENT_COOKIE)?.value),
+    legacyDeveloperSignal: memberships.length > 0,
+  });
   if (!persona || !persona.onboardingCompletedAt) redirect("/onboarding/developer");
   if (personaFromEnum(persona.persona) !== "developer") redirect("/start?change=1");
 
-  const memberships = await listUserWorkspaces(user.userId).catch(() => []);
   const workspace = memberships.find((item) => item.role === "ORGANIZATION_OWNER")?.workspace ?? null;
   return {
     user,

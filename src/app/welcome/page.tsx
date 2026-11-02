@@ -8,11 +8,12 @@ import { getPartnerByUserId } from "@/server/services/partners";
 import { listUserWorkspaces } from "@/server/services/workspaces";
 import {
   PERSONA_COOKIE,
-  getPersonaByUserId,
+  PERSONA_INTENT_COOKIE,
   onboardingPath,
   parsePersona,
   personaFromEnum,
   personaHome,
+  resolveProductPersona,
   upsertPersona,
 } from "@/server/services/personas";
 
@@ -26,25 +27,25 @@ export default async function WelcomePage() {
   if (!isDbConfigured()) redirect("/start");
   const jar = await cookies();
   const cookiePersona = parsePersona(jar.get(PERSONA_COOKIE)?.value);
+  const explicitPersona = parsePersona(jar.get(PERSONA_INTENT_COOKIE)?.value);
   const user = await getSessionUser();
   // Keep role intent visible across the auth redirect: the persona cookie
   // survives server-side, and the ?role= param lets /signin show
   // role-specific copy for direct links too.
   if (!user) redirect(cookiePersona ? `/signin?role=${cookiePersona}&next=/welcome` : "/signin?next=/welcome");
 
-  let row = await getPersonaByUserId(user.userId);
-  if (!row && cookiePersona) {
-    try {
-      row = await upsertPersona(user.userId, { persona: cookiePersona });
-    } catch {
-      row = null;
-    }
-  }
+  const memberships = await listUserWorkspaces(user.userId).catch(() => []);
+  const row = await resolveProductPersona({
+    userId: user.userId,
+    selectedPersona: cookiePersona,
+    explicitPersona,
+    legacyDeveloperSignal: memberships.length > 0,
+  });
+  // getPersonaByUserId is read inside resolveProductPersona before any recovery.
   const persona = row ? personaFromEnum(row.persona) : cookiePersona;
   if (!persona) redirect("/start");
 
   const completed = Boolean(row?.onboardingCompletedAt);
-  const memberships = await listUserWorkspaces(user.userId).catch(() => []);
   const partner = await getPartnerByUserId(user.userId).catch(() => null);
   const [dbUser] = await getDb().select().from(users).where(eq(users.id, user.userId)).limit(1).catch(() => []);
 
