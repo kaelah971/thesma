@@ -66,6 +66,8 @@ const result = await thesma.submitOutcomeEvent({
 
 The server client calls the existing Outcome API. It sends `Authorization: Bearer ths_api_…`, `growthProgramId`, `attributionId` and the explicit `Idempotency-Key`. It never generates a new key on retry. Use the same key for the same economic event.
 
+`submitOutcomeEvent()` returns the event and receipt plus convenience fields: `eventId`, `receiptId`, `programId`, `attributionStatus`, `verificationState`, `operatorMode` and `executionState`. The nested receipt contains the private authorized `programEvaluation` when the event is program-bound.
+
 ```ts
 const status = await thesma.getOutcomeEvent(result.event.id);
 const receipt = await thesma.getReceipt(result.event.id);
@@ -84,6 +86,18 @@ https://thesma.vercel.app/g/proofpilot-partner-growth
 It shows the bounded objective, evidence signals, reward ceiling, participation state and truthful Shadow/settlement status. `OPEN` accepts a referral-partner request or an authenticated creator request. `INVITE_ONLY` explains that an invitation is required. `CLOSED` refuses new participation. An `APPLIED` request does not receive an attribution identity until an existing project owner activates it.
 
 After activation, the participant receives a stable `ref_…` code. The hosted success state distinguishes `ATTRIBUTED`, `VERIFIED`, `PAID` and `SETTLED`; Slice 3 does not promise payout or settlement.
+
+## Slice 4 receipt state
+
+For a program-bound event, `receipt.programEvaluation` is the deterministic internal pipeline result. It distinguishes:
+
+- `VERIFIED` from reward `ELIGIBLE`;
+- reward `ELIGIBLE` / `ON_HOLD` / `SETTLEMENT_READY` from `PAID`;
+- settlement eligibility `READY` from execution `BLOCKED_BY_SHADOW`;
+- `WOULD_BUY` verification procurement from actual spend (`0` in Shadow);
+- configured budget/CAC policy from real funding and settled spend.
+
+A safe authorized receipt may include program and participant context, frozen reward terms, hold state, settlement reason codes, operator recommendation and paid amount. Public program config and attribution endpoints still omit budget, CAC, wallet, integration, API key and private creator information.
 
 ## Security boundary
 

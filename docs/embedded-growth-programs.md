@@ -97,15 +97,28 @@ The browser client never accepts an API key. The server client requires an expli
 
 `productUrl` is optional, validated as a credential-free HTTP(S) URL and required to use HTTPS in production. It is used only for referral-link examples and return-to-product context.
 
-## What remains
+## Slice 4 shipped
 
-- **Operator and settlement integration:** existing payout, hold, reconciliation and authority boundaries remain the source of truth. Slice 3 does not fund, procure, pay or settle a program.
+Embedded outcomes now flow through one deterministic internal evaluation after Outcome API intake:
+
+```text
+attribution → existing evidence verification → value-of-information recommendation
+→ frozen participant reward eligibility → program budget/CAC accounting
+→ existing hold state → campaign settlement eligibility → Shadow operator decision
+→ safe receipt / audit decision
+```
+
+The evaluation is advisory and composes existing Thesma records. It does not create a parallel payout, verification, procurement, receipt, ledger or settlement engine. The Growth Program's `campaignId` is the mapping into existing campaign CFO and settlement authority. Performance-only rewards use the supported campaign representation; hybrid base/milestone legs are explicitly `UNSUPPORTED_SETTLEMENT_PATH`.
+
+For a verified attributed outcome the private receipt can show the program, participant, attribution identity, evidence hash, frozen reward, eligible/held/settled exposure, remaining budget, verified CAC state, hold, settlement eligibility, operator reason codes and execution status. In Shadow, `WOULD_SETTLE` can be computed while execution remains `BLOCKED_BY_SHADOW`, paid amount is `0`, and Circle/x402 calls remain `0`. Existing Shadow review responses remain the human `AGREE` / `OVERRIDE` / `IGNORE` telemetry path.
+
 - **Real ProofPilot integration:** ProofPilot remains a sandbox/quickstart fixture; no production tenant is seeded or claimed.
 - **Published package:** the SDK is local source only; npm publishing and release infrastructure are intentionally out of scope.
+- **Slice 5:** reviewed production migrations and a real ProofPilot-style Shadow pilot remain next; this slice does not apply migrations or enable financial execution.
 
 ## Migration
 
-Slice 2 adds `drizzle/0020_salty_sunspot.sql`. Slice 3 adds `drizzle/0021_abnormal_eternals.sql` for the optional product URL. These migrations create no production data and have not been applied automatically; review them with the existing production migration process.
+Slice 2 adds `drizzle/0020_salty_sunspot.sql`. Slice 3 adds `drizzle/0021_abnormal_eternals.sql` for the optional product URL. Slice 4 adds no migration: pipeline economics are derived from the existing event, program, participant, campaign funding, audit and settlement records. Migrations `0019`, `0020` and `0021` create no production data and have not been applied automatically; review them with the existing production migration process.
 
 ## ProofPilot fixture
 

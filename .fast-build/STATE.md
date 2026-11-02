@@ -18,7 +18,7 @@
 - [x] Slice 1: Embedded Growth Program foundation + developer creation/detail flow.
 - [x] Slice 2: Partner / creator enrollment + attribution primitives.
 - [x] Slice 3: Embedded SDK / hosted components / external-product integration surface.
-- [ ] Slice 4: Operator + verification + settlement integration across embedded programs.
+- [x] Slice 4: Operator + verification + settlement integration across embedded programs.
 - [ ] Slice 5: Real ProofPilot end-to-end integration + docs / public proof.
 
 ## Slice 1 result
@@ -47,25 +47,31 @@
 - `src/components/build/DeveloperProgramParticipantsPanel.tsx`
 - `src/app/api/v1/programs/[id]/participants/`, `participation/`, `attribution/`
 - `src/server/services/publicGrowthPrograms.ts`
+- `src/server/services/growthProgramOutcome.ts`
 - `src/app/api/v1/public/programs/[slug]/`
 - `src/app/g/[slug]/page.tsx`, `src/components/public/HostedGrowthProgram.tsx`
 - `src/sdk/browser.ts`, `src/sdk/server.ts`
 - `src/components/build/DeveloperProgramIntegrationPanel.tsx`
 - `drizzle/0021_abnormal_eternals.sql` + snapshot/journal (created, not applied)
-- `tests/growth-programs.test.ts`, `tests/growth-participation.test.ts`, `tests/embedded-sdk.test.ts`
+- `tests/growth-programs.test.ts`, `tests/growth-participation.test.ts`, `tests/embedded-sdk.test.ts`, `tests/growth-program-outcome.test.ts`
 - `docs/sdk.md`
 - `docs/embedded-growth-programs.md`, `docs/build-with-thesma.md`, `docs/current-state.md`, `README.md`
 
+## Slice 4 result
+- Program-bound Outcome API events now expose one deterministic evaluation combining attribution, existing verification/VOI state, frozen participant reward terms, bigint program economics, holds, settlement eligibility, operator recommendation, execution status and receipt context.
+- Production evaluation maps each Growth Program to its existing campaign id/Campaign CFO and settlement authority; performance-only is supported, hybrid legs are explicit `UNSUPPORTED_SETTLEMENT_PATH`, and Outcome Portfolio remains campaign-only.
+- Shadow records `WOULD_SETTLE`/review recommendations through the existing decision ledger; payout, procurement, Circle, x402 and chain execution remain blocked. No migration was added or applied.
+
 ## Verification
-- Focused: Growth Program + participation + embedded SDK tests passed (30 tests).
-- Full suite: 954 passed, 2 skipped.
+- Focused: Slice 4 pipeline + SDK + Outcome API tests passed (30 tests); Growth Program + participation regression tests passed (12 tests).
+- Full suite: 965 passed, 2 skipped.
 - Typecheck: pass. Lint: pass. Production build: pass. Browser smoke: pass.
-- `git diff --check`: pass.
+- `git diff --check`: pending final checkpoint.
 
 ## Blockers / truth
-- Migrations 0018, 0019, 0020 and 0021 are created locally and must go through the reviewed production migration process; do not apply blindly.
+- Migrations 0019, 0020 and 0021 are created locally and must go through the reviewed production migration process; do not apply blindly.
 - No mainnet transactions, testnet transactions, x402 payments, Circle calls, real USDC or test USDC were made.
 - Unrelated worktree changes preserved: `next-env.d.ts`, `.circle-register-existing.mjs`, `AGENTS.md`, `contracts/verification/`, `docs/ui redesign/`, `docs/ui refresh/`.
 
 ## Next action
-- Slice 4: wire embedded Growth Programs into operator, verification procurement, finance, hold and settlement engines without bypassing Shadow/authority boundaries.
+- Slice 5: safely apply pending production migrations, create the real ProofPilot Growth Program, connect a real integration, submit one real Shadow outcome from an external ProofPilot-style client, and inspect the production receipt with zero financial execution.

@@ -206,7 +206,9 @@ A schema-valid activation with ordered timestamps can be `VERIFIED`; ambiguous c
 
 ## 8. Shadow Mode
 
-If the project owner is in `SHADOW` mode, event evaluation still occurs and the receipt records `executionState: NOT_EXECUTED` and `settlementState: SHADOW_BLOCKED` for otherwise eligible events. Ambiguous evidence may produce `procurementRecommendation: WOULD_BUY`, using the existing value-of-information kernel, but no x402 request, Circle call, payment, payout or settlement is made.
+If the project owner is in `SHADOW` mode, event evaluation still occurs and the receipt records `executionState: NOT_EXECUTED` for otherwise eligible events. A program-bound event now includes a deterministic embedded evaluation: attribution, verification, verification-procurement recommendation, frozen participant reward eligibility, budget/CAC accounting, hold state, settlement eligibility, operator recommendation and execution boundary. `settlementEligibility: READY` still does not mean money moved; execution remains `BLOCKED_BY_SHADOW` and paid amount is `0`.
+
+Ambiguous evidence may produce `procurementRecommendation: WOULD_BUY`, using the existing value-of-information kernel, but no x402 request, Circle call, payment, payout or settlement is made. Existing Shadow decision records can receive `AGREE`, `OVERRIDE` or `IGNORE`; an override still requires a reason.
 
 ## 9. Error model and limits
 
@@ -227,6 +229,14 @@ Limits are intentionally small in V1: 32 schema fields, 64 KiB evidence, 128 KiB
 - Evidence is a claim until the adapter and policy decision say otherwise.
 - Testnet verification procurement remains separate from production economics; this slice does not make a paid x402 call.
 - No production migration is applied automatically. The new migration must be reviewed and applied through the existing deployment process.
+
+## Slice 4: one internal economic pipeline
+
+Program-bound events are evaluated by `evaluateGrowthProgramOutcome` after the existing Outcome API evidence decision. The service does not create a second verification, payout or settlement authority. It reuses the event's deterministic verification state, the existing value-of-information recommendation, Slice 2's frozen participant reward snapshot, existing hold fields, the program's campaign mapping and the existing Shadow decision ledger.
+
+The evaluation reports exact bigint-safe fields for budget cap, eligible exposure, held exposure, settled spend, verification expense and remaining allocatable budget. Verified CAC is `INSUFFICIENT_DATA` until real production settlement economics exist; testnet verification spend is excluded. `PERFORMANCE_ONLY` maps to the existing campaign performance settlement representation. Base/milestone and other hybrid legs are surfaced as `UNSUPPORTED_SETTLEMENT_PATH`, never simulated.
+
+Program analytics also exposes the mapped Campaign CFO availability and campaign id. Outcome Portfolio remains campaign-only in V1: a program can be evaluated, but no cross-campaign capital movement or allocation execution is fabricated. The developer program, event and receipt screens show the same program relationship and decision boundary.
 
 ## Known limitations
 

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { createProductionOutcomeApiService } from "@/server/services/buildWithThesma";
 import { createProductionGrowthProgramService } from "@/server/services/growthPrograms";
 import { createProductionGrowthProgramParticipationService } from "@/server/services/growthProgramParticipation";
+import { createProductionGrowthProgramOutcomeService } from "@/server/services/growthProgramOutcome";
 import { DeveloperProgramParticipantsPanel } from "@/components/build/DeveloperProgramParticipantsPanel";
 import { DeveloperProgramIntegrationPanel } from "@/components/build/DeveloperProgramIntegrationPanel";
 import { getDeveloperContext } from "../../data";
@@ -34,9 +35,11 @@ export default async function DeveloperProgramDetailPage({ params }: { params: P
   const programEvents = events.filter((item) => item.event.growthProgramId === program.id);
   const verified = programEvents.filter((item) => item.event.verificationState === "VERIFIED").length;
   const participation = createProductionGrowthProgramParticipationService();
-  const [participants, analytics] = await Promise.all([
+  const outcomePipeline = createProductionGrowthProgramOutcomeService();
+  const [participants, analytics, economics] = await Promise.all([
     participation.listParticipants({ workspaceId: context.workspace.id, growthProgramId: program.id }).catch(() => []),
     participation.getAnalytics({ workspaceId: context.workspace.id, growthProgramId: program.id }).catch(() => ({ participants: 0, activeParticipants: 0, invited: 0, pendingReview: 0, attributedEvents: 0, verifiedAttributedOutcomes: 0, unattributedOutcomes: 0, attributionConflicts: 0 })),
+    outcomePipeline.getSummary({ workspaceId: context.workspace.id, growthProgramId: program.id }).catch(() => null),
   ]);
 
   return (
@@ -64,6 +67,15 @@ export default async function DeveloperProgramDetailPage({ params }: { params: P
         <div className={styles.kpi} data-tone="mint"><span className={styles.kpiLabel}>Reward</span><span className={styles.kpiValue}><strong>up to {microUsdc(program.rewardCeilingMicroUsdc)}</strong></span><span className={styles.kpiHint}>{program.rewardStructure.replaceAll("_", " ").toLowerCase()}</span></div>
         <div className={styles.kpi} data-tone="cream"><span className={styles.kpiLabel}>Participants</span><span className={styles.kpiValue}><strong>{analytics.activeParticipants}</strong></span><span className={styles.kpiHint}>{analytics.invited} invited · {analytics.pendingReview} pending</span></div>
       </div>
+
+      {economics ? <section className={styles.card} data-tone="mint" style={{ marginBottom: 12 }}>
+        <div className={styles.cardHead}><h2>Operator / economics</h2><span className="badge badge-blue">{economics.operator.mode}</span></div>
+        <div className={styles.grid2}>
+          <div><div className={styles.kpiLabel}>PROGRAM ECONOMICS</div><div className={styles.stack}><div>Budget cap <strong>{microUsdc(economics.economics.budgetCapMicroUsdc)}</strong></div><div>Eligible exposure <strong>{microUsdc(economics.economics.eligibleExposureMicroUsdc)}</strong></div><div>Held <strong>{microUsdc(economics.economics.heldExposureMicroUsdc)}</strong></div><div>Settled <strong>{microUsdc(economics.economics.settledSpendMicroUsdc)}</strong></div><div>Remaining <strong>{microUsdc(economics.economics.remainingAllocatableBudgetMicroUsdc)}</strong></div></div></div>
+          <div><div className={styles.kpiLabel}>OPERATOR</div><div className={styles.stack}><div>Latest recommendation <strong>{economics.operator.latestRecommendation ?? "NO_OUTCOMES"}</strong></div><div>Reason <span className="mono" style={{ fontSize: 11 }}>{economics.operator.latestReasonCodes.join(" · ") || "—"}</span></div><div>Verified CAC <strong>{economics.economics.effectiveVerifiedCacMicroUsdc ? microUsdc(economics.economics.effectiveVerifiedCacMicroUsdc) : "INSUFFICIENT_DATA"}</strong> <span className="mono" style={{ fontSize: 11 }}>· target {microUsdc(economics.economics.targetCacMicroUsdc)}</span></div><div>Verification <strong>{economics.verification.verified} verified</strong> · {economics.verification.review} review · {economics.verification.refused} refused</div><div>Settlement <strong>{economics.settlement.ready} ready</strong> · {economics.settlement.notReady} not ready · actual paid {microUsdc(economics.settlement.actualPaidMicroUsdc)}</div></div></div>
+        </div>
+        <p className={styles.pageDesc} style={{ marginBottom: 0 }}>Funding: <strong>{economics.program.fundingStatus}</strong> · Campaign CFO: <strong>{economics.finance.campaignCfo}</strong> · settlement uses the existing campaign representation <span className="mono">{economics.program.campaignId}</span>. Shadow decisions are recommendations only; no payout or settlement call is made.</p>
+      </section> : null}
 
       <DeveloperProgramParticipantsPanel projectId={context.workspace.id} programId={program.id} participationStatus={program.participationStatus} operatorMode={program.operatorMode} participants={participants} analytics={analytics} />
       <DeveloperProgramIntegrationPanel program={program} />

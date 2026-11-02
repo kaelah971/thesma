@@ -17,6 +17,13 @@ export class ThesmaApiError extends Error {
 export interface ServerOutcomeEvent {
   event: Record<string, unknown>;
   receipt: Record<string, unknown>;
+  eventId: string;
+  receiptId: string;
+  programId: string | null;
+  attributionStatus: string;
+  verificationState: string;
+  operatorMode: string;
+  executionState: string;
   idempotent?: boolean;
   mode?: string;
 }
@@ -96,7 +103,24 @@ export function createThesmaServerClient(options: ThesmaServerClientOptions) {
       occurredAt,
       evidence: input.evidence,
     };
-    return await request(`/api/v1/outcomes/${encodeURIComponent(outcome)}/events`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": idempotencyKey }, body: JSON.stringify(body) }) as unknown as ServerOutcomeEvent;
+    const result = await request(`/api/v1/outcomes/${encodeURIComponent(outcome)}/events`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": idempotencyKey }, body: JSON.stringify(body) });
+    const event = (result.event ?? {}) as Record<string, unknown>;
+    const receipt = (result.receipt ?? {}) as Record<string, unknown>;
+    const evaluation = (receipt.programEvaluation ?? {}) as Record<string, unknown>;
+    const operatorDecision = (evaluation.operatorDecision ?? {}) as Record<string, unknown>;
+    const execution = (evaluation.execution ?? {}) as Record<string, unknown>;
+    return {
+      ...result,
+      event,
+      receipt,
+      eventId: typeof event.id === "string" ? event.id : "",
+      receiptId: typeof receipt.id === "string" ? receipt.id : "",
+      programId: typeof event.growthProgramId === "string" ? event.growthProgramId : null,
+      attributionStatus: typeof event.attributionStatus === "string" ? event.attributionStatus : "UNATTRIBUTED",
+      verificationState: typeof event.verificationState === "string" ? event.verificationState : "SUBMITTED",
+      operatorMode: typeof operatorDecision.mode === "string" ? operatorDecision.mode : typeof result.mode === "string" ? result.mode : "SHADOW",
+      executionState: typeof execution.status === "string" ? execution.status : typeof event.executionState === "string" ? event.executionState : "NOT_EXECUTED",
+    } as ServerOutcomeEvent;
   }
 
   async function getOutcomeEvent(eventId: string): Promise<Record<string, unknown>> {

@@ -4,6 +4,7 @@ import { toApiError, unconfigured } from "@/server/api/errors";
 import { createProductionOutcomeApiService } from "@/server/services/buildWithThesma";
 import { createProductionGrowthProgramParticipationService } from "@/server/services/growthProgramParticipation";
 import { createProductionGrowthProgramService } from "@/server/services/growthPrograms";
+import { createProductionGrowthProgramOutcomeService } from "@/server/services/growthProgramOutcome";
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -23,8 +24,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       await requireOwner(projectId, user.userId);
       workspaceId = projectId;
     }
-    const analytics = await createProductionGrowthProgramParticipationService().getAnalytics({ workspaceId, growthProgramId: id });
-    return Response.json({ analytics });
+    const [analytics, economics] = await Promise.all([
+      createProductionGrowthProgramParticipationService().getAnalytics({ workspaceId, growthProgramId: id }),
+      createProductionGrowthProgramOutcomeService().getSummary({ workspaceId, growthProgramId: id }),
+    ]);
+    return Response.json({ analytics, economics });
   } catch (err) {
     return toApiError(err);
   }

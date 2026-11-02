@@ -14,6 +14,11 @@ import { newId } from "../auth/session";
 import { getOrganizationOperatorMode, type OrganizationOperatorMode } from "./operatorMode";
 import type { AuditSink } from "./campaignStore";
 import { recordAuditEvent } from "./audit";
+import {
+  createProductionGrowthProgramOutcomeEvaluator,
+  recordGrowthProgramShadowDecision,
+  type GrowthProgramOutcomeEvaluation,
+} from "./growthProgramOutcome";
 import { evaluateValueOfInformation } from "./verification";
 import {
   EXTERNAL_OUTCOME_TYPES,
@@ -200,6 +205,7 @@ export interface SafeOutcomeEvent {
   verifiedAt: string | null;
   settledAt: string | null;
   procurementRecommendation: string;
+  programEvaluation?: GrowthProgramOutcomeEvaluation | null;
 }
 
 export interface SafeOutcomeReceipt {
@@ -225,6 +231,7 @@ export interface SafeOutcomeReceipt {
   submittedAt: string;
   verifiedAt: string | null;
   settledAt: string | null;
+  programEvaluation?: GrowthProgramOutcomeEvaluation | null;
 }
 
 export interface SafeOutcomeStatus {
@@ -259,6 +266,8 @@ export interface OutcomeApiDependencies {
     attributionIdentityId: string | null;
     participantId: string | null;
   }>;
+  evaluateGrowthProgramOutcome?: (params: { workspaceId: string; eventId: string }) => Promise<GrowthProgramOutcomeEvaluation | null>;
+  recordGrowthProgramDecision?: (params: { workspaceId: string; evaluation: GrowthProgramOutcomeEvaluation }) => Promise<void>;
   now?: () => Date;
 }
 
@@ -330,7 +339,7 @@ function toDefinition(row: ExternalOutcomeDefinitionRow): SafeDefinition {
   };
 }
 
-function toEvent(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefinitionRow): SafeOutcomeEvent {
+function toEvent(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefinitionRow, programEvaluation: GrowthProgramOutcomeEvaluation | null = null): SafeOutcomeEvent {
   return {
     id: row.id,
     receiptId: row.receiptId,
@@ -361,10 +370,11 @@ function toEvent(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefini
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
     settledAt: row.settledAt?.toISOString() ?? null,
     procurementRecommendation: row.procurementRecommendation,
+    programEvaluation,
   };
 }
 
-function toReceipt(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefinitionRow): SafeOutcomeReceipt {
+function toReceipt(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefinitionRow, programEvaluation: GrowthProgramOutcomeEvaluation | null = null): SafeOutcomeReceipt {
   return {
     id: row.receiptId,
     eventId: row.id,
@@ -392,6 +402,7 @@ function toReceipt(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefi
     submittedAt: row.createdAt.toISOString(),
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
     settledAt: row.settledAt?.toISOString() ?? null,
+    programEvaluation,
   };
 }
 
@@ -784,15 +795,24 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
           procurementRecommendation: row.procurementRecommendation,
         },
       });
-      return this.getEventResult(row, definition, false, mode);
+      const programEvaluation = deps.evaluateGrowthProgramOutcome
+        ? await deps.evaluateGrowthProgramOutcome({ workspaceId: params.principal.workspaceId, eventId: row.id }).catch(() => null)
+        : null;
+      if (programEvaluation && deps.recordGrowthProgramDecision) {
+        await deps.recordGrowthProgramDecision({ workspaceId: params.principal.workspaceId, evaluation: programEvaluation }).catch(() => {});
+      }
+      return this.getEventResult(row, definition, false, mode, programEvaluation);
     },
 
-    async getEventResult(row: ExternalOutcomeEventRow, definition?: ExternalOutcomeDefinitionRow, idempotent = false, mode?: OrganizationOperatorMode) {
+    async getEventResult(row: ExternalOutcomeEventRow, definition?: ExternalOutcomeDefinitionRow, idempotent = false, mode?: OrganizationOperatorMode, programEvaluation?: GrowthProgramOutcomeEvaluation | null) {
       const resolvedDefinition = definition ?? await deps.repository.getDefinitionById(row.workspaceId, row.definitionId);
       if (!resolvedDefinition) fail(404, "OUTCOME_NOT_FOUND", "Outcome definition not found.");
+      const evaluation = programEvaluation === undefined
+        ? deps.evaluateGrowthProgramOutcome ? await deps.evaluateGrowthProgramOutcome({ workspaceId: row.workspaceId, eventId: row.id }).catch(() => null) : null
+        : programEvaluation;
       return {
-        event: toEvent(row, resolvedDefinition),
-        receipt: toReceipt(row, resolvedDefinition),
+        event: toEvent(row, resolvedDefinition, evaluation),
+        receipt: toReceipt(row, resolvedDefinition, evaluation),
         idempotent,
         mode: mode ?? (row.executionState === "NOT_EXECUTED" ? "SHADOW" : "AUTONOMOUS"),
       } as const;
@@ -804,9 +824,10 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       const definition = await deps.repository.getDefinitionById(params.workspaceId, row.definitionId);
       if (!definition) fail(404, "OUTCOME_NOT_FOUND", "Outcome definition not found.");
       const trail = await deps.repository.listLedger(params.workspaceId, row.id);
+      const evaluation = deps.evaluateGrowthProgramOutcome ? await deps.evaluateGrowthProgramOutcome({ workspaceId: params.workspaceId, eventId: row.id }).catch(() => null) : null;
       return {
-        event: toEvent(row, definition),
-        receipt: toReceipt(row, definition),
+        event: toEvent(row, definition, evaluation),
+        receipt: toReceipt(row, definition, evaluation),
         decisionTrail: trail.map((item) => ({ action: item.action, createdAt: item.createdAt.toISOString(), metadata: item.metadata })),
       };
     },
@@ -817,9 +838,10 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         const definition = await deps.repository.getDefinitionById(workspaceId, row.definitionId);
         if (!definition) return null;
         const trail = await deps.repository.listLedger(workspaceId, row.id);
+        const evaluation = deps.evaluateGrowthProgramOutcome ? await deps.evaluateGrowthProgramOutcome({ workspaceId, eventId: row.id }).catch(() => null) : null;
         return {
-          event: toEvent(row, definition),
-          receipt: toReceipt(row, definition),
+          event: toEvent(row, definition, evaluation),
+          receipt: toReceipt(row, definition, evaluation),
           decisionTrail: trail.map((item) => ({ action: item.action, createdAt: item.createdAt.toISOString(), metadata: item.metadata })),
         } satisfies SafeOutcomeStatus;
       })).then((items) => items.filter((item): item is SafeOutcomeStatus => item !== null));
@@ -1037,10 +1059,14 @@ export function createMemoryOutcomeApiRepository(): OutcomeApiRepository & {
 export function createProductionOutcomeApiService() {
   if (!isDbConfigured()) throw new OutcomeAdapterError(503, "UNCONFIGURED", "Database is not configured.");
   const db = getDb();
+  const evaluateGrowthProgramOutcome = createProductionGrowthProgramOutcomeEvaluator();
+  const audit = (input: Parameters<AuditSink>[0]) => recordAuditEvent(db, input);
   return createOutcomeApiService({
     repository: createDrizzleOutcomeApiRepository(db),
-    audit: (input) => recordAuditEvent(db, input),
+    audit,
     getMode: getOrganizationOperatorMode,
+    evaluateGrowthProgramOutcome,
+    recordGrowthProgramDecision: ({ workspaceId, evaluation }) => recordGrowthProgramShadowDecision(audit, workspaceId, evaluation),
     getGrowthProgramBinding: async (workspaceId, growthProgramId) => {
       const [row] = await db.select({
         id: developerGrowthPrograms.id,
