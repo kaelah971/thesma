@@ -56,6 +56,9 @@
 - `tests/growth-programs.test.ts`, `tests/growth-participation.test.ts`, `tests/embedded-sdk.test.ts`, `tests/growth-program-outcome.test.ts`
 - `docs/sdk.md`
 - `docs/embedded-growth-programs.md`, `docs/build-with-thesma.md`, `docs/current-state.md`, `README.md`
+- `scripts/review-production-growth-migrations.ts` (read-only schema checker; no SQL writes)
+- `scripts/proofpilot-shadow-pilot.ts` (external-style SDK proof client; explicit opt-in)
+- `docs/proofpilot-shadow-pilot.md` (blocked production proof artifact)
 
 ## Slice 4 result
 - Program-bound Outcome API events now expose one deterministic evaluation combining attribution, existing verification/VOI state, frozen participant reward terms, bigint program economics, holds, settlement eligibility, operator recommendation, execution status and receipt context.
@@ -63,15 +66,19 @@
 - Shadow records `WOULD_SETTLE`/review recommendations through the existing decision ledger; payout, procurement, Circle, x402 and chain execution remain blocked. No migration was added or applied.
 
 ## Verification
-- Focused: Slice 4 pipeline + SDK + Outcome API tests passed (30 tests); Growth Program + participation regression tests passed (12 tests).
-- Full suite: 965 passed, 2 skipped.
-- Typecheck: pass. Lint: pass. Production build: pass. Browser smoke: pass.
+- Production health read: `https://thesma.vercel.app/api/health` returned HTTP 200 with `checks.db: ok`.
+- Read-only production schema review: blocked because no production `DATABASE_URL` is available; no connection or SQL write was attempted.
+- External proof client safety guard: verified; it refuses to create records without explicit `THESMA_PROOF_CONFIRM` and `THESMA_API_KEY`.
+- Typecheck: pass. Lint: pass.
+- Full suite/build/browser not rerun because no application runtime code changed; Slice 4 checkpoint remains valid.
 - `git diff --check`: pending final checkpoint.
 
 ## Blockers / truth
-- Migrations 0019, 0020 and 0021 are created locally and must go through the reviewed production migration process; do not apply blindly.
+- Slice 5 is blocked: no production `DATABASE_URL`, Vercel/Neon access, authenticated ProofPilot session, or `ths_api_` key is available in this agent session.
+- Production health is reachable and reports `checks.db: ok`; the public ProofPilot program endpoint currently returns HTTP 500, so production schema/program state cannot be inferred safely.
+- Migrations 0019, 0020 and 0021 are reviewed locally but remain NOT APPLIED; the historical migration journal remains untrusted and unchanged.
 - No mainnet transactions, testnet transactions, x402 payments, Circle calls, real USDC or test USDC were made.
 - Unrelated worktree changes preserved: `next-env.d.ts`, `.circle-register-existing.mjs`, `AGENTS.md`, `contracts/verification/`, `docs/ui redesign/`, `docs/ui refresh/`.
 
 ## Next action
-- Slice 5: safely apply pending production migrations, create the real ProofPilot Growth Program, connect a real integration, submit one real Shadow outcome from an external ProofPilot-style client, and inspect the production receipt with zero financial execution.
+- Unblock Slice 5 with temporary authenticated ProofPilot access and a reviewed production database connection; run the read-only schema checker, manually apply only missing migration objects in dependency order, then execute the explicit external-style Shadow pilot once.
