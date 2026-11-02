@@ -394,6 +394,10 @@ export async function reconcilePayout(deps: PayoutDeps, params: { payoutId: stri
     const ms = store as MarketStore;
     const payout = await ms.getPayout(params.payoutId);
     if (!payout) fail(404, "NOT_FOUND", "Payout not found");
+    const campaignForMode = await ms.getCampaign(payout.campaignId);
+    if (campaignForMode && (await getOrganizationOperatorMode(campaignForMode.workspaceId)) === "SHADOW") {
+      return { settled: false as const, blocked: true as const, reason: "SHADOW_MODE" as const };
+    }
     const reservation = await ms.getReservation(payout.reservationId);
     if (!reservation) fail(500, "INTERNAL", "Payout has no reservation");
     if (payout.state === "SETTLED") {
