@@ -13,7 +13,6 @@ import {
 import { newId } from "../auth/session";
 import type { AuditSink } from "./campaignStore";
 import { recordAuditEvent } from "./audit";
-import { assertExecutionAllowed, getOrganizationOperatorMode, type OrganizationOperatorMode } from "./operatorMode";
 import { createProductionGrowthProgramService, type SafeGrowthProgram } from "./growthPrograms";
 
 export const GROWTH_PROGRAM_PARTICIPANT_KINDS = ["CREATOR", "REFERRAL_PARTNER"] as const;
@@ -128,7 +127,6 @@ export interface GrowthProgramParticipationDependencies {
   repository: ParticipantRepository;
   getProgram: (workspaceId: string, growthProgramId: string) => Promise<SafeGrowthProgram>;
   setParticipationStatus?: (params: { workspaceId: string; id: string; status: "CLOSED" | "INVITE_ONLY" | "OPEN"; actorId: string | null }) => Promise<SafeGrowthProgram>;
-  getMode?: (workspaceId: string) => Promise<OrganizationOperatorMode>;
   getCreator?: (creatorUserId: string) => Promise<CreatorDirectoryEntry | null>;
   audit: AuditSink;
   now?: () => Date;
@@ -275,10 +273,9 @@ export function createGrowthProgramParticipationService(deps: GrowthProgramParti
         const displayName = optionalString(input.displayName, "displayName") ?? creator.displayName ?? creator.handle ?? creator.userId;
         const handle = optionalString(input.handle, "handle") ?? creator.handle;
         const requestedStatus = input.initialStatus === undefined ? source === "INVITE" ? "INVITED" : "APPLIED" : enumValue(input.initialStatus, GROWTH_PROGRAM_PARTICIPANT_STATUSES, "initialStatus");
-        if (source === "INVITE" || requestedStatus === "INVITED") {
-          const mode = await (deps.getMode?.(input.workspaceId) ?? Promise.resolve("AUTONOMOUS" as const));
-          if (currentProgram.operatorMode === "SHADOW" || mode === "SHADOW") assertExecutionAllowed("SHADOW", "CREATOR_INVITE");
-        }
+        // Participant creation records internal program state only. Shadow blocks
+        // external notifications and execution in their own boundaries, not this
+        // owner-controlled enrollment record.
         const at = now();
         const row = await deps.repository.insertParticipant({
           id: newId(), workspaceId: input.workspaceId, growthProgramId: input.growthProgramId,
@@ -298,10 +295,9 @@ export function createGrowthProgramParticipationService(deps: GrowthProgramParti
       if (existing) return safeParticipant(existing);
       const displayName = safeString(input.displayName, "displayName");
       const requestedStatus = input.initialStatus === undefined ? source === "INVITE" ? "INVITED" : "APPLIED" : enumValue(input.initialStatus, GROWTH_PROGRAM_PARTICIPANT_STATUSES, "initialStatus");
-      if (source === "INVITE" || requestedStatus === "INVITED") {
-        const mode = await (deps.getMode?.(input.workspaceId) ?? Promise.resolve("AUTONOMOUS" as const));
-        if (currentProgram.operatorMode === "SHADOW" || mode === "SHADOW") assertExecutionAllowed("SHADOW", "CREATOR_INVITE");
-      }
+      // Participant creation records internal program state only. Shadow blocks
+      // external notifications and execution in their own boundaries, not this
+      // owner-controlled enrollment record.
       const at = now();
       const row = await deps.repository.insertParticipant({
         id: newId(), workspaceId: input.workspaceId, growthProgramId: input.growthProgramId,
@@ -607,7 +603,6 @@ export function createProductionGrowthProgramParticipationService() {
     repository: createDrizzleGrowthProgramParticipantRepository(db),
     getProgram: (workspaceId, growthProgramId) => programs.getProgram({ workspaceId, id: growthProgramId }),
     setParticipationStatus: (params) => programs.setParticipationStatus({ workspaceId: params.workspaceId, id: params.id, status: params.status, actorId: params.actorId }),
-    getMode: getOrganizationOperatorMode,
     getCreator: async (creatorUserId) => {
       const [row] = await db.select({ userId: userPersonas.userId, handle: userPersonas.handle, creatorType: userPersonas.creatorType, displayName: users.name, persona: userPersonas.persona, onboardingCompletedAt: userPersonas.onboardingCompletedAt }).from(userPersonas).leftJoin(users, eq(users.id, userPersonas.userId)).where(eq(userPersonas.userId, creatorUserId)).limit(1);
       if (!row || row.persona !== "CREATOR" || !row.onboardingCompletedAt) return null;

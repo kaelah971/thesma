@@ -16,7 +16,6 @@ function setup() {
   const outcomeApi = createOutcomeApiService({
     repository: outcomeRepository,
     now: () => NOW,
-    getMode: async () => "AUTONOMOUS",
     getGrowthProgramBinding: (workspaceId, id) => programRepository.getBinding!(workspaceId, id),
     resolveGrowthAttribution: (workspaceId, growthProgramId, reference) => participation.resolveAttributionForEvent(workspaceId, growthProgramId, reference),
     audit: async (row) => { audits.push(row); },
@@ -74,11 +73,42 @@ describe("Growth Program participation and attribution", () => {
     expect(active.attribution?.code).toMatch(/^ref_/);
   });
 
-  it("blocks creator invitations while a program remains in Shadow Mode", async () => {
+  it("records internal creator invitations in Shadow without external notification", async () => {
     const value = setup();
     const program = await createProgram(value);
-    await expect(value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "owner-proofpilot", participantType: "CREATOR", creatorUserId: "creator-shadow", participationSource: "INVITE" })).rejects.toMatchObject({ code: "SHADOW_EXECUTION_BLOCKED" });
-    const request = await value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "creator-shadow", participantType: "CREATOR", creatorUserId: "creator-shadow", participationSource: "OPEN_JOIN" });
+    const invitation = await value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "owner-proofpilot", participantType: "CREATOR", creatorUserId: "creator-shadow", participationSource: "INVITE", initialStatus: "INVITED" });
+    expect(invitation.status).toBe("INVITED");
+    expect(value.audits.map((row) => (row as { action?: string }).action).filter(Boolean)).not.toContain("creator.notification.sent");
+
+    const request = await value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "creator-shadow-open", participantType: "CREATOR", creatorUserId: "creator-shadow-open", participationSource: "OPEN_JOIN" });
+    expect(request.status).toBe("APPLIED");
+  });
+
+  it("allows Shadow referral-partner setup in INVITE_ONLY and persists activation attribution", async () => {
+    const value = setup();
+    const program = await createProgram(value);
+    const inviteOnly = await value.participation.setParticipationMode({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, participationStatus: "INVITE_ONLY", actorId: "owner-proofpilot" });
+    expect(inviteOnly.participationStatus).toBe("INVITE_ONLY");
+    expect((await value.programs.getProgram({ workspaceId: "project-proofpilot", id: program.program.id })).participationStatus).toBe("INVITE_ONLY");
+
+    const partner = await value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "owner-proofpilot", participantType: "REFERRAL_PARTNER", externalPartnerId: "proofpilot_pilot_partner", displayName: "ProofPilot Pilot Partner", participationSource: "INVITE" });
+    expect(partner.status).toBe("INVITED");
+    const active = await value.participation.transitionParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, participantId: partner.id, action: "APPROVE", actorId: "owner-proofpilot" });
+    expect(active.status).toBe("ACTIVE");
+    expect(active.attribution?.code).toMatch(/^ref_/);
+    expect(value.audits.map((row) => (row as { action?: string }).action).filter(Boolean)).not.toContain("creator.notification.sent");
+  });
+
+  it("keeps CLOSED closed and persists OPEN for safe internal requests", async () => {
+    const value = setup();
+    const program = await createProgram(value);
+    await value.participation.setParticipationMode({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, participationStatus: "CLOSED", actorId: "owner-proofpilot" });
+    await expect(value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "owner-proofpilot", participantType: "REFERRAL_PARTNER", externalPartnerId: "closed-partner", displayName: "Closed Partner", participationSource: "INVITE" })).rejects.toMatchObject({ code: "PARTICIPATION_CLOSED" });
+
+    const open = await value.participation.setParticipationMode({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, participationStatus: "OPEN", actorId: "owner-proofpilot" });
+    expect(open.participationStatus).toBe("OPEN");
+    expect((await value.programs.getProgram({ workspaceId: "project-proofpilot", id: program.program.id })).participationStatus).toBe("OPEN");
+    const request = await value.participation.createParticipant({ workspaceId: "project-proofpilot", growthProgramId: program.program.id, actorId: "owner-proofpilot", participantType: "REFERRAL_PARTNER", externalPartnerId: "open-partner", displayName: "Open Partner", participationSource: "OPEN_JOIN" });
     expect(request.status).toBe("APPLIED");
   });
 
