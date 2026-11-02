@@ -485,7 +485,7 @@ export async function evaluateVerificationCheck(
     } else {
       const { createCircleVerificationBuyer } = await import("../chain/circle");
       const buyer = await createCircleVerificationBuyer(env);
-      signer = { address: buyer.address, sign: buyer.sign };
+      signer = { address: buyer.address, sign: buyer.sign, signTypedData: buyer.signTypedData };
     }
   } else {
     signer = getProcurementSigner(env);
@@ -511,7 +511,7 @@ export async function evaluateVerificationCheck(
   try {
     purchase = await purchaseWithX402({
       url: quote.resourceUrl, approved,
-      signer: { address: signer.address, sign: signer.sign },
+      signer: { address: signer.address, sign: signer.sign, signTypedData: signer.signTypedData },
       allowedHosts, fetchImpl, nowMs: now.getTime(), timeoutCapSec,
     });
   } catch (e) {

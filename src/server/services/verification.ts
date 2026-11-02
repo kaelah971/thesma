@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { getAddress, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { AuditSink, MarketStore } from "./campaignStore";
@@ -127,11 +127,19 @@ export interface X402Accepted {
   amount: string;
   payTo: string;
   maxTimeoutSeconds: number;
+  extra?: Record<string, unknown>;
 }
 
 export interface X402PaymentRequired {
   x402Version: number;
-  resource: { url: string };
+  resource: {
+    url: string;
+    description?: string;
+    mimeType?: string;
+    serviceName?: string;
+    tags?: string[];
+    iconUrl?: string;
+  };
   accepted: X402Accepted[];
 }
 
@@ -199,14 +207,32 @@ export function parsePaymentRequired(header: string | null): X402PaymentRequired
   if (v.x402Version !== X402_VERSION) {
     throw fail(400, "WRONG_X402_VERSION", `Unsupported x402 version (want ${X402_VERSION}; v1 X-PAYMENT semantics are never accepted).`);
   }
-  const resource = v.resource as { url?: unknown } | undefined;
+  const resource = v.resource as {
+    url?: unknown;
+    description?: unknown;
+    mimeType?: unknown;
+    serviceName?: unknown;
+    tags?: unknown;
+    iconUrl?: unknown;
+  } | undefined;
   // Real-world providers send `accepts`; older fixtures use `accepted`.
   // Accept either key (never both conflicting — `accepted` wins for legacy).
   const accepted = (Array.isArray(v.accepted) ? v.accepted : Array.isArray(v.accepts) ? v.accepts : null) as X402Accepted[] | null;
   if (!resource || typeof resource.url !== "string" || !Array.isArray(accepted) || accepted.length === 0) {
     throw fail(400, "MALFORMED_402", "PAYMENT-REQUIRED is missing resource or accepted terms.");
   }
-  return { x402Version: v.x402Version, resource: { url: resource.url }, accepted };
+  return {
+    x402Version: v.x402Version,
+    resource: {
+      url: resource.url,
+      ...(typeof resource.description === "string" ? { description: resource.description } : {}),
+      ...(typeof resource.mimeType === "string" ? { mimeType: resource.mimeType } : {}),
+      ...(typeof resource.serviceName === "string" ? { serviceName: resource.serviceName } : {}),
+      ...(Array.isArray(resource.tags) ? { tags: resource.tags.filter((x): x is string => typeof x === "string") } : {}),
+      ...(typeof resource.iconUrl === "string" ? { iconUrl: resource.iconUrl } : {}),
+    },
+    accepted,
+  };
 }
 
 /** Fail closed on anything unexpected. Amounts must fit the approved quote exactly. */
@@ -439,7 +465,34 @@ export function evaluateValueOfInformation(input: ValueOfInformationInput): Valu
 }
 
 export function authorizationEnvelope(signerAddress: string, signature: Hex, terms: X402Accepted): string {
+  // Legacy/local-test envelope retained for the in-process fixture. Live EVM
+  // providers use the standard v2 accepted/resource/payload envelope below.
   return Buffer.from(JSON.stringify({ x402Version: X402_VERSION, signer: signerAddress, signature, terms }), "utf8").toString("base64");
+}
+
+function standardX402Envelope(params: {
+  resource: Record<string, unknown>;
+  terms: X402Accepted;
+  authorization: {
+    from: string;
+    to: string;
+    value: string;
+    validAfter: string;
+    validBefore: string;
+    nonce: string;
+  };
+  signature: Hex;
+}): string {
+  // The authorization in the wire envelope must be byte-for-byte the same
+  // authorization that was signed. Rebuilding it here would change the nonce
+  // or validity window and produce provider `invalid_signature` responses.
+  const envelope = {
+    x402Version: X402_VERSION,
+    resource: params.resource,
+    accepted: params.terms,
+    payload: { authorization: params.authorization, signature: params.signature },
+  };
+  return Buffer.from(JSON.stringify(envelope), "utf8").toString("base64");
 }
 
 export function parsePaymentResponse(header: string | null): Record<string, unknown> | null {
@@ -459,7 +512,16 @@ export function parsePaymentResponse(header: string | null): Record<string, unkn
 export async function purchaseWithX402(params: {
   url: string;
   approved: ApprovedPayment;
-  signer: { address: string; sign: (message: string) => Promise<Hex> };
+  signer: {
+    address: string;
+    sign: (message: string) => Promise<Hex>;
+    signTypedData?: (typedData: {
+      domain: Record<string, unknown>;
+      types: Record<string, unknown>;
+      primaryType: string;
+      message: Record<string, unknown>;
+    }) => Promise<Hex>;
+  };
   allowedHosts: string[];
   fetchImpl?: FetchImpl;
   body?: unknown;
@@ -492,18 +554,69 @@ export async function purchaseWithX402(params: {
     timeoutCapSec: params.timeoutCapSec,
     baseUrlForRelativeResource: params.url,
   });
-  const canonical = JSON.stringify({
-    x402Version: X402_VERSION, resource: params.url, scheme: terms.scheme, network: terms.network,
-    asset: terms.asset, amount: terms.amount, payTo: terms.payTo,
-  });
-  const signature = await params.signer.sign(canonical).catch((e) => {
-    throw fail(500, "SIGNING_FAILED", `Procurement signer failed: ${(e as Error).message}`);
-  });
+  let signature: Hex;
+  let paymentHeader: string;
+  if (params.signer.signTypedData) {
+    // Standard x402 EVM exact scheme: Circle signs EIP-3009
+    // TransferWithAuthorization, not an EIP-191 message string.
+    const extra = terms.extra ?? {};
+    const authorization = {
+      from: params.signer.address,
+      to: terms.payTo,
+      value: terms.amount,
+      validAfter: String(Math.floor(nowMs / 1000) - 600),
+      validBefore: String(Math.floor(nowMs / 1000) + Math.max(terms.maxTimeoutSeconds, 604900)),
+      nonce: `0x${randomBytes(32).toString("hex")}`,
+    };
+    const typedData = {
+      domain: {
+        name: typeof extra.name === "string" ? extra.name : "",
+        version: typeof extra.version === "string" ? extra.version : "1",
+        chainId: Number.parseInt(terms.network.split(":")[1] ?? "0", 10),
+        // Circle Gateway batching signs against its GatewayWalletBatched
+        // verifyingContract advertised in the 402 extra fields (the current
+        // @circle-fin/x402-batching scheme uses this exact domain).
+        verifyingContract: typeof extra.verifyingContract === "string" ? extra.verifyingContract : terms.asset,
+      },
+      types: {
+        TransferWithAuthorization: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "validAfter", type: "uint256" },
+          { name: "validBefore", type: "uint256" },
+          { name: "nonce", type: "bytes32" },
+        ],
+      },
+      primaryType: "TransferWithAuthorization",
+      message: {
+        from: authorization.from,
+        to: authorization.to,
+        value: BigInt(authorization.value),
+        validAfter: BigInt(authorization.validAfter),
+        validBefore: BigInt(authorization.validBefore),
+        nonce: authorization.nonce,
+      },
+    };
+    signature = await params.signer.signTypedData(typedData).catch((e) => {
+      throw fail(500, "SIGNING_FAILED", `Procurement signer failed: ${(e as Error).message}`);
+    });
+    paymentHeader = standardX402Envelope({ resource: required.resource, terms, authorization, signature });
+  } else {
+    const canonical = JSON.stringify({
+      x402Version: X402_VERSION, resource: params.url, scheme: terms.scheme, network: terms.network,
+      asset: terms.asset, amount: terms.amount, payTo: terms.payTo,
+    });
+    signature = await params.signer.sign(canonical).catch((e) => {
+      throw fail(500, "SIGNING_FAILED", `Procurement signer failed: ${(e as Error).message}`);
+    });
+    paymentHeader = authorizationEnvelope(params.signer.address, signature, terms);
+  }
   const second = await fetchImpl(params.url, {
     method: params.body !== undefined ? "POST" : "GET",
     headers: {
       ...(params.body !== undefined ? { "content-type": "application/json" } : {}),
-      [PAYMENT_SIGNATURE_HEADER]: authorizationEnvelope(params.signer.address, signature, terms),
+      [PAYMENT_SIGNATURE_HEADER]: paymentHeader,
     },
     body: params.body !== undefined ? JSON.stringify(params.body) : undefined,
     redirect: "manual",
@@ -521,7 +634,9 @@ export async function purchaseWithX402(params: {
   }
   if (!second.ok) {
     const ambiguous = second.status === 429 || second.status >= 500;
-    throw Object.assign(new Error(`Provider rejected the payment retry (${second.status}).`), {
+    const body = await second.text().catch(() => "");
+    const safeBody = body.replace(/\s+/g, " ").slice(0, 500);
+    throw Object.assign(new Error(`Provider rejected the payment retry (${second.status}).${safeBody ? ` ${safeBody}` : ""}`), {
       status: 502,
       code: "PURCHASE_FAILED",
       ambiguousAfterSign: ambiguous,
@@ -538,7 +653,15 @@ export async function purchaseWithX402(params: {
 
 export interface ProcurementSigner {
   address: string;
+  /** Legacy/local-test EIP-191 message signer. */
   sign: (message: string) => Promise<Hex>;
+  /** Standard x402 EIP-3009 signer used by live EVM providers. */
+  signTypedData?: (typedData: {
+    domain: Record<string, unknown>;
+    types: Record<string, unknown>;
+    primaryType: string;
+    message: Record<string, unknown>;
+  }) => Promise<Hex>;
 }
 
 export function getProcurementSigner(env: NodeJS.ProcessEnv = process.env): ProcurementSigner {

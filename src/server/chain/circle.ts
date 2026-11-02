@@ -1,5 +1,13 @@
 import { getAddress } from "viem";
-import * as CircleSDK from "@circle-fin/developer-controlled-wallets";
+import { createRequire } from "node:module";
+
+// The Circle SDK ships minified CJS whose named exports tsx's ESM loader
+// cannot statically link. Loading it through require() works identically
+// under tsx, vitest, and the Next.js server runtime.
+const circleRequire = createRequire(import.meta.url);
+const { CircleDeveloperControlledWalletsClient } = circleRequire("@circle-fin/developer-controlled-wallets") as {
+  CircleDeveloperControlledWalletsClient: new (config: { apiKey: string; entitySecret: string; baseUrl?: string }) => unknown;
+};
 
 /**
  * THESMA VERIFICATION BUYER WALLET — Circle Developer-Controlled Wallet.
@@ -31,6 +39,7 @@ export interface CircleVerificationConfig {
 export interface CircleClientLike {
   getWallet: (input: { id: string }) => Promise<{ data?: { wallet?: { address?: string; blockchain?: string } } }>;
   signMessage: (input: { walletId: string; message: string }) => Promise<{ data?: { signature?: unknown } }>;
+  signTypedData?: (input: { walletId: string; data: string }) => Promise<{ data?: { signature?: unknown } }>;
   getWalletsWithBalances: (input: { address?: string; blockchain?: string; tokenAddress?: string }) => Promise<{ data?: unknown }>;
 }
 
@@ -38,10 +47,25 @@ export interface CircleVerificationBuyer {
   address: string;
   blockchain: string;
   walletId: string;
-  /** EIP-191 message signer for x402 payment proofs. No key material here. */
+  /** Legacy EIP-191 message signer (local-test compatibility). */
   sign: (message: string) => Promise<`0x${string}`>;
-  /** Canonical testnet USDC balance of the buyer wallet (read-only). */
-  usdcBalanceMicro: (usdcAddress: string) => Promise<bigint>;
+  /** Standard EIP-712 signer used by live x402 EVM exact providers. */
+  signTypedData?: (typedData: {
+    domain: Record<string, unknown>;
+    types: Record<string, unknown>;
+    primaryType: string;
+    message: Record<string, unknown>;
+  }) => Promise<`0x${string}`>;
+  /** Canonical ERC-20 testnet USDC balance (micro-USDC, read-only eth_call). Fails closed without an RPC source. */
+  usdcBalanceMicro: (
+    usdcAddress: string,
+    opts?: {
+      /** Testnet RPC URL for the eth_call. Required unless readContract is injected (tests). */
+      rpcUrl?: string;
+      /** Injected balance reader (tests only; must return micro-USDC). */
+      readContract?: (token: `0x${string}`, account: `0x${string}`) => Promise<bigint>;
+    },
+  ) => Promise<bigint>;
 }
 
 /** Present only when all three server-only values are configured. */
@@ -90,7 +114,7 @@ export async function createCircleVerificationBuyer(
   }
   const client = opts?.client !== undefined
     ? asCircleClient(opts.client)
-    : asCircleClient(new CircleSDK.CircleDeveloperControlledWalletsClient({ apiKey: cfg.apiKey, entitySecret: cfg.entitySecret }));
+    : asCircleClient(new CircleDeveloperControlledWalletsClient({ apiKey: cfg.apiKey, entitySecret: cfg.entitySecret }));
   let wallet: { address?: string; blockchain?: string };
   try {
     const res = await client.getWallet({ id: cfg.walletId });
@@ -106,15 +130,13 @@ export async function createCircleVerificationBuyer(
   if (cfg.expectedAddress && getAddress(cfg.expectedAddress) !== address) {
     throw fail(503, "CIRCLE_MISCONFIGURED", "Circle verification wallet does not match CIRCLE_VERIFICATION_WALLET_ADDRESS.");
   }
-  return {
+  const buyer: CircleVerificationBuyer = {
     address,
     blockchain,
     walletId: cfg.walletId,
     sign: async (message: string) => {
       let sig: unknown;
       try {
-        // The SDK sign-message surface takes no idempotency key; replay
-        // safety is enforced by the procurement dedupe + state gates.
         const res = await client.signMessage({ walletId: cfg.walletId, message });
         sig = res?.data?.signature;
       } catch (e) {
@@ -125,31 +147,55 @@ export async function createCircleVerificationBuyer(
       }
       return sig as `0x${string}`;
     },
-    usdcBalanceMicro: async (usdcAddress: string) => {
+    usdcBalanceMicro: async (usdcAddress: string, opts?: { rpcUrl?: string; readContract?: (token: `0x${string}`, account: `0x${string}`) => Promise<bigint> }) => {
       const token = asChecksum(usdcAddress, "USDC address");
-      if (typeof client.getWalletsWithBalances !== "function") {
-        throw fail(503, "CIRCLE_BALANCE_UNAVAILABLE", "Circle client cannot list wallet balances.");
-      }
-      let wallets: Array<Record<string, unknown>>;
+      const account = address as `0x${string}`;
       try {
-        const res = await client.getWalletsWithBalances({ address, blockchain: CIRCLE_EXPECTED_BLOCKCHAIN, tokenAddress: token });
-        const data = (res?.data ?? {}) as { wallets?: unknown[] };
-        wallets = Array.isArray(data.wallets) ? (data.wallets as Array<Record<string, unknown>>) : [];
+        if (opts?.readContract) return await opts.readContract(token as `0x${string}`, account);
+        if (opts?.rpcUrl) {
+          const { createPublicClient, http, parseAbiItem } = await import("viem");
+          const rpc = createPublicClient({ transport: http(opts.rpcUrl) });
+          return (await rpc.readContract({
+            address: token as `0x${string}`,
+            abi: [parseAbiItem("function balanceOf(address account) view returns (uint256)")],
+            functionName: "balanceOf",
+            args: [account],
+          })) as bigint;
+        }
       } catch (e) {
-        throw fail(503, "CIRCLE_BALANCE_UNAVAILABLE", `Could not read Circle wallet balances: ${(e as Error).message}`);
+        throw fail(503, "CIRCLE_BALANCE_UNAVAILABLE", `USDC balance read failed: ${(e as Error).message}`);
       }
-      const row = wallets.find((w) => String((w as Record<string, unknown>).address ?? (w as Record<string, unknown>).id ?? "").toLowerCase() === address.toLowerCase());
-      const balances = Array.isArray((row ?? {})?.tokenBalances) ? ((row as Record<string, unknown>).tokenBalances as Array<Record<string, unknown>>) : [];
-      const entry = balances.find((b) => String(b.tokenAddress ?? b.contractAddress ?? "").toLowerCase() === token.toLowerCase());
-      const amount = entry?.amount ?? entry?.balance;
-      if (amount === undefined || amount === null) return 0n;
-      try {
-        const v = BigInt(String(amount));
-        return v >= 0n ? v : 0n;
-      } catch {
-        throw fail(503, "CIRCLE_BALANCE_UNAVAILABLE", "Circle returned an unparseable USDC balance.");
-      }
+      throw fail(503, "CIRCLE_BALANCE_UNAVAILABLE", "No RPC configured for the USDC balance read.");
     },
   };
+  if (typeof client.signTypedData === "function") {
+    buyer.signTypedData = async (typedData) => {
+      let sig: unknown;
+      try {
+        const dataTyped = typedData.types.EIP712Domain
+          ? typedData
+          : {
+              ...typedData,
+              types: {
+                EIP712Domain: Object.keys(typedData.domain).map((name) => ({
+                  name,
+                  type: name === "chainId" ? "uint256" : name === "verifyingContract" ? "address" : "string",
+                })),
+                ...typedData.types,
+              },
+            };
+        const data = JSON.stringify(dataTyped, (_key, value) => typeof value === "bigint" ? value.toString() : value);
+        const res = await client.signTypedData!({ walletId: cfg.walletId, data });
+        sig = res?.data?.signature;
+      } catch (e) {
+        throw fail(500, "CIRCLE_SIGNING_FAILED", `Circle typed-data signing failed: ${(e as Error).message}`);
+      }
+      if (typeof sig !== "string" || !sig.startsWith("0x")) {
+        throw fail(500, "CIRCLE_SIGNING_FAILED", "Circle returned an unusable typed-data signature.");
+      }
+      return sig as `0x${string}`;
+    };
+  }
+  return buyer;
 }
 

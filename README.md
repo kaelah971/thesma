@@ -72,11 +72,27 @@ DECISION LEDGER ──► shows why every important action occurred
 | Status | Capability |
 |---|---|
 | SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger |
-| SHIPPED, runtime NOT_CONFIGURED | External verification procurement — value-of-information gate, Arc Testnet x402 buyer via dedicated Circle wallet, live 402-challenge validation; stays NOT_CONFIGURED until Circle/provider credentials are supplied (no fake spend, no fallback keys) |
-| SUPPORTED LOCALLY / PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness; real provider interop unproven) |
+| LIVE PROVEN ON ARC TESTNET / production remains opt-in | External verification procurement — value-of-information gate, dedicated Circle buyer, live AuraGate x402 challenge, one guarded 0.002 USDC proof; production stays NOT_CONFIGURED unless its own server credentials are supplied (no fake spend, no fallback keys) |
+| LIVE-PROVIDER PROVEN + PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness plus the live Arc Testnet proof below) |
 | KNOWN UNSUPPORTED | Cross-campaign onchain fund transfer; autonomous settlement of hybrid base/milestone obligations (recorded truthfully as payable without an onchain path) |
 
 ---
+
+## Arc Testnet verification procurement proof — November 2, 2026
+
+**LIVE PROVEN ON ARC TESTNET.** One guarded AuraGate x402 purchase completed with
+no production mutation and no Arc Mainnet access.
+
+- Buyer: dedicated Circle wallet `0xa3cc5aefc97cc16077cbb93fff9f428290e77ad7` on `ARC-TESTNET` (`eip155:5042002`)
+- Quote/payment: **2,000 micro-USDC (0.002 USDC)** to `0xB52D1D41DAf8c87c8709bc79be41c4C424aD36F1`
+- Gateway balance: `0.002 USDC` before the purchase, `0.000 USDC` after; buyer wallet balance after the testnet gas/deposit operations: `19,992,486` micro-USDC
+- Gateway setup evidence: [approval tx](https://explorer.testnet.arc.io/tx/0x2044bf80616c5d5cf2cf6a0c4c453a42fcda51daae5841d457dad31b48f6f929) · [deposit tx](https://explorer.testnet.arc.io/tx/0x898e92d9eb501517843d5259acec9bb392a88a1eab72ca3cd6f3f02c5d59b7f4)
+- Provider result: HTTP 200; evidence `INCONCLUSIVE`, response hash `4c272ab8`, scoped to repository identity only
+- Post-evidence posture: `INCONCLUSIVE` / review required; provider evidence never changes a business outcome or proves a purchase, retention, attribution, or revenue
+- Receipt note: AuraGate did not return a `payment-response` reference or settlement transaction hash, so none is fabricated; the consumed Gateway balance is recorded as the payment-side reconciliation
+- Replay safety: the in-memory re-evaluation purchased nothing and recorded exactly `2,000` micro-USDC once
+
+Full runbook and evidence scope: [`docs/verification-procurement.md`](docs/verification-procurement.md).
 
 ## Judge quick links
 

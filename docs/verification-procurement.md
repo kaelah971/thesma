@@ -58,10 +58,10 @@ A provider signal can never flip an outcome, accuse anyone, or pay anybody.
 - On first use the adapter verifies the wallet lives on `ARC-TESTNET` and,
   when set, matches `CIRCLE_VERIFICATION_WALLET_ADDRESS`. Anything else
   fails closed (`CIRCLE_WRONG_NETWORK` / `CIRCLE_MISCONFIGURED`).
-- The adapter exposes exactly `{ address, sign }`, satisfying the existing
-  `ProcurementSigner` interface. No private key material exists in Thesma;
-  Circle signs remotely. The SDK's sign-message surface takes no caller
-  idempotency key, so replay safety lives in the procurement dedupe gate
+- The adapter exposes the buyer address, legacy message signer, EIP-712 typed-data
+  signer, and canonical read-only USDC balance. No private key material exists
+  in Thesma; Circle signs remotely. The SDK's sign-message surface takes no
+  caller idempotency key, so replay safety lives in the procurement dedupe gate
   (identical logical purchase → same row, never re-signed) plus the atomic
   APPROVED-state gate; a stable UUID v4 derived from the dedupe fingerprint
   rides on the approval audit for traceability.
@@ -78,11 +78,12 @@ A provider signal can never flip an outcome, accuse anyone, or pay anybody.
    positive integer amount, expected payee, same-path resource, sane timeout.
    Anything else fails closed before any signature.
 4. The value-of-information gate and the policy engine must both say BUY.
-5. The Circle buyer signs the canonical payment envelope; the retry carries
-   `PAYMENT-SIGNATURE`; the provider returns the resource + receipt.
-6. The receipt is recorded, the response normalized into *scoped* evidence,
-   and the outcome pipeline continues unchanged — evidence informs, it
-   never decides.
+5. The Circle buyer signs the canonical EIP-712 authorization; the retry
+   carries `PAYMENT-SIGNATURE`; the provider returns the resource. A provider
+   payment receipt is recorded when supplied — it is never invented when the
+   provider omits `PAYMENT-RESPONSE`.
+6. The response is normalized into *scoped* evidence, and the outcome pipeline
+   continues unchanged — evidence informs, it never decides.
 
 ## Arc Testnet boundary
 
@@ -132,6 +133,27 @@ a purchase, a PR merge, user retention, creator-caused revenue, or anything
 about any payout. Unknown verdicts stay inconclusive; the outcome row is
 never touched by provider output.
 
+## Live proof record — November 2, 2026
+
+**LIVE PROVEN ON ARC TESTNET.** The guarded proof completed one AuraGate
+x402 purchase for the live repository challenge.
+
+- Network: `eip155:5042002`; canonical testnet USDC; buyer
+  `0xa3cc5aefc97cc16077cbb93fff9f428290e77ad7`
+- Amount/payee: `2,000` micro-USDC (`0.002 USDC`) to
+  `0xB52D1D41DAf8c87c8709bc79be41c4C424aD36F1`
+- Gateway balance: `0.002 USDC` before payment and `0.000 USDC` after payment
+- Setup transactions: [approval](https://explorer.testnet.arc.io/tx/0x2044bf80616c5d5cf2cf6a0c4c453a42fcda51daae5841d457dad31b48f6f929) and [deposit](https://explorer.testnet.arc.io/tx/0x898e92d9eb501517843d5259acec9bb392a88a1eab72ca3cd6f3f02c5d59b7f4)
+- Provider result: HTTP 200; normalized `INCONCLUSIVE`; response hash `4c272ab8`
+- Post-evidence posture: `INCONCLUSIVE` / review required. The provider result
+  is repository-identity evidence only and does not mark the business outcome
+  VERIFIED.
+- Receipt: the provider omitted `payment-response`, so no payment ID or
+  settlement transaction hash is claimed. The Gateway balance transition is
+  the available payment-side reconciliation.
+- The proof's second in-memory evaluation purchased nothing and counted the
+  `2,000` micro-USDC spend exactly once.
+
 ## Provisioning the buyer wallet (operator runbook)
 
 No credentials are fabricated or committed. Whoever owns the Circle
@@ -155,7 +177,9 @@ account performs these steps (Circle dashboard unless noted):
    testnet address on ARC-TESTNET, a USDC balance, a valid 402 challenge
    with a quoted price, and a WOULD_BUY verdict on the fixture.
 9. Run `npm run verification:x402:proof` — exactly one guarded testnet
-   purchase, idempotent on retry.
+   purchase, idempotent on retry. The proof command checks the Circle Gateway
+   depositor balance first and, when needed, performs an exactly-once Arc
+   Testnet approval + deposit for only the quoted amount.
 
 Do not paste secrets into chat, tickets, or the repo. The doctor never
 prints them (presence only).
