@@ -81,15 +81,31 @@ The participant API is available at:
 
 Outcome events can include `growthProgramId` and `attributionId`. A valid active identity produces `DIRECT_ATTRIBUTION`; missing attribution is `UNATTRIBUTED`; revoked, cross-project, cross-program or inactive identities are `INVALID_ATTRIBUTION`; an ambiguous resolver result is `AMBIGUOUS`. Invalid attribution refuses the event and ambiguous attribution enters review. Attribution is evidence, not authority to procure, pay, settle or move capital.
 
+## Slice 3 shipped
+
+A developer can now connect another product without rebuilding the attribution or verification authority:
+
+- public config: `GET /api/v1/public/programs/:slug`;
+- public attribution resolution: `GET /api/v1/public/programs/:slug/attribution/:code`;
+- hosted participant surface: `/g/:programSlug`;
+- public referral-partner request and authenticated creator request routes;
+- browser SDK at `src/sdk/browser.ts` for `?ref=` capture, namespaced local persistence, safe retrieval/clear and referral URL construction;
+- server SDK at `src/sdk/server.ts` for API-key-authenticated event submission, status and receipt reads;
+- generated hosted/browser/server snippets on the program detail page.
+
+The browser client never accepts an API key. The server client requires an explicit `idempotencyKey` and reuses the existing Outcome API, attribution resolver, receipt and Shadow boundaries. Public responses omit budgets, CAC ceilings, policy internals, integration identifiers, wallets, API keys and private creator data.
+
+`productUrl` is optional, validated as a credential-free HTTP(S) URL and required to use HTTPS in production. It is used only for referral-link examples and return-to-product context.
+
 ## What remains
 
-- **SDK and hosted components:** the existing API key and event surface remains available; an embedded SDK or hosted partner component is not claimed.
-- **Live settlement:** existing payout, hold, reconciliation and authority boundaries remain the source of truth. Slice 2 does not fund or settle a program.
+- **Operator and settlement integration:** existing payout, hold, reconciliation and authority boundaries remain the source of truth. Slice 3 does not fund, procure, pay or settle a program.
 - **Real ProofPilot integration:** ProofPilot remains a sandbox/quickstart fixture; no production tenant is seeded or claimed.
+- **Published package:** the SDK is local source only; npm publishing and release infrastructure are intentionally out of scope.
 
 ## Migration
 
-Slice 2 adds `drizzle/0020_salty_sunspot.sql`. It creates participant and attribution identity tables and adds attribution fields to external outcome events. It has not been applied automatically; review it with the existing production migration process.
+Slice 2 adds `drizzle/0020_salty_sunspot.sql`. Slice 3 adds `drizzle/0021_abnormal_eternals.sql` for the optional product URL. These migrations create no production data and have not been applied automatically; review them with the existing production migration process.
 
 ## ProofPilot fixture
 

@@ -56,6 +56,7 @@ export interface GrowthProgramRow extends GrowthProgramBinding {
   status: GrowthProgramStatus;
   participationStatus: GrowthProgramParticipationStatus;
   attributionStatus: "NOT_CONFIGURED" | "CONFIGURED";
+  productUrl: string | null;
   createdByUserId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -81,6 +82,7 @@ export interface SafeGrowthProgram {
   status: GrowthProgramStatus;
   participationStatus: GrowthProgramParticipationStatus;
   attributionStatus: "NOT_CONFIGURED" | "CONFIGURED";
+  productUrl: string | null;
   integrationReadiness: "CONNECTED" | "NOT_CONFIGURED";
   fundingStatus: "NOT_FUNDED";
   settlementStatus: "NOT_CONFIGURED";
@@ -120,11 +122,13 @@ export interface CreateGrowthProgramInput {
   outcomeDefinitionId?: unknown;
   integrationId?: unknown;
   integrationName?: unknown;
+  productUrl?: unknown;
 }
 
 export interface GrowthProgramRepository {
   get(workspaceId: string, id: string): Promise<GrowthProgramRow | null>;
   list(workspaceId: string): Promise<GrowthProgramRow[]>;
+  listBySlug(slug: string): Promise<GrowthProgramRow[]>;
   updateParticipationStatus(workspaceId: string, id: string, status: GrowthProgramParticipationStatus, at: Date): Promise<GrowthProgramRow | null>;
   insert(input: {
     id: string;
@@ -145,6 +149,7 @@ export interface GrowthProgramRepository {
     status: GrowthProgramStatus;
     participationStatus: GrowthProgramParticipationStatus;
     attributionStatus: "NOT_CONFIGURED" | "CONFIGURED";
+    productUrl: string | null;
     outcomeDefinitionId: string;
     integrationId: string | null;
     holdSeconds: number;
@@ -193,6 +198,23 @@ function safeSlug(value: unknown, name: string): string {
     fail(400, "INVALID_REQUEST", "slug must use lowercase letters, numbers and hyphens.");
   }
   return candidate;
+}
+
+function safeProductUrl(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  const candidate = safeString(value, "productUrl", 500);
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    fail(400, "INVALID_PRODUCT_URL", "productUrl must be a valid HTTPS URL.");
+  }
+  const httpAllowed = process.env.NODE_ENV !== "production" && parsed.protocol === "http:";
+  if (parsed.protocol !== "https:" && !httpAllowed) fail(400, "INVALID_PRODUCT_URL", "productUrl must use HTTPS.");
+  if (parsed.username || parsed.password || parsed.protocol === "javascript:" || parsed.protocol === "data:") {
+    fail(400, "INVALID_PRODUCT_URL", "productUrl cannot contain credentials or executable URL schemes.");
+  }
+  return parsed.toString();
 }
 
 function exactMicro(value: unknown, field: string): bigint {
@@ -287,6 +309,7 @@ function toSafe(row: GrowthProgramRow, definition: SafeDefinition, integration: 
     status: row.status,
     participationStatus: row.participationStatus,
     attributionStatus: row.attributionStatus,
+    productUrl: row.productUrl,
     integrationReadiness: integration ? "CONNECTED" : "NOT_CONFIGURED",
     fundingStatus: "NOT_FUNDED",
     settlementStatus: "NOT_CONFIGURED",
@@ -341,6 +364,7 @@ export function createGrowthProgramService(deps: GrowthProgramDependencies) {
       }
       const rewardStructure = boundedEnum(input.rewardStructure ?? "PERFORMANCE_ONLY", GROWTH_PROGRAM_REWARD_STRUCTURES, "rewardStructure") as GrowthProgramRewardStructure;
       const operatorMode = boundedEnum(input.operatorMode ?? "SHADOW", GROWTH_PROGRAM_OPERATOR_MODES, "operatorMode") as GrowthProgramOperatorMode;
+      const productUrl = safeProductUrl(input.productUrl);
       const allowedParticipants = participantTypes(input.participantTypes ?? ["CREATORS", "REFERRAL_PARTNERS"]);
       if (input.integrationId != null && input.integrationName != null && String(input.integrationName).trim()) {
         fail(400, "INTEGRATION_CONFLICT", "Choose an existing integration or create a new one, not both.");
@@ -404,6 +428,7 @@ export function createGrowthProgramService(deps: GrowthProgramDependencies) {
         status: "DRAFT",
         participationStatus: "CLOSED",
         attributionStatus: "NOT_CONFIGURED",
+        productUrl,
         outcomeDefinitionId: definition.id,
         integrationId: integration?.id ?? null,
         holdSeconds: definition.holdSeconds,
@@ -429,6 +454,7 @@ export function createGrowthProgramService(deps: GrowthProgramDependencies) {
           rewardCeilingMicroUsdc: row.rewardCeilingMicroUsdc.toString(),
           participantTypes: row.participantTypes,
           operatorMode: row.operatorMode,
+          productUrl: row.productUrl,
           fundingStatus: "NOT_FUNDED",
         },
       });
@@ -439,6 +465,13 @@ export function createGrowthProgramService(deps: GrowthProgramDependencies) {
       const row = await deps.repository.get(params.workspaceId, params.id);
       if (!row) fail(404, "PROGRAM_NOT_FOUND", "Growth Program not found.");
       return hydrate(row);
+    },
+
+    async getProgramBySlug(params: { slug: string }): Promise<SafeGrowthProgram> {
+      const rows = await deps.repository.listBySlug(safeString(params.slug, "slug", 80).toLowerCase());
+      if (rows.length === 0) fail(404, "PROGRAM_NOT_FOUND", "Growth Program not found.");
+      if (rows.length > 1) fail(409, "PUBLIC_PROGRAM_AMBIGUOUS", "This public program slug is not unique.");
+      return hydrate(rows[0]);
     },
 
     async listPrograms(workspaceId: string): Promise<SafeGrowthProgram[]> {
@@ -488,6 +521,7 @@ function toProgramRow(
     status: row.status as GrowthProgramStatus,
     participationStatus: row.participationStatus as GrowthProgramParticipationStatus,
     attributionStatus: row.attributionStatus as "NOT_CONFIGURED" | "CONFIGURED",
+    productUrl: row.productUrl,
     createdByUserId: row.createdByUserId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -508,6 +542,10 @@ export function createDrizzleGrowthProgramRepository(db: Db = getDb()): GrowthPr
     },
     async list(workspaceId) {
       const rows = await db.select().from(developerGrowthPrograms).where(eq(developerGrowthPrograms.workspaceId, workspaceId)).orderBy(desc(developerGrowthPrograms.createdAt));
+      return Promise.all(rows.map(hydrate));
+    },
+    async listBySlug(slug) {
+      const rows = await db.select().from(developerGrowthPrograms).where(eq(developerGrowthPrograms.slug, slug)).orderBy(desc(developerGrowthPrograms.createdAt));
       return Promise.all(rows.map(hydrate));
     },
     async updateParticipationStatus(workspaceId, id, status, at) {
@@ -554,6 +592,7 @@ export function createDrizzleGrowthProgramRepository(db: Db = getDb()): GrowthPr
           status: input.status,
           participationStatus: input.participationStatus,
           attributionStatus: input.attributionStatus,
+          productUrl: input.productUrl,
           createdByUserId: input.createdByUserId,
         }).returning();
         return created;
@@ -605,6 +644,9 @@ export function createMemoryGrowthProgramRepository(): GrowthProgramRepository &
     async list(workspaceId) {
       return [...programs.values()].filter((row) => row.workspaceId === workspaceId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     },
+    async listBySlug(slug) {
+      return [...programs.values()].filter((row) => row.slug === slug).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    },
     async updateParticipationStatus(workspaceId, id, status, at) {
       const row = programs.get(id);
       if (!row || row.workspaceId !== workspaceId) return null;
@@ -634,6 +676,7 @@ export function createMemoryGrowthProgramRepository(): GrowthProgramRepository &
         status: input.status,
         participationStatus: input.participationStatus,
         attributionStatus: input.attributionStatus,
+        productUrl: input.productUrl,
         createdByUserId: input.createdByUserId,
         createdAt: at,
         updatedAt: at,

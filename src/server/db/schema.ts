@@ -914,6 +914,7 @@ export const developerGrowthPrograms = pgTable(
     status: text("status").notNull().default("DRAFT"),
     participationStatus: text("participation_status").notNull().default("CLOSED"),
     attributionStatus: text("attribution_status").notNull().default("NOT_CONFIGURED"),
+    productUrl: text("product_url"),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),

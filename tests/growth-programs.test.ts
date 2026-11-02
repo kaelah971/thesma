@@ -57,6 +57,12 @@ describe("embedded Growth Programs", () => {
     expect(result.integrationApiKey).toBeNull();
   });
 
+  it("stores a safe product URL for hosted referral-link context", async () => {
+    const { programs } = setup();
+    const result = await programs.createProgram(input({ productUrl: "https://proofpilot.example/app?source=partner" }));
+    expect(result.program.productUrl).toBe("https://proofpilot.example/app?source=partner");
+  });
+
   it("binds a newly created bounded definition and preserves exact bigint economics", async () => {
     const { programs, programRepository } = setup();
     const result = await programs.createProgram(input());
@@ -102,6 +108,7 @@ describe("embedded Growth Programs", () => {
     await expect(programs.createProgram(input({ participantTypes: ["DEVELOPERS"] }))).rejects.toMatchObject({ code: "UNSUPPORTED_PARTICIPANT_TYPE" });
     await expect(programs.createProgram(input({ targetOutcomeCount: 0 }))).rejects.toMatchObject({ code: "INVALID_VALUE" });
     await expect(programs.createProgram(input({ rewardCeilingMicroUsdc: "11000000" }))).rejects.toMatchObject({ code: "REWARD_EXCEEDS_CAC" });
+    await expect(programs.createProgram(input({ productUrl: "javascript:alert(1)" }))).rejects.toMatchObject({ code: "INVALID_PRODUCT_URL" });
   });
 
   it("scopes reads to the developer project and reports attribution honestly", async () => {
@@ -111,6 +118,7 @@ describe("embedded Growth Programs", () => {
     expect(created.program.attributionStatus).toBe("NOT_CONFIGURED");
     expect(created.program.participationStatus).toBe("CLOSED");
     expect(created.program.settlementStatus).toBe("NOT_CONFIGURED");
+    expect(created.program.productUrl).toBeNull();
   });
 
   it("keeps legacy events unbound while supporting a shadow-bound event association", async () => {

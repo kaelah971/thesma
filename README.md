@@ -71,7 +71,7 @@ DECISION LEDGER ──► shows why every important action occurred
 
 | Status | Capability |
 |---|---|
-| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, Outcome Portfolio Operator, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger, Build with Thesma Growth Programs + participant/attribution primitives + Outcome API |
+| SHIPPED + LIVE | Creator matching, invitations, Scout auto-join, hybrid deal terms, reliability/retention scoring, Campaign CFO, Outcome Portfolio Operator, growth optimizer, financial operator (payouts/reservations/reconciliation), autonomy ladder, unified decision ledger, Build with Thesma Growth Programs + participant/attribution primitives + hosted/browser/server integration surface |
 | LIVE PROVEN ON ARC TESTNET / production remains opt-in | External verification procurement — value-of-information gate, dedicated Circle buyer, live AuraGate x402 challenge, one guarded 0.002 USDC proof; production stays NOT_CONFIGURED unless its own server credentials are supplied (no fake spend, no fallback keys) |
 | LIVE-PROVIDER PROVEN + PROTOCOL-TESTED | x402 v2 purchase transport (deterministic local harness plus the live Arc Testnet proof below) |
 | KNOWN UNSUPPORTED | Cross-campaign onchain fund transfer; autonomous settlement of hybrid base/milestone obligations (recorded truthfully as payable without an onchain path) |
@@ -108,7 +108,7 @@ Full runbook and evidence scope: [`docs/verification-procurement.md`](docs/verif
 | Current production state | [`docs/current-state.md`](docs/current-state.md) |
 | Integrated acceptance (no-spend) | [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) |
 | Outcome Portfolio Operator | [`docs/outcome-portfolio-operator.md`](docs/outcome-portfolio-operator.md) |
-| Build with Thesma / Growth Programs | [`docs/embedded-growth-programs.md`](docs/embedded-growth-programs.md) · [`docs/build-with-thesma.md`](docs/build-with-thesma.md) |
+| Build with Thesma / Growth Programs | [`docs/embedded-growth-programs.md`](docs/embedded-growth-programs.md) · [`docs/build-with-thesma.md`](docs/build-with-thesma.md) · [`docs/sdk.md`](docs/sdk.md) |
 | Judge demo guide | [`docs/judge-demo.md`](docs/judge-demo.md) |
 | Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
 | Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
@@ -326,7 +326,7 @@ Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) —
 - **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
 - **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (your `/@handle` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
 - **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
-- **Build with Thesma** — build growth into your product. Start with a project-scoped Growth Program, then use Thesma's existing participant, attribution, verification, policy, settlement and receipt infrastructure underneath your application. `/build` includes the program foundation and the supporting Outcome API quickstart; the built-in example is a sandbox story, not external traction.
+- **Build with Thesma** — build growth into your product. Start with a project-scoped Growth Program, then use Thesma's existing participant, attribution, verification, policy, settlement and receipt infrastructure underneath your application. `/build` includes public config, a hosted participation page, browser-safe attribution capture and a server-only Outcome API client; the built-in ProofPilot example is a sandbox story, not external traction.
 
 The persona is onboarding context, not authorization: workspace/partner access still comes only from membership checks. Public `/markets` never requires login.
 
@@ -551,7 +551,7 @@ Honest boundaries of the shipped product:
 - No LLM is wired anywhere — intent parsing, pricing, negotiation, and Operator answers are deterministic kernels and fixed templates.
 - Organization company wallets are cryptographically ownership-proven with a workspace-bound EIP-712 challenge and recovered-signer confirmation. Partner wallet ownership remains registration-based.
 - Shadow Operator Mode is an owner-controlled organization posture that reuses the deterministic portfolio, verification and settlement kernels while persisting immutable input/policy snapshots. Its central boundary blocks payments, x402 purchases, capital movement, creator invites and settlement; human review is telemetry, not execution.
-- Build with Thesma Slice 2 supports project-scoped Growth Programs composed with existing campaign/policy drafts, four bounded external outcome types, deterministic JSON schema versions, API-key authentication, idempotency, replay protection, participant enrollment, frozen reward snapshots, creator discovery, stable attribution identities, attribution resolution and safe status/receipt reads. Shadow blocks creator invitations and notifications; open enrollment is a no-side-effect request. SDK/components and live settlement remain bounded follow-on slices; no second payout executor, webhook system or arbitrary workflow engine is added.
+- Build with Thesma Slice 3 supports project-scoped Growth Programs composed with existing campaign/policy drafts, four bounded external outcome types, deterministic JSON schema versions, API-key authentication, idempotency, replay protection, participant enrollment, frozen reward snapshots, creator discovery, stable attribution identities, public program config, hosted participation, browser attribution capture and a server-only Outcome API client. Shadow blocks creator invitations, paid procurement, payouts, capital movement and settlement; open enrollment is a no-side-effect request. The SDK is local source only; no second payout executor, webhook system, OAuth marketplace or arbitrary workflow engine is added.
 - Refund protection is the hold timer only; no refund-event detection exists.
 - No Circle Gateway/CCTP, paymasters, or fiat ramps. x402 v2 transport is protocol-tested locally, but real-provider interoperability is not yet claimed.
 - Analytics remain intentionally bounded to proof-backed campaign metrics; realized CAC is shown only where computable from verified production data.

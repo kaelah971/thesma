@@ -4,7 +4,7 @@
 
 Direct Thesma runs verified-outcome growth programs in Thesma's application. Build with Thesma brings the same infrastructure into another product. The `/build` surface therefore starts with a **Growth Program**, while API keys, bounded definitions, events and receipts remain supporting infrastructure.
 
-Slice 1 ships the project-scoped Growth Program foundation at `/build/programs` and `/build/programs/:id`. Slice 2 adds participant enrollment, attribution identities, creator discovery and program-scoped attribution resolution. It composes an existing Thesma campaign and policy draft with a bounded external outcome definition. It does not require funding, a wallet or an integration before configuration. `SHADOW` is the default and blocks every financial or external execution side effect, including creator invitations and notifications.
+Slices 1 and 2 ship the project-scoped Growth Program foundation, participant enrollment and attribution identities at `/build/programs` and `/build/programs/:id`. Slice 3 adds the minimum external-product integration surface: public program config, browser attribution, a server-only Outcome API client, hosted participation and generated integration snippets. It composes an existing Thesma campaign and policy draft with a bounded external outcome definition. It does not require funding, a wallet or an integration before configuration. `SHADOW` is the default and blocks every financial or external execution side effect, including creator invitations and notifications.
 
 The built-in ProofPilot example is a **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**, not a real customer integration.
 
@@ -14,9 +14,33 @@ A Growth Program configures the objective, target, exact micro-USDC budget and C
 
 The existing Outcome API remains the plumbing under the program. Legacy events may remain unbound. New event submissions may include `growthProgramId` and an `attributionId` after the event's definition and integration are bound to the same project and program. Attribution is never a payment or settlement authorization.
 
-See [`embedded-growth-programs.md`](embedded-growth-programs.md) for the product model and slice boundaries.
+See [`embedded-growth-programs.md`](embedded-growth-programs.md) for the product model and slice boundaries. See [`sdk.md`](sdk.md) for the short browser/server quickstart.
 
-## 1. Authentication
+## 1. Public browser surface
+
+Public program configuration is available without an API key:
+
+```http
+GET /api/v1/public/programs/proofpilot-partner-growth
+```
+
+It returns only the public objective, participant classes, bounded reward summary, evidence signals, participation mode, hosted URL and truthful Shadow settlement state. It does not return budgets, CAC ceilings, policy ids, integration ids, API keys, wallets or private creator data. Public attribution resolution is:
+
+```http
+GET /api/v1/public/programs/proofpilot-partner-growth/attribution/ref_<participant-code>
+```
+
+The browser SDK uses these endpoints and stores only a namespaced attribution id locally. Public endpoints support bounded CORS; authenticated outcome endpoints remain server-to-server.
+
+The hosted participant surface is:
+
+```text
+https://thesma.vercel.app/g/proofpilot-partner-growth
+```
+
+`OPEN` accepts a bounded referral-partner request or an authenticated creator request. `INVITE_ONLY` explains the invitation boundary. `CLOSED` refuses new participation. Activation, not request submission, creates the attribution identity.
+
+## 2. Authentication
 
 Create a project integration from `/build` (or the session-authenticated `POST /api/v1/integrations` endpoint). The full key is returned once:
 
@@ -44,7 +68,7 @@ Authorization: Bearer ths_api_<placeholder>
 
 Keys are project-scoped. A revoked key cannot read definitions or submit events.
 
-## 2. Register an outcome definition
+## 3. Register an outcome definition
 
 Only the supported, bounded outcome types are accepted in V1:
 
@@ -90,7 +114,7 @@ curl https://your-thesma-host/api/v1/outcomes/activated-user \
   -H 'Authorization: Bearer ths_api_<placeholder>'
 ```
 
-## 3. Enroll participants and resolve attribution
+## 4. Enroll participants and resolve attribution
 
 Participation is project-scoped. The browser management surface is `/build/programs/<program-id>`; API clients use the program routes below. Session-authenticated management requests include `projectId`. A bound machine key may manage only its own program.
 
@@ -130,7 +154,7 @@ Content-Type: application/json
 
 The resolver is project- and program-scoped. `ACTIVE` identities resolve to a participant; revoked, inactive, cross-project and cross-program identities fail closed. The response is a readiness/identity primitive, not a new legacy referral or payout record.
 
-## 4. Submit evidence
+## 5. Submit evidence
 
 ```bash
 curl -X POST https://your-thesma-host/api/v1/outcomes/activated-user/events \
@@ -154,13 +178,13 @@ curl -X POST https://your-thesma-host/api/v1/outcomes/activated-user/events \
 
 The adapter validates the payload, rejects unsupported fields, resolves the optional program-scoped attribution identity, normalizes timestamps, computes an evidence hash and sends the normalized signal to the deterministic policy decision. Submitted evidence is not trusted as an unconditional `VERIFIED` flag. A valid identity is `DIRECT_ATTRIBUTION`; no identity is `UNATTRIBUTED`; invalid/revoked identity is `INVALID_ATTRIBUTION` and refuses the event; ambiguous resolution is `AMBIGUOUS` and enters review.
 
-## 5. Idempotency and replay protection
+## 6. Idempotency and replay protection
 
 `Idempotency-Key` is mandatory. Retrying the same project, definition and payload with the same key returns the original event and receipt. Reusing the key with another payload returns `IDEMPOTENCY_CONFLICT`.
 
 `externalEventId` is unique within a project. Reusing it with another key, definition or integration returns `REPLAY_DETECTED`. The same event id may be used independently by another project.
 
-## 6. Status and receipt
+## 7. Status and receipt
 
 ```bash
 curl https://your-thesma-host/api/v1/outcomes/events/<event-id> \
@@ -180,11 +204,11 @@ SETTLED   → only after existing settlement authority and reconciliation
 
 A schema-valid activation with ordered timestamps can be `VERIFIED`; ambiguous chronology is `REVIEW`. The decision is never a payout authorization.
 
-## 7. Shadow Mode
+## 8. Shadow Mode
 
 If the project owner is in `SHADOW` mode, event evaluation still occurs and the receipt records `executionState: NOT_EXECUTED` and `settlementState: SHADOW_BLOCKED` for otherwise eligible events. Ambiguous evidence may produce `procurementRecommendation: WOULD_BUY`, using the existing value-of-information kernel, but no x402 request, Circle call, payment, payout or settlement is made.
 
-## 8. Error model and limits
+## 9. Error model and limits
 
 Errors use the existing response envelope:
 
@@ -196,7 +220,7 @@ Important codes include `INVALID_API_KEY`, `INTEGRATION_REVOKED`, `OUTCOME_NOT_F
 
 Limits are intentionally small in V1: 32 schema fields, 64 KiB evidence, 128 KiB request body, bounded string fields, no executable schema keywords, and an in-process submission guard of 120 requests per integration per minute. Persisted idempotency and unique event constraints remain the economic duplicate protection.
 
-## 9. Security notes
+## 10. Security notes
 
 - Do not use email addresses as universal subject identifiers; send a stable product-owned subject id.
 - Never put an API key in browser code, source control, or logs.

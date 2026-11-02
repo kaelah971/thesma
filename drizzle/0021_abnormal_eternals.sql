@@ -1,0 +1,1 @@
+ALTER TABLE "developer_growth_programs" ADD COLUMN "product_url" text;

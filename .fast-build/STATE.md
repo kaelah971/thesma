@@ -17,7 +17,7 @@
 ## MVP slices
 - [x] Slice 1: Embedded Growth Program foundation + developer creation/detail flow.
 - [x] Slice 2: Partner / creator enrollment + attribution primitives.
-- [ ] Slice 3: Embedded SDK / hosted components / external-product integration surface.
+- [x] Slice 3: Embedded SDK / hosted components / external-product integration surface.
 - [ ] Slice 4: Operator + verification + settlement integration across embedded programs.
 - [ ] Slice 5: Real ProofPilot end-to-end integration + docs / public proof.
 
@@ -42,23 +42,30 @@
 - `src/app/build/programs/[id]/page.tsx`
 - `src/components/build/DeveloperGrowthProgramForm.tsx`
 - `src/app/api/v1/programs/`
-- `drizzle/0019_safe_stranger.sql` + `drizzle/0020_salty_sunspot.sql` + snapshots/journal (created, not applied)
+- `drizzle/0019_safe_stranger.sql` + `drizzle/0020_salty_sunspot.sql` + `drizzle/0021_abnormal_eternals.sql` + snapshots/journal (created, not applied)
 - `src/server/services/growthProgramParticipation.ts`
 - `src/components/build/DeveloperProgramParticipantsPanel.tsx`
 - `src/app/api/v1/programs/[id]/participants/`, `participation/`, `attribution/`
-- `tests/growth-programs.test.ts`, `tests/growth-participation.test.ts`
+- `src/server/services/publicGrowthPrograms.ts`
+- `src/app/api/v1/public/programs/[slug]/`
+- `src/app/g/[slug]/page.tsx`, `src/components/public/HostedGrowthProgram.tsx`
+- `src/sdk/browser.ts`, `src/sdk/server.ts`
+- `src/components/build/DeveloperProgramIntegrationPanel.tsx`
+- `drizzle/0021_abnormal_eternals.sql` + snapshot/journal (created, not applied)
+- `tests/growth-programs.test.ts`, `tests/growth-participation.test.ts`, `tests/embedded-sdk.test.ts`
+- `docs/sdk.md`
 - `docs/embedded-growth-programs.md`, `docs/build-with-thesma.md`, `docs/current-state.md`, `README.md`
 
 ## Verification
-- Focused: Growth Program + Outcome API + participation tests passed (23 tests).
-- Full suite: 946 passed, 2 skipped.
+- Focused: Growth Program + participation + embedded SDK tests passed (30 tests).
+- Full suite: 954 passed, 2 skipped.
 - Typecheck: pass. Lint: pass. Production build: pass. Browser smoke: pass.
 - `git diff --check`: pass.
 
 ## Blockers / truth
-- Migrations 0018, 0019 and 0020 are created locally and must go through the reviewed production migration process; do not apply blindly.
+- Migrations 0018, 0019, 0020 and 0021 are created locally and must go through the reviewed production migration process; do not apply blindly.
 - No mainnet transactions, testnet transactions, x402 payments, Circle calls, real USDC or test USDC were made.
 - Unrelated worktree changes preserved: `next-env.d.ts`, `.circle-register-existing.mjs`, `AGENTS.md`, `contracts/verification/`, `docs/ui redesign/`, `docs/ui refresh/`.
 
 ## Next action
-- Slice 3: embedded SDK / hosted components / external-product integration surface.
+- Slice 4: wire embedded Growth Programs into operator, verification procurement, finance, hold and settlement engines without bypassing Shadow/authority boundaries.
