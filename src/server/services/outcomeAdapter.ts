@@ -320,6 +320,7 @@ export function requestFingerprint(input: {
   definitionId: string;
   schemaVersion: number;
   growthProgramId?: string | null;
+  attributionId?: string | null;
   externalEventId: string;
   externalSubjectId: string;
   occurredAt: Date;
@@ -336,6 +337,7 @@ export function requestFingerprint(input: {
   // Keep the legacy unbound fingerprint byte-for-byte compatible. Program
   // association is part of the fingerprint only for newly bound events.
   if (input.growthProgramId) payload.growthProgramId = input.growthProgramId;
+  if (input.attributionId) payload.attributionId = input.attributionId;
   return sha256Hex(stableJson(payload));
 }
 

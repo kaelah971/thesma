@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createProductionOutcomeApiService } from "@/server/services/buildWithThesma";
 import { createProductionGrowthProgramService } from "@/server/services/growthPrograms";
+import { createProductionGrowthProgramParticipationService } from "@/server/services/growthProgramParticipation";
+import { DeveloperProgramParticipantsPanel } from "@/components/build/DeveloperProgramParticipantsPanel";
 import { getDeveloperContext } from "../../data";
 import styles from "@/components/app/app.module.css";
 
@@ -30,6 +32,11 @@ export default async function DeveloperProgramDetailPage({ params }: { params: P
   const events = await createProductionOutcomeApiService().listEventStatuses(context.workspace.id).catch(() => []);
   const programEvents = events.filter((item) => item.event.growthProgramId === program.id);
   const verified = programEvents.filter((item) => item.event.verificationState === "VERIFIED").length;
+  const participation = createProductionGrowthProgramParticipationService();
+  const [participants, analytics] = await Promise.all([
+    participation.listParticipants({ workspaceId: context.workspace.id, growthProgramId: program.id }).catch(() => []),
+    participation.getAnalytics({ workspaceId: context.workspace.id, growthProgramId: program.id }).catch(() => ({ participants: 0, activeParticipants: 0, invited: 0, pendingReview: 0, attributedEvents: 0, verifiedAttributedOutcomes: 0, unattributedOutcomes: 0, attributionConflicts: 0 })),
+  ]);
 
   return (
     <div>
@@ -54,11 +61,13 @@ export default async function DeveloperProgramDetailPage({ params }: { params: P
         <div className={styles.kpi}><span className={styles.kpiLabel}>Budget cap</span><span className={styles.kpiValue}><strong>{microUsdc(program.budgetMicroUsdc)}</strong></span><span className={styles.kpiHint}>configured, not funded</span></div>
         <div className={styles.kpi} data-tone="lav"><span className={styles.kpiLabel}>Verified CAC ceiling</span><span className={styles.kpiValue}><strong>{microUsdc(program.maxVerifiedCacMicroUsdc)}</strong></span><span className={styles.kpiHint}>policy guardrail</span></div>
         <div className={styles.kpi} data-tone="mint"><span className={styles.kpiLabel}>Reward</span><span className={styles.kpiValue}><strong>up to {microUsdc(program.rewardCeilingMicroUsdc)}</strong></span><span className={styles.kpiHint}>{program.rewardStructure.replaceAll("_", " ").toLowerCase()}</span></div>
-        <div className={styles.kpi} data-tone="cream"><span className={styles.kpiLabel}>Participants</span><span className={styles.kpiValue}><strong>{program.participantTypes.length}</strong></span><span className={styles.kpiHint}>{program.participantTypes.map((item) => item === "CREATORS" ? "creators" : "referral partners").join(" + ")}</span></div>
+        <div className={styles.kpi} data-tone="cream"><span className={styles.kpiLabel}>Participants</span><span className={styles.kpiValue}><strong>{analytics.activeParticipants}</strong></span><span className={styles.kpiHint}>{analytics.invited} invited · {analytics.pendingReview} pending</span></div>
       </div>
 
+      <DeveloperProgramParticipantsPanel projectId={context.workspace.id} programId={program.id} participationStatus={program.participationStatus} operatorMode={program.operatorMode} participants={participants} analytics={analytics} />
+
       <div className={styles.grid2} style={{ marginTop: 12 }}>
-        <section className={styles.card}><div className={styles.cardHead}><h2>Readiness</h2></div><div className={styles.stack}><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Integration</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: program.integrationReadiness === "CONNECTED" ? "var(--mint-ink)" : "var(--ink-3)" }}>{program.integrationReadiness}{program.integration ? ` · ${program.integration.name}` : " · connect product when ready"}</div></div><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Attribution</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: "var(--ink-3)" }}>NOT CONFIGURED · next participant slice</div></div><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Funding</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: "var(--ink-3)" }}>PROGRAM CONFIGURED · NOT FUNDED</div></div><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Settlement</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: "var(--ink-3)" }}>NOT CONFIGURED · existing authority boundary preserved</div></div></div></section>
+        <section className={styles.card}><div className={styles.cardHead}><h2>Readiness</h2></div><div className={styles.stack}><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Integration</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: program.integrationReadiness === "CONNECTED" ? "var(--mint-ink)" : "var(--ink-3)" }}>{program.integrationReadiness}{program.integration ? ` · ${program.integration.name}` : " · connect product when ready"}</div></div><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Attribution</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: program.attributionStatus === "CONFIGURED" ? "var(--mint-ink)" : "var(--ink-3)" }}>{program.attributionStatus === "CONFIGURED" ? `CONFIGURED · ${analytics.activeParticipants} active identit${analytics.activeParticipants === 1 ? "y" : "ies"}` : "NOT CONFIGURED · activate a participant"}</div></div><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Funding</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: "var(--ink-3)" }}>PROGRAM CONFIGURED · NOT FUNDED</div></div><div style={{ borderTop: "1px solid var(--line)", paddingTop: 10 }}><strong>Settlement</strong><div className="mono" style={{ fontSize: 12, marginTop: 4, color: "var(--ink-3)" }}>NOT CONFIGURED · existing authority boundary preserved</div></div></div></section>
         <section className={styles.card}><div className={styles.cardHead}><h2>Lifecycle</h2></div><div className={styles.stack}>{LIFECYCLE.map(([number, title, copy], index) => <div key={number} style={{ borderTop: "1px solid var(--line)", padding: "12px 0", display: "grid", gridTemplateColumns: "32px 1fr auto", gap: 10, alignItems: "start" }}><strong className="mono" style={{ color: "var(--ink-3)" }}>{number}</strong><div><strong>{title}</strong><div style={{ color: "var(--ink-2)", fontSize: 13, marginTop: 3 }}>{copy}</div></div><span className="mono" style={{ fontSize: 10, color: index === 0 && program.integrationReadiness === "CONNECTED" ? "var(--mint-ink)" : "var(--ink-3)" }}>{index === 0 && program.integrationReadiness === "CONNECTED" ? "READY" : "UPCOMING"}</span></div>)}</div></section>
       </div>
 

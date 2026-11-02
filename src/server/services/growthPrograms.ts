@@ -125,6 +125,7 @@ export interface CreateGrowthProgramInput {
 export interface GrowthProgramRepository {
   get(workspaceId: string, id: string): Promise<GrowthProgramRow | null>;
   list(workspaceId: string): Promise<GrowthProgramRow[]>;
+  updateParticipationStatus(workspaceId: string, id: string, status: GrowthProgramParticipationStatus, at: Date): Promise<GrowthProgramRow | null>;
   insert(input: {
     id: string;
     campaignId: string;
@@ -444,6 +445,22 @@ export function createGrowthProgramService(deps: GrowthProgramDependencies) {
       const rows = await deps.repository.list(workspaceId);
       return Promise.all(rows.map(hydrate));
     },
+
+    async setParticipationStatus(params: { workspaceId: string; id: string; status: GrowthProgramParticipationStatus; actorId: string | null }): Promise<SafeGrowthProgram> {
+      const status = boundedEnum(params.status, GROWTH_PROGRAM_PARTICIPATION_STATUSES, "participationStatus") as GrowthProgramParticipationStatus;
+      const row = await deps.repository.updateParticipationStatus(params.workspaceId, params.id, status, now());
+      if (!row) fail(404, "PROGRAM_NOT_FOUND", "Growth Program not found.");
+      await deps.audit({
+        actorType: params.actorId ? "USER" : "SYSTEM",
+        actorId: params.actorId,
+        workspaceId: params.workspaceId,
+        action: "developer.growth_program.participation_mode.changed",
+        targetType: "developer_growth_program",
+        targetId: row.id,
+        metadata: { growthProgramId: row.id, participationStatus: status },
+      });
+      return hydrate(row);
+    },
   };
 }
 
@@ -492,6 +509,10 @@ export function createDrizzleGrowthProgramRepository(db: Db = getDb()): GrowthPr
     async list(workspaceId) {
       const rows = await db.select().from(developerGrowthPrograms).where(eq(developerGrowthPrograms.workspaceId, workspaceId)).orderBy(desc(developerGrowthPrograms.createdAt));
       return Promise.all(rows.map(hydrate));
+    },
+    async updateParticipationStatus(workspaceId, id, status, at) {
+      const [row] = await db.update(developerGrowthPrograms).set({ participationStatus: status, updatedAt: at }).where(and(eq(developerGrowthPrograms.workspaceId, workspaceId), eq(developerGrowthPrograms.id, id))).returning();
+      return row ? hydrate(row) : null;
     },
     async insert(input) {
       const row = await db.transaction(async (tx) => {
@@ -583,6 +604,13 @@ export function createMemoryGrowthProgramRepository(): GrowthProgramRepository &
     },
     async list(workspaceId) {
       return [...programs.values()].filter((row) => row.workspaceId === workspaceId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    },
+    async updateParticipationStatus(workspaceId, id, status, at) {
+      const row = programs.get(id);
+      if (!row || row.workspaceId !== workspaceId) return null;
+      const next = { ...row, participationStatus: status, updatedAt: at };
+      programs.set(id, next);
+      return next;
     },
     async insert(input) {
       const at = new Date("2026-01-01T00:00:00.000Z");

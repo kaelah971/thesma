@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, or } from "drizzle-orm";
 import { getDb, isDbConfigured, type Db } from "../db/client";
 import {
   auditEvents,
@@ -7,6 +7,8 @@ import {
   developerIntegrations,
   externalOutcomeDefinitions,
   externalOutcomeEvents,
+  growthAttributionIdentities,
+  growthProgramParticipants,
 } from "../db/schema";
 import { newId } from "../auth/session";
 import { getOrganizationOperatorMode, type OrganizationOperatorMode } from "./operatorMode";
@@ -64,6 +66,7 @@ export interface ExternalOutcomeDefinitionRow {
 export type ExternalVerificationState = "SUBMITTED" | "REVIEW" | "VERIFIED" | "REFUSED";
 export type ExternalHoldState = "NOT_HELD" | "HELD" | "RELEASED";
 export type ExternalSettlementState = "NOT_ELIGIBLE" | "HELD" | "ELIGIBLE_NOT_REQUESTED" | "SHADOW_BLOCKED" | "SETTLED";
+export type ExternalAttributionStatus = "DIRECT_ATTRIBUTION" | "UNATTRIBUTED" | "INVALID_ATTRIBUTION" | "AMBIGUOUS";
 
 export interface ExternalOutcomeEventRow {
   id: string;
@@ -72,6 +75,8 @@ export interface ExternalOutcomeEventRow {
   integrationId: string;
   definitionId: string;
   growthProgramId: string | null;
+  attributionIdentityId: string | null;
+  attributionStatus: ExternalAttributionStatus;
   externalEventId: string;
   externalSubjectId: string;
   occurredAt: Date;
@@ -178,6 +183,8 @@ export interface SafeOutcomeEvent {
   definition: Pick<SafeDefinition, "id" | "slug" | "name" | "outcomeType" | "unitValueMicroUsdc" | "asset">;
   integrationId: string;
   growthProgramId: string | null;
+  attributionIdentityId: string | null;
+  attributionStatus: ExternalAttributionStatus;
   externalEventId: string;
   externalSubjectId: string;
   submittedAt: string;
@@ -201,6 +208,8 @@ export interface SafeOutcomeReceipt {
   outcome: SafeOutcomeEvent["definition"];
   submittedByIntegrationId: string;
   growthProgramId: string | null;
+  attributionIdentityId: string | null;
+  attributionStatus: ExternalAttributionStatus;
   externalEventId: string;
   externalSubjectId: string;
   schemaVersion: number;
@@ -245,6 +254,11 @@ export interface OutcomeApiDependencies {
     outcomeDefinitionId: string;
     operatorMode: "SHADOW" | "REVIEW" | "AUTONOMOUS";
   } | null>;
+  resolveGrowthAttribution?: (workspaceId: string, growthProgramId: string, reference: string) => Promise<{
+    status: "ACTIVE" | "REVOKED" | "NOT_FOUND" | "WRONG_PROGRAM" | "WRONG_PROJECT" | "PARTICIPANT_INACTIVE" | "AMBIGUOUS";
+    attributionIdentityId: string | null;
+    participantId: string | null;
+  }>;
   now?: () => Date;
 }
 
@@ -330,6 +344,8 @@ function toEvent(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefini
     },
     integrationId: row.integrationId,
     growthProgramId: row.growthProgramId,
+    attributionIdentityId: row.attributionIdentityId,
+    attributionStatus: row.attributionStatus,
     externalEventId: row.externalEventId,
     externalSubjectId: row.externalSubjectId,
     submittedAt: row.createdAt.toISOString(),
@@ -355,6 +371,8 @@ function toReceipt(row: ExternalOutcomeEventRow, definition: ExternalOutcomeDefi
     outcome: toEvent(row, definition).definition,
     submittedByIntegrationId: row.integrationId,
     growthProgramId: row.growthProgramId,
+    attributionIdentityId: row.attributionIdentityId,
+    attributionStatus: row.attributionStatus,
     externalEventId: row.externalEventId,
     externalSubjectId: row.externalSubjectId,
     schemaVersion: row.schemaVersion,
@@ -536,13 +554,19 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       enforceSubmissionRateLimit(params.principal.integration.id, now());
       if (!params.input || typeof params.input !== "object" || Array.isArray(params.input)) fail(400, "INVALID_REQUEST", "Request body must be an object.");
       const body = params.input as Record<string, unknown>;
-      const unsupported = Object.keys(body).filter((key) => !["externalEventId", "externalSubjectId", "occurredAt", "evidence", "schemaVersion", "growthProgramId"].includes(key));
+      const unsupported = Object.keys(body).filter((key) => !["externalEventId", "externalSubjectId", "occurredAt", "evidence", "schemaVersion", "growthProgramId", "attributionId"].includes(key));
       if (unsupported.length > 0) fail(400, "INVALID_REQUEST", `Unsupported request fields: ${unsupported.join(", ")}.`);
       const externalEventId = validateExternalIdentity(body.externalEventId, "externalEventId");
       const externalSubjectId = validateExternalIdentity(body.externalSubjectId, "externalSubjectId");
       const growthProgramId = body.growthProgramId === undefined || body.growthProgramId === null
         ? null
         : validateExternalIdentity(body.growthProgramId, "growthProgramId");
+      const attributionReference = body.attributionId === undefined || body.attributionId === null
+        ? null
+        : validateExternalIdentity(body.attributionId, "attributionId");
+      if (attributionReference && !growthProgramId) {
+        fail(400, "ATTRIBUTION_PROGRAM_REQUIRED", "attributionId requires growthProgramId.");
+      }
       const schemaVersion = body.schemaVersion === undefined ? undefined : body.schemaVersion;
       if (schemaVersion !== undefined && (typeof schemaVersion !== "number" || !Number.isSafeInteger(schemaVersion) || schemaVersion < 1)) {
         fail(400, "SCHEMA_VERSION_MISMATCH", "schemaVersion must be a positive integer.");
@@ -572,10 +596,33 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       if (programBinding?.integrationId && programBinding.integrationId !== params.principal.integration.id) {
         fail(409, "PROGRAM_INTEGRATION_MISMATCH", "This API key is not bound to the selected Growth Program.");
       }
+      let attributionIdentityId: string | null = null;
+      let attributionParticipantId: string | null = null;
+      let attributionStatus: ExternalAttributionStatus = "UNATTRIBUTED";
+      let attributionReason: string | null = null;
+      if (attributionReference) {
+        if (!deps.resolveGrowthAttribution || !growthProgramId) {
+          fail(503, "ATTRIBUTION_UNAVAILABLE", "Attribution resolution is not configured for this environment.");
+        }
+        const resolution = await deps.resolveGrowthAttribution(params.principal.workspaceId, growthProgramId, attributionReference);
+        attributionIdentityId = resolution.attributionIdentityId;
+        attributionParticipantId = resolution.participantId;
+        if (resolution.status === "ACTIVE") {
+          attributionStatus = "DIRECT_ATTRIBUTION";
+          attributionReason = "ATTRIBUTION_ACCEPTED";
+        } else if (resolution.status === "WRONG_PROGRAM" || resolution.status === "WRONG_PROJECT" || resolution.status === "NOT_FOUND" || resolution.status === "REVOKED" || resolution.status === "PARTICIPANT_INACTIVE") {
+          attributionStatus = "INVALID_ATTRIBUTION";
+          attributionReason = "INVALID_ATTRIBUTION";
+        } else {
+          attributionStatus = "AMBIGUOUS";
+          attributionReason = "AMBIGUOUS_ATTRIBUTION";
+        }
+      }
       const fingerprint = requestFingerprint({
         definitionId: definition.id,
         schemaVersion: definition.evidenceSchemaVersion,
         growthProgramId,
+        attributionId: attributionIdentityId ?? attributionReference,
         externalEventId,
         externalSubjectId,
         occurredAt,
@@ -588,7 +635,28 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         return this.getEventResult(prior, definition, true);
       }
       const replay = await deps.repository.getEventByExternalId(params.principal.workspaceId, externalEventId);
-      if (replay) fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this project.");
+      if (replay) {
+        const attributionConflict = replay.growthProgramId !== growthProgramId || replay.attributionIdentityId !== attributionIdentityId;
+        if (attributionConflict && (replay.growthProgramId !== null || growthProgramId !== null || replay.attributionIdentityId !== null || attributionIdentityId !== null)) {
+          await recordOutcomeAudit(deps, {
+            actorType: "SYSTEM",
+            actorId: null,
+            workspaceId: params.principal.workspaceId,
+            action: "developer.outcome.attribution_conflict",
+            targetType: "external_outcome_event",
+            targetId: replay.id,
+            metadata: {
+              growthProgramId,
+              attributionIdentityId,
+              priorGrowthProgramId: replay.growthProgramId,
+              priorAttributionIdentityId: replay.attributionIdentityId,
+              externalEventIdHash: sha256Hex(externalEventId),
+            },
+          });
+          fail(409, "ATTRIBUTION_CONFLICT", "This external outcome is already associated with a different participant.");
+        }
+        fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this project.");
+      }
 
       const organizationMode = await getMode(params.principal.workspaceId);
       const mode: OrganizationOperatorMode = !programBinding
@@ -597,10 +665,15 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
           ? "AUTONOMOUS"
           : "SHADOW";
       const at = now();
-      const verified = decision.verificationState === "VERIFIED";
+      const verificationState: ExternalVerificationState = attributionStatus === "INVALID_ATTRIBUTION"
+        ? "REFUSED"
+        : attributionStatus === "AMBIGUOUS"
+          ? "REVIEW"
+          : decision.verificationState;
+      const verified = verificationState === "VERIFIED";
       const held = verified && definition.holdSeconds > 0;
       const holdUntil = held ? new Date(at.getTime() + definition.holdSeconds * 1000) : null;
-      const voi = decision.verificationState === "REVIEW"
+      const voi = verificationState === "REVIEW"
         ? evaluateValueOfInformation({
             payoutAtRiskMicroUsdc: definition.unitValueMicroUsdc,
             currentConfidenceBps: 5_000,
@@ -611,13 +684,14 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
             maxEvidenceCostShareBps: 200,
           })
         : null;
-      const procurementRecommendation = decision.verificationState === "REVIEW"
+      const procurementRecommendation = verificationState === "REVIEW"
         ? mode === "SHADOW"
           ? voi?.decision === "BUY" ? "WOULD_BUY" : "REVIEW"
           : voi?.decision ?? "REVIEW"
         : "NOT_NEEDED";
       const reasons = [
         ...decision.reasonCodes,
+        ...(attributionReason ? [attributionReason] : []),
         ...(voi?.reasons.slice(0, 1) ?? []),
         ...(mode === "SHADOW" ? ["SHADOW_MODE_EVALUATED"] : []),
       ];
@@ -628,6 +702,8 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         integrationId: params.principal.integration.id,
         definitionId: definition.id,
         growthProgramId,
+        attributionIdentityId,
+        attributionStatus,
         externalEventId,
         externalSubjectId,
         occurredAt,
@@ -637,7 +713,7 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         evidenceHash: decision.evidenceHash,
         idempotencyKey,
         requestFingerprint: fingerprint,
-        verificationState: decision.verificationState,
+        verificationState,
         holdState: held ? "HELD" : verified ? "RELEASED" : "NOT_HELD",
         settlementState: !verified ? "NOT_ELIGIBLE" : mode === "SHADOW" ? "SHADOW_BLOCKED" : held ? "HELD" : "ELIGIBLE_NOT_REQUESTED",
         executionState: mode === "SHADOW" ? "NOT_EXECUTED" : "NOT_REQUESTED",
@@ -649,7 +725,7 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
           outcomeType: definition.outcomeType,
         },
         procurementRecommendation,
-        rejectionCode: decision.verificationState === "REFUSED" ? decision.reasonCodes[0] ?? "POLICY_REFUSED" : null,
+        rejectionCode: verificationState === "REFUSED" ? attributionStatus === "INVALID_ATTRIBUTION" ? "INVALID_ATTRIBUTION" : decision.reasonCodes[0] ?? "POLICY_REFUSED" : null,
         holdUntil,
         verifiedAt: verified ? at : null,
         settledAt: null,
@@ -680,6 +756,8 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
           integrationId: row.integrationId,
           definitionId: row.definitionId,
           growthProgramId: row.growthProgramId,
+          attributionIdentityId: row.attributionIdentityId,
+          participantId: attributionParticipantId,
           externalEventIdHash: sha256Hex(row.externalEventId),
           externalSubjectIdHash: sha256Hex(row.externalSubjectId),
           schemaVersion: row.schemaVersion,
@@ -700,6 +778,9 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
           holdState: row.holdState,
           settlementState: row.settlementState,
           executionState: row.executionState,
+          attributionIdentityId: row.attributionIdentityId,
+          participantId: attributionParticipantId,
+          attributionStatus: row.attributionStatus,
           procurementRecommendation: row.procurementRecommendation,
         },
       });
@@ -887,6 +968,8 @@ function mapEvent(row: typeof externalOutcomeEvents.$inferSelect): ExternalOutco
     integrationId: row.integrationId,
     definitionId: row.definitionId,
     growthProgramId: row.growthProgramId,
+    attributionIdentityId: row.attributionIdentityId,
+    attributionStatus: row.attributionStatus as ExternalAttributionStatus,
     externalEventId: row.externalEventId,
     externalSubjectId: row.externalSubjectId,
     occurredAt: row.occurredAt,
@@ -970,6 +1053,27 @@ export function createProductionOutcomeApiService() {
         ...row,
         operatorMode: row.operatorMode as "SHADOW" | "REVIEW" | "AUTONOMOUS",
       } : null;
+    },
+    resolveGrowthAttribution: async (workspaceId, growthProgramId, reference) => {
+      const [row] = await db.select({
+        attributionIdentityId: growthAttributionIdentities.id,
+        identityProgramId: growthAttributionIdentities.growthProgramId,
+        identityStatus: growthAttributionIdentities.status,
+        participantId: growthProgramParticipants.id,
+        participantStatus: growthProgramParticipants.status,
+        workspaceId: developerGrowthPrograms.workspaceId,
+      })
+        .from(growthAttributionIdentities)
+        .innerJoin(growthProgramParticipants, eq(growthProgramParticipants.id, growthAttributionIdentities.participantId))
+        .innerJoin(developerGrowthPrograms, eq(developerGrowthPrograms.id, growthAttributionIdentities.growthProgramId))
+        .where(or(eq(growthAttributionIdentities.id, reference), eq(growthAttributionIdentities.publicCode, reference)))
+        .limit(1);
+      if (!row) return { status: "NOT_FOUND" as const, attributionIdentityId: null, participantId: null };
+      if (row.workspaceId !== workspaceId) return { status: "WRONG_PROJECT" as const, attributionIdentityId: null, participantId: null };
+      if (row.identityProgramId !== growthProgramId) return { status: "WRONG_PROGRAM" as const, attributionIdentityId: row.attributionIdentityId, participantId: row.participantId };
+      if (row.identityStatus !== "ACTIVE") return { status: "REVOKED" as const, attributionIdentityId: row.attributionIdentityId, participantId: row.participantId };
+      if (row.participantStatus !== "ACTIVE") return { status: "PARTICIPANT_INACTIVE" as const, attributionIdentityId: row.attributionIdentityId, participantId: row.participantId };
+      return { status: "ACTIVE" as const, attributionIdentityId: row.attributionIdentityId, participantId: row.participantId };
     },
   });
 }

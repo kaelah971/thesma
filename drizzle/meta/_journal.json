@@ -141,6 +141,13 @@
       "when": 1793626513003,
       "tag": "0019_safe_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793640937891,
+      "tag": "0020_salty_sunspot",
+      "breakpoints": true
     }
   ]
 }

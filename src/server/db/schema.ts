@@ -935,6 +935,68 @@ export const developerGrowthPrograms = pgTable(
   ],
 );
 
+export const growthProgramParticipants = pgTable(
+  "growth_program_participants",
+  {
+    id: text("id").primaryKey(),
+    growthProgramId: text("growth_program_id")
+      .notNull()
+      .references(() => developerGrowthPrograms.id, { onDelete: "cascade" }),
+    participantType: text("participant_type").notNull(),
+    creatorUserId: text("creator_user_id").references(() => users.id, { onDelete: "set null" }),
+    externalPartnerId: text("external_partner_id"),
+    displayName: text("display_name").notNull(),
+    handle: text("handle"),
+    status: text("status").notNull().default("INVITED"),
+    participationSource: text("participation_source").notNull().default("INVITE"),
+    rewardPolicySnapshotJson: jsonb("reward_policy_snapshot_json").notNull().default({}),
+    joinedAt: timestamp("joined_at", { withTimezone: true }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("growth_program_participants_program_idx").on(t.growthProgramId),
+    index("growth_program_participants_creator_idx").on(t.creatorUserId),
+    index("growth_program_participants_external_idx").on(t.externalPartnerId),
+    uniqueIndex("growth_program_participants_program_creator_unique")
+      .on(t.growthProgramId, t.creatorUserId)
+      .where(sql`${t.creatorUserId} IS NOT NULL`),
+    uniqueIndex("growth_program_participants_program_external_unique")
+      .on(t.growthProgramId, t.externalPartnerId)
+      .where(sql`${t.externalPartnerId} IS NOT NULL`),
+    check("growth_program_participants_type_check", sql`${t.participantType} IN ('CREATOR','REFERRAL_PARTNER')`),
+    check("growth_program_participants_status_check", sql`${t.status} IN ('INVITED','APPLIED','APPROVED','ACTIVE','PAUSED','DECLINED','REMOVED')`),
+    check("growth_program_participants_source_check", sql`${t.participationSource} IN ('INVITE','OPEN_JOIN','EXTERNAL')`),
+  ],
+);
+
+export const growthAttributionIdentities = pgTable(
+  "growth_attribution_identities",
+  {
+    id: text("id").primaryKey(),
+    growthProgramId: text("growth_program_id")
+      .notNull()
+      .references(() => developerGrowthPrograms.id, { onDelete: "cascade" }),
+    participantId: text("participant_id")
+      .notNull()
+      .references(() => growthProgramParticipants.id, { onDelete: "cascade" }),
+    publicCode: text("public_code").notNull(),
+    status: text("status").notNull().default("ACTIVE"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("growth_attribution_identities_code_unique").on(t.publicCode),
+    uniqueIndex("growth_attribution_identities_program_participant_active_unique")
+      .on(t.growthProgramId, t.participantId)
+      .where(sql`${t.status} = 'ACTIVE'`),
+    index("growth_attribution_identities_program_idx").on(t.growthProgramId),
+    index("growth_attribution_identities_participant_idx").on(t.participantId),
+    check("growth_attribution_identities_status_check", sql`${t.status} IN ('ACTIVE','REVOKED')`),
+  ],
+);
+
 export const externalOutcomeEvents = pgTable(
   "external_outcome_events",
   {
@@ -950,6 +1012,8 @@ export const externalOutcomeEvents = pgTable(
       .notNull()
       .references(() => externalOutcomeDefinitions.id, { onDelete: "restrict" }),
     growthProgramId: text("growth_program_id").references(() => developerGrowthPrograms.id, { onDelete: "set null" }),
+    attributionIdentityId: text("attribution_identity_id").references(() => growthAttributionIdentities.id, { onDelete: "set null" }),
+    attributionStatus: text("attribution_status").notNull().default("UNATTRIBUTED"),
     externalEventId: text("external_event_id").notNull(),
     externalSubjectId: text("external_subject_id").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
@@ -980,9 +1044,11 @@ export const externalOutcomeEvents = pgTable(
     index("external_outcome_events_integration_idx").on(t.integrationId),
     index("external_outcome_events_definition_idx").on(t.definitionId),
     index("external_outcome_events_program_idx").on(t.growthProgramId),
+    index("external_outcome_events_attribution_idx").on(t.attributionIdentityId),
     check("external_outcome_events_verification_state_check", sql`${t.verificationState} IN ('SUBMITTED','REVIEW','VERIFIED','REFUSED')`),
     check("external_outcome_events_hold_state_check", sql`${t.holdState} IN ('NOT_HELD','HELD','RELEASED')`),
     check("external_outcome_events_settlement_state_check", sql`${t.settlementState} IN ('NOT_ELIGIBLE','HELD','ELIGIBLE_NOT_REQUESTED','SHADOW_BLOCKED','SETTLED')`),
+    check("external_outcome_events_attribution_status_check", sql`${t.attributionStatus} IN ('DIRECT_ATTRIBUTION','UNATTRIBUTED','INVALID_ATTRIBUTION','AMBIGUOUS')`),
   ],
 );
 
@@ -1236,6 +1302,8 @@ export type DbInvite = typeof privateInvites.$inferSelect;
 export type DbCampaign = typeof campaigns.$inferSelect;
 export type DbPolicyVersion = typeof campaignPolicyVersions.$inferSelect;
 export type DbGrowthProgram = typeof developerGrowthPrograms.$inferSelect;
+export type DbGrowthProgramParticipant = typeof growthProgramParticipants.$inferSelect;
+export type DbGrowthAttributionIdentity = typeof growthAttributionIdentities.$inferSelect;
 export type DbWorkspace = typeof workspaces.$inferSelect;
 export type DbVerificationProcurement = typeof verificationProcurements.$inferSelect;
 export type DbProcurementPolicy = typeof verificationProcurementPolicies.$inferSelect;

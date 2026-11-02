@@ -312,7 +312,7 @@ export interface CampaignMatchContext {
 export async function loadCampaignMatchContext(
   store: MarketStore,
   campaignId: string,
-  opts?: { allowPreview?: boolean },
+  opts?: { allowPreview?: boolean; allowDraftPreview?: boolean },
 ): Promise<CampaignMatchContext> {
   const campaign = await store.getCampaign(campaignId);
   if (!campaign) fail(404, "NOT_FOUND", "Campaign not found");
@@ -321,9 +321,10 @@ export async function loadCampaignMatchContext(
   if (!market) {
     if (!opts?.allowPreview) fail(404, "MARKET_NOT_OPEN", "No open market for this campaign");
     // Preview path: approved-but-unfunded campaigns get advisory matching
-    // off the approved policy. Anything less than APPROVED must approve first.
+    // off the approved policy. Embedded Growth Programs may also request a
+    // draft preview; it remains advisory and cannot create market terms.
     const approved = await store.getCurrentVersion(campaignId).catch(() => null);
-    if (!approved || approved.status !== "APPROVED" || approved.bountyFloorMicroUsdc === null || approved.bountyFloorMicroUsdc === undefined) {
+    if (!approved || ((!opts?.allowDraftPreview && approved.status !== "APPROVED") || approved.bountyFloorMicroUsdc === null || approved.bountyFloorMicroUsdc === undefined)) {
       fail(404, "MARKET_NOT_OPEN", "Matching opens once the campaign policy is approved");
     }
     const kinds = ["referral"];
@@ -582,10 +583,12 @@ export async function findCreatorMatches(
     histories?: Record<string, HistorySeed>;
     /** Allow advisory matching on approved-but-unfunded campaigns. */
     allowPreview?: boolean;
+    /** Embedded Growth Program draft discovery; never opens a market. */
+    allowDraftPreview?: boolean;
   },
 ): Promise<MatchEngineReport> {
   const now = deps.now?.() ?? new Date();
-  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId, { allowPreview: opts?.allowPreview });
+  const ctx = await loadCampaignMatchContext(deps.store, params.campaignId, { allowPreview: opts?.allowPreview, allowDraftPreview: opts?.allowDraftPreview });
   const { campaign, workspace } = ctx;
   const membership = workspace ? await deps.store.getMembership(workspace.id, params.callerUserId) : null;
   if (!membership || (membership.role !== "ORGANIZATION_OWNER" && membership.role !== "ORGANIZATION_MEMBER")) {
