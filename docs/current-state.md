@@ -15,6 +15,7 @@ Thesma is live as an autonomous growth-finance operator and multi-sided outcome 
 - Creator reliability, outcome quality and retention scoring.
 - Campaign CFO and prospective capital allocation.
 - Outcome Portfolio Operator: deterministic next-dollar recommendations above campaigns, with reserve, concentration, evidence and all-in verified CAC controls.
+- Shadow Operator Mode: owner-controlled organization shadow posture for portfolio, verification and settlement recommendations, immutable input/policy snapshots, human agreement/override telemetry, and a central no-execution boundary.
 - Verification procurement logic that fails closed when a provider is unavailable.
 - Autonomy ladder and unified decision ledger.
 - Public markets, creator profiles and zero-login mainnet proof.
@@ -79,7 +80,7 @@ Canonical Arc USDC:
 
 ### Release gate
 
-- 900 tests passing
+- 908 tests passing
 - 2 intentional Anvil/env-gated skips
 - GitHub Actions: 6 required repository checks
 - critical/high npm audit findings: 0
@@ -90,7 +91,9 @@ Canonical Arc USDC:
 
 ## Current development rule
 
-No additional mainnet spending is required for product proof. The Outcome Portfolio Operator slice made zero production DB writes, mainnet transactions or real-money purchases.
+No additional mainnet spending is required for product proof. The Outcome Portfolio Operator and Shadow Operator slices make no mainnet transactions or real-money purchases. Shadow review persistence is append-only audit data; recommendations remain `NOT_EXECUTED`.
+
+See [`shadow-operator.md`](shadow-operator.md) for the activation, review, telemetry and hard-boundary contract.
 
 Use:
 - Northstar for organization → creator → invitation → funding-preparation UX

@@ -20,6 +20,7 @@ import {
   type CapabilitySeed,
   type HistorySeed,
 } from "./matching";
+import { getOrganizationOperatorMode } from "./operatorMode";
 import {
   checkCapacity,
   computeExposure,
@@ -494,6 +495,10 @@ export async function inviteCreators(
   params: { callerUserId: string; campaignId: string; creatorUserIds: string[] },
   opts?: { candidates?: Record<string, CapabilitySeed | null>; histories?: Record<string, HistorySeed>; deal?: DealInput; offeredBountyMicroUsdc?: string },
 ): Promise<{ campaignId: string; invited: number; results: BulkInviteItem[] }> {
+  const campaign = await deps.store.getCampaign(params.campaignId).catch(() => null);
+  if (campaign && (await getOrganizationOperatorMode(campaign.workspaceId)) === "SHADOW") {
+    throw Object.assign(new Error("Shadow mode blocks creator invites."), { status: 409, code: "SHADOW_EXECUTION_BLOCKED" });
+  }
   const ids = [...new Set(params.creatorUserIds)].slice(0, MAX_BULK_INVITES);
   const results: BulkInviteItem[] = [];
   for (const creatorUserId of ids) {

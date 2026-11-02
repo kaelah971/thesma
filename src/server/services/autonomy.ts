@@ -49,7 +49,7 @@ export type ExecutionState =
   | "SETTLED"
   | "NO_ACTION";
 
-export type ExecutionMode = "AUTONOMOUS" | "HUMAN" | "SYSTEM";
+export type ExecutionMode = "AUTONOMOUS" | "HUMAN" | "SYSTEM" | "SHADOW";
 
 export interface DecisionEnvelope {
   id: string;
@@ -265,6 +265,23 @@ export function normalizeAuditRow(row: LedgerAuditRow): DecisionEnvelope | null 
         reasons: reasons.length ? reasons : generic(row.action),
         policyRefs: ["Growth policy"],
       });
+    case "shadow.decision.generated": {
+      const family = str(m, "family");
+      const agentType = family === "OUTCOME_PORTFOLIO" ? "CAMPAIGN_CFO" : family === "VERIFICATION_PROCUREMENT" ? "VERIFICATION_AGENT" : "FINANCIAL_OPERATOR";
+      return base(row, {
+        agentType,
+        decisionType: "SHADOW_RECOMMENDATION",
+        decision: String(str(m, "recommendation") ?? "REVIEW"),
+        authorityState: "ADVISORY",
+        executionState: "PROPOSED",
+        executionMode: "SHADOW",
+        confidence: str(m, "confidence"),
+        amountMicroUsdc: str(m, "amountMicroUsdc"),
+        reasons: reasons.length ? reasons : [`${family ?? "Operator"} recommendation recorded for human review; execution is blocked.`],
+        policyRefs: ["Organization Shadow mode", "Decision input snapshot"],
+        outcomeId: family === "FINANCIAL_SETTLEMENT" ? str(m, "targetId") : null,
+      });
+    }
     case "cfo.plan.generated":
       return base(row, {
         agentType: "CAMPAIGN_CFO", decisionType: "CAPITAL_PLAN", decision: "PLANNED",

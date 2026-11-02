@@ -3,6 +3,7 @@ import { requireOwner, requireUser } from "@/server/auth/guard";
 import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { getDb } from "@/server/db/client";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
+import { getOrganizationOperatorMode } from "@/server/services/operatorMode";
 import { evaluateMarket } from "@/server/services/pricing";
 import {
   buildGrowthPlan,
@@ -36,6 +37,9 @@ export async function POST(req: Request) {
       await requireOwner(workspaceId, user.userId);
     } catch {
       return forbidden();
+    }
+    if ((await getOrganizationOperatorMode(workspaceId)) === "SHADOW") {
+      return Response.json({ error: "Shadow mode blocks capital allocation mutations.", code: "SHADOW_EXECUTION_BLOCKED" }, { status: 409 });
     }
     const wired = marketDepsOr503();
     if ("response" in wired) return wired.response;

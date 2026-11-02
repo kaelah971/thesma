@@ -341,6 +341,28 @@ describe("end-to-end procurement on the local test resource", () => {
     expect(await store.getPayoutByOutcome(out.procurement?.outcomeId as string)).toBeNull();
   });
 
+  it("shadow BUY_CHECK records a recommendation without a procurement row or signer/purchase call", async () => {
+    const { store, sink, events } = await flaggedSetup();
+    const out = await evaluateVerificationCheck(
+      {
+        store,
+        audit: sink,
+        now: () => NOW,
+        env: tenv({ NODE_ENV: "test", THESMA_TEST_CHECK_COST_MICRO_USDC: "2000" }),
+        fetchImpl: async () => {
+          throw new Error("shadow mode must not fetch a paid resource");
+        },
+      },
+      { workspaceId: "ws-A", campaignId: "c-1", executionMode: "SHADOW" },
+    );
+    expect(out.decision.decision).toBe("BUY_CHECK");
+    expect(out.execution).toMatchObject({ evaluated: true, signed: false, purchased: false, ambiguous: false });
+    expect(out.procurement).toBeNull();
+    expect(await store.listProcurementsByCampaign("c-1")).toHaveLength(0);
+    expect(events.some((event) => event.action === "verification.procurement.approved")).toBe(false);
+    expect(events.find((event) => event.action === "shadow.verification.procurement.evaluated")).toBeTruthy();
+  });
+
   it("exact check paid once only; retry never repays", async () => {
     const { store, sink } = await flaggedSetup();
     const env = signerEnv();

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { requireOwner, requireUser } from "@/server/auth/guard";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
+import { getOrganizationOperatorMode } from "@/server/services/operatorMode";
 import { arcConfigFromEnv, buildApprovalIntent } from "@/server/chain/arc";
 import type { Address, Hex } from "viem";
 
@@ -29,6 +30,9 @@ export async function POST(req: Request) {
       await requireOwner(workspaceId, user.userId);
     } catch {
       return forbidden();
+    }
+    if ((await getOrganizationOperatorMode(workspaceId)) === "SHADOW") {
+      return Response.json({ error: "Shadow mode blocks approval execution intents.", code: "SHADOW_EXECUTION_BLOCKED" }, { status: 409 });
     }
     const config = arcConfigFromEnv();
     if (!config || config.network !== "testnet" || !config.vaultAddress) {

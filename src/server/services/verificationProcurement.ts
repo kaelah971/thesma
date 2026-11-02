@@ -27,6 +27,7 @@ import { DEFAULT_PROCUREMENT_POLICY } from "./verification";
 import { committedForCampaign } from "./payouts";
 import { getOperatorPolicy, DEFAULT_OPERATOR_POLICY } from "./operator";
 import { loadCampaignQuality } from "./reliability";
+import { getOrganizationOperatorMode } from "./operatorMode";
 
 /**
  * Verification procurement orchestration (Slice 8).
@@ -159,9 +160,13 @@ export async function evaluateVerificationCheck(
     workspaceId: string; campaignId: string; outcomeId?: string; providerId?: string; checkType?: CheckType;
     /** Explicit verification confidence (bps) for the value-of-information gate. Absent → gate defers to policy. */
     confidenceBps?: { current: number; required: number };
+    /** Shadow changes authority only: quote and decide, never persist a procurement or purchase it. */
+    executionMode?: "AUTONOMOUS" | "SHADOW";
   },
 ): Promise<EvaluateResult> {
   const now = deps.now?.() ?? new Date();
+  const organizationMode = await getOrganizationOperatorMode(params.workspaceId);
+  const shadow = params.executionMode === "SHADOW" || organizationMode === "SHADOW";
   const env = deps.env ?? process.env;
   const store = deps.store;
   const campaign = await store.getCampaign(params.campaignId).catch(() => null);
@@ -233,8 +238,10 @@ export async function evaluateVerificationCheck(
 
   const { spentMicroUsdc: periodSpent } = await verificationSpendForWorkspace(store, params.workspaceId, now.getTime());
   const remoteConfig = kind === "remote-x402" ? getRemoteX402Config(env) : null;
+  // Shadow has no signing authority. Treat signer availability as irrelevant to
+  // the recommendation so it can answer "would buy" without owning a key.
   let signerConfigured = true;
-  if (kind === "remote-x402") {
+  if (!shadow && kind === "remote-x402") {
     // The remote buyer signs ONLY through Circle. Never the raw-key signer.
     try {
       const { getCircleVerificationConfig } = await import("../chain/circle");
@@ -242,7 +249,7 @@ export async function evaluateVerificationCheck(
     } catch {
       signerConfigured = deps.circleBuyer != null;
     }
-  } else {
+  } else if (!shadow) {
     try {
       getProcurementSigner(env);
     } catch {
@@ -305,11 +312,18 @@ export async function evaluateVerificationCheck(
       availableMicroUsdc: available, reserveMicroUsdc: reserve, campaignLive, outcomeRelevant,
       existingProcurementState: existing.state, signerConfigured, nowMs: now.getTime(),
     });
-    return {
-      procurement: toDto(existing),
-      decision,
-      execution: { evaluated: true, signed: false, purchased: false, ambiguous: false, result: null, paymentReference: null, route: kind === "local-test" ? "local-test" : kind === "remote-x402" ? "real" : "unconfigured" },
-    };
+    const execution = { evaluated: true, signed: false, purchased: false, ambiguous: false, result: null, paymentReference: null, route: kind === "local-test" ? "local-test" : kind === "remote-x402" ? "real" : "unconfigured" } as const;
+    if (shadow) {
+      await auditEvent(deps.audit, "shadow.verification.procurement.evaluated", {
+        workspaceId: params.workspaceId, campaignId: params.campaignId, outcomeId: outcomeId ?? "", providerId,
+        metadata: {
+          decision: decision.decision, checkType, reasons: decision.reasons, costMicroUsdc: decision.costMicroUsdc,
+          executionStatus: "NOT_EXECUTED", existingProcurementState: existing.state,
+        },
+      });
+      return { procurement: null, decision, execution };
+    }
+    return { procurement: toDto(existing), decision, execution };
   }
 
   const providerAllowlisted = policy.allowedProviders.includes(providerId);
@@ -378,10 +392,22 @@ export async function evaluateVerificationCheck(
     result: null as import("./verification").NormalizedResult | null, paymentReference: null as string | null,
     route: (kind === "local-test" ? "local-test" : kind === "remote-x402" ? "real" : "unconfigured") as "local-test" | "unconfigured" | "real",
   };
-  await auditEvent(deps.audit, "verification.procurement.evaluated", {
+  await auditEvent(deps.audit, shadow ? "shadow.verification.procurement.evaluated" : "verification.procurement.evaluated", {
     workspaceId: params.workspaceId, campaignId: params.campaignId, outcomeId: outcomeId ?? "",
-    providerId, metadata: { decision: decision.decision, checkType, reasons: decision.reasons, costMicroUsdc: decision.costMicroUsdc },
+    providerId,
+    metadata: {
+      decision: decision.decision,
+      checkType,
+      reasons: decision.reasons,
+      costMicroUsdc: decision.costMicroUsdc,
+      executionStatus: shadow ? "NOT_EXECUTED" : "AVAILABLE",
+    },
   });
+
+  // This is the hard x402 boundary: shadow evaluates the same quote and
+  // deterministic policy, then exits before any procurement row, signer, or
+  // purchase call can occur.
+  if (shadow) return { procurement: null, decision, execution: execBase };
 
   if (!quote || !outcomeId || !checkType || decision.decision !== "BUY_CHECK") {
     const state = decision.decision === "REFUSE" ? "REFUSED" : decision.decision === "ESCALATE" ? "ESCALATED" : "CANDIDATE";

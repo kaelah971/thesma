@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireOwner, requireUser } from "@/server/auth/guard";
 import { marketDepsOr503 } from "@/server/api/campaignDeps";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
+import { getOrganizationOperatorMode } from "@/server/services/operatorMode";
 import { evaluateVerificationCheck } from "@/server/services/verificationProcurement";
 
 const evaluateSchema = z.object({
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     } catch {
       return forbidden();
     }
+    const mode = await getOrganizationOperatorMode(workspaceId);
     const wired = marketDepsOr503();
     if ("response" in wired) return wired.response;
     const result = await evaluateVerificationCheck(wired.deps, {
@@ -42,6 +44,7 @@ export async function POST(req: Request) {
       ...(currentConfidenceBps !== undefined && requiredConfidenceBps !== undefined
         ? { confidenceBps: { current: currentConfidenceBps, required: requiredConfidenceBps } }
         : {}),
+      ...(mode === "SHADOW" ? { executionMode: "SHADOW" as const } : {}),
     });
     return Response.json(result);
   } catch (err) {

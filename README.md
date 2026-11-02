@@ -525,7 +525,7 @@ npm run secret:hygiene    # tracked-secret hygiene (filenames + key material; fi
 forge build/test    # run inside contracts/ (unit + fuzz + invariant + key vectors)
 ```
 
-Current suite: **900 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
+Current suite: **908 passing, 2 skipped** (the 2 skips are Anvil/env-gated: `checkout.anvil`, `payout.anvil` — they require a local Anvil binary, so CI treats the skip as intentional; core payment tests are never skipped). Every money path is additionally pinned by the S8.2 mainnet proof above — the second worker run is the live no-double-pay test.
 
 ## Release gate (CI)
 
@@ -549,6 +549,7 @@ Honest boundaries of the shipped product:
 
 - No LLM is wired anywhere — intent parsing, pricing, negotiation, and Operator answers are deterministic kernels and fixed templates.
 - Organization company wallets are cryptographically ownership-proven with a workspace-bound EIP-712 challenge and recovered-signer confirmation. Partner wallet ownership remains registration-based.
+- Shadow Operator Mode is an owner-controlled organization posture that reuses the deterministic portfolio, verification and settlement kernels while persisting immutable input/policy snapshots. Its central boundary blocks payments, x402 purchases, capital movement, creator invites and settlement; human review is telemetry, not execution.
 - Refund protection is the hold timer only; no refund-event detection exists.
 - No Circle Gateway/CCTP, paymasters, or fiat ramps. x402 v2 transport is protocol-tested locally, but real-provider interoperability is not yet claimed.
 - Analytics remain intentionally bounded to proof-backed campaign metrics; realized CAC is shown only where computable from verified production data.
@@ -576,6 +577,7 @@ Thesma was built slice by slice. Milestones S0–S7 were **proven locally (Anvil
 - [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) — integrated no-spend acceptance record: full product-journey verification, zero-spend statement, final test/CI status.
 - [`docs/judge-demo.md`](docs/judge-demo.md) — judge demo guide: 90-second and 3-minute paths, exact routes, proof stories, screenshot capture list.
 - [`docs/verification-procurement.md`](docs/verification-procurement.md) — value-of-information buyer: formula, decision states, Circle buyer architecture, x402 lifecycle, testnet boundary, idempotency, first provider evidence.
+- [`docs/shadow-operator.md`](docs/shadow-operator.md) — Shadow mode contract, immutable recommendation snapshots, review responses, telemetry and no-execution boundary.
 - [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md) — mainnet runtime provisioning runbook.
 - [`docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md`](docs/proof-pack/SAFE_AGENT_PAYMENTS_CHECKLIST.md) — safe agent payments checklist.
 - [`docs/arc-testnet.md`](docs/arc-testnet.md) — Canteen testnet setup, RPC architecture, and hardened operator vault.

@@ -3,6 +3,7 @@ import { requireOwner, requireUser } from "@/server/auth/guard";
 import { marketDepsOr503, payoutWorkerDepsOr503 } from "@/server/api/campaignDeps";
 import { getDb } from "@/server/db/client";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
+import { getOrganizationOperatorMode } from "@/server/services/operatorMode";
 import {
   decideObligation,
   DEFAULT_OPERATOR_POLICY,
@@ -35,6 +36,10 @@ export async function POST(req: Request) {
       await requireOwner(workspaceId, user.userId);
     } catch {
       return forbidden();
+    }
+    const mode = await getOrganizationOperatorMode(workspaceId);
+    if (mode === "SHADOW") {
+      return Response.json({ mode, execution: { executed: false, status: "NOT_EXECUTED", reason: "SHADOW_MODE" }, results: [] });
     }
     const wired = marketDepsOr503();
     if ("response" in wired) return wired.response;

@@ -1,6 +1,7 @@
 import { requireUser } from "@/server/auth/guard";
 import { fundingDepsOr503 } from "@/server/api/campaignDeps";
 import { badRequest, toApiError } from "@/server/api/errors";
+import { getOrganizationOperatorMode } from "@/server/services/operatorMode";
 import { fundingConfirmRequestSchema } from "@/server/domain/funding";
 import { confirmFunding } from "@/server/services/fundings";
 
@@ -10,6 +11,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if ("response" in wired) return wired.response;
     const user = await requireUser();
     const { id } = await ctx.params;
+    const campaign = await wired.deps.store.getCampaign(id).catch(() => null);
+    if (campaign && (await getOrganizationOperatorMode(campaign.workspaceId)) === "SHADOW") {
+      return Response.json({ error: "Shadow mode blocks capital movement confirmations.", code: "SHADOW_EXECUTION_BLOCKED" }, { status: 409 });
+    }
     const body = await req.json().catch(() => null);
     const parsed = fundingConfirmRequestSchema.safeParse(body ?? {});
     if (!parsed.success) return badRequest("Invalid funding-confirm request", parsed.error.flatten());

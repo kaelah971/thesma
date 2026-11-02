@@ -3,6 +3,7 @@ import { requireOwner, requireUser } from "@/server/auth/guard";
 import { payoutWorkerDepsOr503 } from "@/server/api/campaignDeps";
 import { getDb } from "@/server/db/client";
 import { badRequest, forbidden, toApiError } from "@/server/api/errors";
+import { getOrganizationOperatorMode } from "@/server/services/operatorMode";
 import {
   decideEscalation,
   DEFAULT_OPERATOR_POLICY,
@@ -33,6 +34,9 @@ export async function POST(req: Request) {
       await requireOwner(workspaceId, user.userId);
     } catch {
       return forbidden();
+    }
+    if ((await getOrganizationOperatorMode(workspaceId)) === "SHADOW") {
+      return Response.json({ error: "Shadow mode blocks settlement approvals.", code: "SHADOW_EXECUTION_BLOCKED" }, { status: 409 });
     }
     const db = getDb();
     await decideEscalation(db, { escalationId, workspaceId, decidedByUserId: user.userId, approved });

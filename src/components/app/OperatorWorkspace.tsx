@@ -11,6 +11,7 @@ import { answerOperator, SUGGESTED_PROMPTS, type OperatorBlock, type OperatorRep
 import { OperatorAutonomy } from "@/components/app/OperatorAutonomy";
 import { CfoPanel } from "@/components/app/CfoPanel";
 import { AutonomyPanel } from "@/components/app/AutonomyPanel";
+import { ShadowOperatorPanel } from "@/components/app/ShadowOperatorPanel";
 import { GrowthPanel } from "@/components/app/GrowthPanel";
 import { campaignFinancials, outcomeRows, RAIL, railIndex, verifiedCount, type WorkspaceSnapshot } from "@/lib/readmodel";
 import styles from "./operator.module.css";
@@ -238,6 +239,11 @@ export function OperatorWorkspace({ snapshot, initials }: { snapshot: WorkspaceS
       <aside className={styles.side} aria-label="Context">
         <OperatorAutonomy workspaceId={snapshot.workspace.id} isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"} />
         <CfoPanel workspaceId={snapshot.workspace.id} isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"} />
+        <ShadowOperatorPanel
+          workspaceId={snapshot.workspace.id}
+          isOwner={snapshot.workspace.role === "ORGANIZATION_OWNER"}
+          campaignId={focus ? focus.id : null}
+        />
         <AutonomyPanel workspaceId={snapshot.workspace.id} />
         <GrowthPanel
           workspaceId={snapshot.workspace.id}

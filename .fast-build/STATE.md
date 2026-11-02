@@ -144,3 +144,12 @@
 - Zero-spend statement: no prod DB writes, no Northstar/@bgirl mutation, no signature, no broadcast, 0 USDC spent. Northstar remains FUNDING/PREPARED/0-funded/no-tx/market-closed.
 - Record: docs/integrated-acceptance.md (linked from README Judge quick links + Docs).
 - Production migration caveat STANDS: do not blindly run db:migrate against production.
+
+## Slice 11 — Shadow Operator Mode
+- Organization-level `AUTONOMOUS` / `SHADOW` mode is append-only in the decision ledger; no migration.
+- `src/server/services/shadowOperator.ts` composes existing Outcome Portfolio, verification procurement, and settlement kernels into immutable `NOT_EXECUTED` recommendations with input/policy snapshots.
+- Human responses are append-only `AGREE` / `OVERRIDE` / `IGNORE`; telemetry reports organization, decision-family, and confidence agreement rates.
+- Central boundary blocks payments, x402 purchases, capital movement, creator invites and settlements in `SHADOW` mode.
+- UI: `ShadowOperatorPanel`; routes: `/api/operator/shadow`, `/mode`, `/run`, `/respond`.
+- Mandatory fixture covered: `INCREASE 50 USDC → AGREE`, `WOULD_BUY 0.002 USDC → AGREE`, `HOLD → OVERRIDE (BUSINESS_CONTEXT_MISSING)`; 3 generated/reviewed, 2 agreements, 1 override, 6667 bps.
+- Verification: 908 passing / 2 intentional skips; typecheck, lint, build and browser smoke green before commit.

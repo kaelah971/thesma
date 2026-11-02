@@ -19,6 +19,10 @@ Most business agents automate bills — **Thesma autonomously buys verified grow
 4. `/@bgirl` — creator-side public identity: proof-first metrics, no follower scoring, marketplace-connected proof (30s).
 5. Authenticated Northstar (org account required): Creator Matches with match reasoning → frozen 5 USDC invitation visible to both sides → PREPARED funding preview showing 50 USDC required vs 0 USDC balance with **Start signing disabled** — the safety story (45s).
 
+## Shadow Operator judge-safe path
+
+In the authenticated Operator workspace, an organization owner can enable **SHADOW** mode, run the deterministic portfolio/verification/settlement recommendations, and review each with `AGREE`, `OVERRIDE` (reason required), or `IGNORE`. The panel shows immutable input/policy snapshots, confidence segmentation and agreement telemetry. Every row stays `NOT_EXECUTED`; shadow mode blocks payments, x402 purchases, capital movement, creator invites and settlements. This path requires no wallet signature, testnet spend or mainnet activity.
+
 ## Exact routes
 
 - Landing / thesis: `/`
@@ -50,7 +54,7 @@ One real campaign on Arc Mainnet 5042: budget moved into `ThesmaMarketVault` (`0
 
 - External verification procurement: `NOT_CONFIGURED` without a provider/budget — never presented as purchased.
 - x402 v2: protocol-tested locally only; no live provider interoperability claimed.
-- Cross-campaign capital movement: `UNAVAILABLE` by vault design; the allocator recommends, never moves.
+- Cross-campaign capital movement: `UNAVAILABLE` by vault design; the allocator recommends, never moves. Shadow mode additionally blocks capital movement intents and other operator side effects.
 - Hybrid base/milestone legs: settlement `UNSUPPORTED` onchain; recorded truthfully, not paid.
 - Payouts run on a daily Hobby cron — settlement can wait for the next run after hold expiry.
 - No Circle Gateway/CCTP, paymasters, or fiat ramps.
@@ -71,6 +75,6 @@ One real campaign on Arc Mainnet 5042: budget moved into `ThesmaMarketVault` (`0
 
 ## Verification behind this guide
 
-- Full suite 836 passing / 2 intentional skips; typecheck, lint, build green; local browser smoke (desktop + mobile) green; CI 6/6 on the shipped commit.
+- Full suite 908 passing / 2 intentional skips; typecheck, lint, build green; local browser smoke (desktop + mobile) green; CI 6/6 on the shipped commit.
 - Public routes swept read-only Nov 1, 2026: all 200, correct titles, no error-boundary copy.
 - Zero-spend: no production writes, no signatures, no broadcasts in preparing this guide.

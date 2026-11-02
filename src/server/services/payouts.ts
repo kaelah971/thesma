@@ -5,6 +5,7 @@ import type { OutcomeProofSigner, PayoutExecutor } from "../chain/signers";
 import { finalizeMarketIfTargetSettled } from "./markets";
 import { newId } from "../auth/session";
 import type { AuditSink, MarketStore, StoredOutcome, StoredPayout, StoredReservation } from "./campaignStore";
+import { getOrganizationOperatorMode } from "./operatorMode";
 
 export interface PayoutDeps {
   store: MarketStore;
@@ -92,6 +93,9 @@ export async function reserveOutcomePayout(deps: PayoutDeps, params: { outcomeId
     const ms = store as MarketStore;
     const outcome = await ms.getOutcome(params.outcomeId);
     if (!outcome) fail(404, "NOT_FOUND", "Outcome not found");
+    if ((await getOrganizationOperatorMode((await ms.getCampaign(outcome.campaignId))?.workspaceId ?? "")) === "SHADOW") {
+      return { reserved: false as const, reason: "SHADOW_MODE" as const };
+    }
     if (outcome.status !== "VERIFIED") {
       fail(400, "NOT_VERIFIED", "Only VERIFIED outcomes can reserve budget");
     }
@@ -274,6 +278,10 @@ export async function settleReservedPayout(
     }
     const outcome = await ms.getOutcome(reservation.outcomeId);
     if (!outcome || outcome.status !== "VERIFIED") fail(400, "OUTCOME_CHANGED", "Outcome is no longer VERIFIED");
+    const campaignForMode = await ms.getCampaign(outcome.campaignId);
+    if (campaignForMode && (await getOrganizationOperatorMode(campaignForMode.workspaceId)) === "SHADOW") {
+      return { advanced: false as const, failureCode: "SHADOW_MODE" as const, reservation: serializeReservation(reservation), payout: serializePayout(payout) };
+    }
     if (outcome.holdUntil && now < outcome.holdUntil) fail(409, "HOLD_ACTIVE", "Refund hold has not cleared");
     const ctx = await loadReservationContext(ms, outcome);
     if ((ctx as unknown as { noWallet?: boolean }).noWallet) fail(400, "NO_WALLET", "Partner payout wallet is missing");
@@ -556,6 +564,11 @@ export async function processEligiblePayouts(deps: PayoutDeps, opts?: { limit?: 
   summary.scanned = outcomes.length;
   for (const outcome of outcomes) {
     try {
+      const campaign = await deps.store.getCampaign(outcome.campaignId).catch(() => null);
+      if (campaign && (await getOrganizationOperatorMode(campaign.workspaceId)) === "SHADOW") {
+        summary.skipped.push({ outcomeId: outcome.id, reason: "SHADOW_MODE" });
+        continue;
+      }
       if (outcome.holdUntil && now < outcome.holdUntil) {
         summary.skipped.push({ outcomeId: outcome.id, reason: "HOLD_ACTIVE" });
         continue;

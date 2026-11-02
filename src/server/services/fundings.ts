@@ -27,6 +27,7 @@ import { newId } from "../auth/session";
 import { campaignInScope } from "./campaigns";
 import type { AuditSink, FundingStore, StoredFunding } from "./campaignStore";
 import type { CampaignPolicyVersion } from "../domain/campaign";
+import { assertExecutionAllowed, getOrganizationOperatorMode } from "./operatorMode";
 
 export interface FundingDeps {
   store: FundingStore;
@@ -291,6 +292,7 @@ export async function prepareFundingIntent(
 }> {
   const { campaign, version } = await campaignInScope(deps, params.campaignId, params.userId);
   await ownerOrFail(deps, campaign.workspaceId, params.userId);
+  assertExecutionAllowed(await getOrganizationOperatorMode(campaign.workspaceId), "CAPITAL_MOVEMENT");
   if (version.version !== params.expectedVersion) {
     fail(409, "CONFLICT", "Stale policy version", { expected: params.expectedVersion, current: version.version });
   }
@@ -567,6 +569,7 @@ export async function recordFundingSubmitted(
   }
   const { campaign, version } = await campaignInScope(deps, params.campaignId, params.userId);
   await ownerOrFail(deps, campaign.workspaceId, params.userId);
+  assertExecutionAllowed(await getOrganizationOperatorMode(campaign.workspaceId), "CAPITAL_MOVEMENT");
   if (version.version !== params.expectedVersion) {
     fail(409, "CONFLICT", "Stale policy version", { expected: params.expectedVersion, current: version.version });
   }
@@ -657,6 +660,7 @@ export async function confirmFunding(
 ) {
   const { campaign, version } = await campaignInScope(deps, params.campaignId, params.userId);
   await ownerOrFail(deps, campaign.workspaceId, params.userId);
+  assertExecutionAllowed(await getOrganizationOperatorMode(campaign.workspaceId), "CAPITAL_MOVEMENT");
   const target = params.expectedVersion ?? version.version;
   if (version.version !== target) {
     fail(409, "CONFLICT", "Stale policy version", { expected: target, current: version.version });
