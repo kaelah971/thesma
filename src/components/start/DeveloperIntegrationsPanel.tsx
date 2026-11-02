@@ -15,7 +15,7 @@ interface Integration {
   lastUsedAt: string | null;
 }
 
-export function DeveloperIntegrationsPanel({ workspaceId, initialIntegrations }: { workspaceId: string; initialIntegrations: Integration[] }) {
+export function DeveloperIntegrationsPanel({ projectId, initialIntegrations }: { projectId: string; initialIntegrations: Integration[] }) {
   const router = useRouter();
   const [integrations, setIntegrations] = useState(initialIntegrations);
   const [name, setName] = useState("");
@@ -31,7 +31,7 @@ export function DeveloperIntegrationsPanel({ workspaceId, initialIntegrations }:
     const response = await fetch("/api/v1/integrations", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceId, name }),
+      body: JSON.stringify({ projectId, name }),
     });
     const data = await response.json().catch(() => null);
     setPending(false);
@@ -50,7 +50,7 @@ export function DeveloperIntegrationsPanel({ workspaceId, initialIntegrations }:
     setError(null);
     const response = await fetch(`/api/v1/integrations/${id}`, {
       method: "DELETE",
-      headers: { "x-thesma-workspace-id": workspaceId },
+      headers: { "x-thesma-project-id": projectId },
     });
     const data = await response.json().catch(() => null);
     setPending(false);
@@ -82,7 +82,7 @@ export function DeveloperIntegrationsPanel({ workspaceId, initialIntegrations }:
       )}
       {error && <p id="integration-error" role="alert" style={{ color: "var(--danger)", marginTop: 12 }}>{error}</p>}
       {integrations.length === 0 ? (
-        <div className={styles.panelEmpty}>No integrations yet. Create one to receive an organization-scoped API key.</div>
+        <div className={styles.panelEmpty}>No integrations yet. Create one to receive a project-scoped API key.</div>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: "18px 0 0", display: "grid", gap: 10 }}>
           {integrations.map((integration) => (

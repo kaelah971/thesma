@@ -110,6 +110,7 @@ export interface OutcomeApiRepository {
   revokeIntegration(workspaceId: string, integrationId: string, at: Date): Promise<DeveloperIntegrationRow | null>;
   touchIntegration(integrationId: string, at: Date): Promise<void>;
   listDefinitionVersions(workspaceId: string, slug: string): Promise<ExternalOutcomeDefinitionRow[]>;
+  listDefinitions(workspaceId: string): Promise<ExternalOutcomeDefinitionRow[]>;
   getDefinitionById(workspaceId: string, id: string): Promise<ExternalOutcomeDefinitionRow | null>;
   insertDefinition(input: Omit<ExternalOutcomeDefinitionRow, "createdAt" | "updatedAt" | "usedAt">): Promise<ExternalOutcomeDefinitionRow>;
   deactivateDefinitions(workspaceId: string, slug: string, exceptId: string): Promise<void>;
@@ -119,6 +120,7 @@ export interface OutcomeApiRepository {
   getEventByExternalId(workspaceId: string, externalEventId: string): Promise<ExternalOutcomeEventRow | null>;
   insertEvent(input: Omit<ExternalOutcomeEventRow, "createdAt" | "updatedAt">): Promise<ExternalOutcomeEventRow>;
   listEventsByIntegration(workspaceId: string, integrationId: string): Promise<ExternalOutcomeEventRow[]>;
+  listEvents(workspaceId: string): Promise<ExternalOutcomeEventRow[]>;
   listLedger(workspaceId: string, eventId: string): Promise<OutcomeLedgerRow[]>;
   appendMemoryLedger?(row: OutcomeLedgerRow): void;
 }
@@ -135,6 +137,8 @@ export interface CreateIntegrationResult {
 
 export interface SafeIntegration {
   id: string;
+  projectId: string;
+  /** Deprecated response alias retained for existing API clients. */
   workspaceId: string;
   name: string;
   status: "ACTIVE" | "REVOKED";
@@ -147,6 +151,8 @@ export interface SafeIntegration {
 
 export interface SafeDefinition {
   id: string;
+  projectId: string;
+  /** Deprecated response alias retained for existing API clients. */
   workspaceId: string;
   slug: string;
   name: string;
@@ -265,6 +271,7 @@ function asIdempotencyKey(value: string | null): string {
 function toIntegration(row: DeveloperIntegrationRow): SafeIntegration {
   return {
     id: row.id,
+    projectId: row.workspaceId,
     workspaceId: row.workspaceId,
     name: row.name,
     status: row.status,
@@ -279,6 +286,7 @@ function toIntegration(row: DeveloperIntegrationRow): SafeIntegration {
 function toDefinition(row: ExternalOutcomeDefinitionRow): SafeDefinition {
   return {
     id: row.id,
+    projectId: row.workspaceId,
     workspaceId: row.workspaceId,
     slug: row.slug,
     name: row.name,
@@ -484,6 +492,10 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       return toDefinition(row);
     },
 
+    async listDefinitions(workspaceId: string): Promise<SafeDefinition[]> {
+      return (await deps.repository.listDefinitions(workspaceId)).map(toDefinition);
+    },
+
     async authenticate(request: Request): Promise<OutcomeApiPrincipal> {
       const header = request.headers.get("authorization") ?? "";
       const match = /^Bearer\s+([^\s]+)$/i.exec(header);
@@ -541,7 +553,7 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
         return this.getEventResult(prior, definition, true);
       }
       const replay = await deps.repository.getEventByExternalId(params.principal.workspaceId, externalEventId);
-      if (replay) fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this organization.");
+      if (replay) fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this project.");
 
       const mode = await getMode(params.principal.workspaceId);
       const at = now();
@@ -612,7 +624,7 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
           return this.getEventResult(existing, definition, true);
         }
         const duplicate = await deps.repository.getEventByExternalId(params.principal.workspaceId, externalEventId);
-        if (duplicate) fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this organization.");
+        if (duplicate) fail(409, "REPLAY_DETECTED", "externalEventId has already been submitted for this project.");
         throw error;
       }
       await deps.repository.markDefinitionUsed(definition.id, at);
@@ -676,6 +688,20 @@ export function createOutcomeApiService(deps: OutcomeApiDependencies) {
       };
     },
 
+    async listEventStatuses(workspaceId: string): Promise<SafeOutcomeStatus[]> {
+      const rows = await deps.repository.listEvents(workspaceId);
+      return Promise.all(rows.map(async (row) => {
+        const definition = await deps.repository.getDefinitionById(workspaceId, row.definitionId);
+        if (!definition) return null;
+        const trail = await deps.repository.listLedger(workspaceId, row.id);
+        return {
+          event: toEvent(row, definition),
+          receipt: toReceipt(row, definition),
+          decisionTrail: trail.map((item) => ({ action: item.action, createdAt: item.createdAt.toISOString(), metadata: item.metadata })),
+        } satisfies SafeOutcomeStatus;
+      })).then((items) => items.filter((item): item is SafeOutcomeStatus => item !== null));
+    },
+
     async telemetry(params: { workspaceId: string; integrationId: string }): Promise<OutcomeTelemetry> {
       const integration = await deps.repository.getIntegration(params.workspaceId, params.integrationId);
       if (!integration) fail(404, "INTEGRATION_NOT_FOUND", "Integration not found.");
@@ -722,6 +748,10 @@ export function createDrizzleOutcomeApiRepository(db: Db = getDb()): OutcomeApiR
       const rows = await db.select().from(externalOutcomeDefinitions).where(and(eq(externalOutcomeDefinitions.workspaceId, workspaceId), eq(externalOutcomeDefinitions.slug, slug))).orderBy(desc(externalOutcomeDefinitions.evidenceSchemaVersion));
       return rows.map(mapDefinition);
     },
+    async listDefinitions(workspaceId) {
+      const rows = await db.select().from(externalOutcomeDefinitions).where(eq(externalOutcomeDefinitions.workspaceId, workspaceId)).orderBy(desc(externalOutcomeDefinitions.updatedAt));
+      return rows.map(mapDefinition);
+    },
     async getDefinitionById(workspaceId, id) {
       const [row] = await db.select().from(externalOutcomeDefinitions).where(and(eq(externalOutcomeDefinitions.workspaceId, workspaceId), eq(externalOutcomeDefinitions.id, id))).limit(1);
       return row ? mapDefinition(row) : null;
@@ -755,6 +785,10 @@ export function createDrizzleOutcomeApiRepository(db: Db = getDb()): OutcomeApiR
     },
     async listEventsByIntegration(workspaceId, integrationId) {
       const rows = await db.select().from(externalOutcomeEvents).where(and(eq(externalOutcomeEvents.workspaceId, workspaceId), eq(externalOutcomeEvents.integrationId, integrationId))).orderBy(desc(externalOutcomeEvents.createdAt));
+      return rows.map(mapEvent);
+    },
+    async listEvents(workspaceId) {
+      const rows = await db.select().from(externalOutcomeEvents).where(eq(externalOutcomeEvents.workspaceId, workspaceId)).orderBy(desc(externalOutcomeEvents.createdAt));
       return rows.map(mapEvent);
     },
     async listLedger(workspaceId, eventId) {
@@ -857,6 +891,7 @@ export function createMemoryOutcomeApiRepository(): OutcomeApiRepository & {
     async revokeIntegration(workspaceId, integrationId, at) { const row = await this.getIntegration(workspaceId, integrationId); if (!row) return null; const next = { ...row, status: "REVOKED" as const, revokedAt: at }; integrations.set(row.id, next); return next; },
     async touchIntegration(integrationId, at) { const row = integrations.get(integrationId); if (row) integrations.set(integrationId, { ...row, lastUsedAt: at }); },
     async listDefinitionVersions(workspaceId, slug) { return [...definitions.values()].filter((row) => row.workspaceId === workspaceId && row.slug === slug).sort((a, b) => b.evidenceSchemaVersion - a.evidenceSchemaVersion); },
+    async listDefinitions(workspaceId) { return [...definitions.values()].filter((row) => row.workspaceId === workspaceId).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()); },
     async getDefinitionById(workspaceId, id) { const row = definitions.get(id); return row?.workspaceId === workspaceId ? row : null; },
     async insertDefinition(input) { const at = new Date("2026-01-01T00:00:00.000Z"); const row = { ...input, usedAt: null, createdAt: at, updatedAt: at }; definitions.set(row.id, row); return row; },
     async deactivateDefinitions(workspaceId, slug, exceptId) { for (const [id, row] of definitions) if (row.workspaceId === workspaceId && row.slug === slug) definitions.set(id, { ...row, active: id === exceptId }); },
@@ -866,6 +901,7 @@ export function createMemoryOutcomeApiRepository(): OutcomeApiRepository & {
     async getEventByExternalId(workspaceId, externalEventId) { return [...events.values()].find((row) => row.workspaceId === workspaceId && row.externalEventId === externalEventId) ?? null; },
     async insertEvent(input) { const at = new Date("2026-01-01T00:00:00.000Z"); const row = { ...input, createdAt: at, updatedAt: at }; events.set(row.id, row); return row; },
     async listEventsByIntegration(workspaceId, integrationId) { return [...events.values()].filter((row) => row.workspaceId === workspaceId && row.integrationId === integrationId); },
+    async listEvents(workspaceId) { return [...events.values()].filter((row) => row.workspaceId === workspaceId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()); },
     async listLedger(workspaceId, eventId) { return ledger.filter((row) => row.targetId === eventId); },
     appendMemoryLedger(row) { ledger.push(row); },
   };

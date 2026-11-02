@@ -38,7 +38,7 @@ export const ROLE_SIGNIN_COPY: Record<RoleIntent, { headline: string; sub: strin
   },
   developer: {
     headline: "Build on verified outcomes.",
-    sub: "Sign in to use Thesma's verification, receipt, and payout infrastructure in your own product. Verification and receipts are live on Thesma markets; Build with Thesma now includes a bounded Outcome API and one-time developer keys.",
+    sub: "Sign in to define bounded outcomes, submit evidence, and inspect deterministic receipts through Thesma's bounded Outcome API. Build with Thesma includes one-time developer keys and project telemetry.",
   },
 };
 

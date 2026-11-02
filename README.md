@@ -326,7 +326,7 @@ Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) —
 - **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
 - **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (your `/@handle` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
 - **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
-- **Build with Thesma** — define a bounded outcome, submit evidence with an organization-scoped API key, and read the verification decision, hold state and immutable receipt trail. `/build` includes one-time key creation and a runnable quickstart; the built-in example is a sandbox story, not external traction.
+- **Build with Thesma** — define a bounded outcome, submit evidence with a project-scoped API key, and read the verification decision, hold state and immutable receipt trail. `/build` includes one-time key creation and a runnable quickstart; the built-in example is a sandbox story, not external traction.
 
 The persona is onboarding context, not authorization: workspace/partner access still comes only from membership checks. Public `/markets` never requires login.
 

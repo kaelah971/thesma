@@ -13,7 +13,7 @@ export default async function DeveloperOnboardingPage() {
     <OnboardingShell
       eyebrow="Build with Thesma · step 1 of 1"
       title="Tell us what you're building"
-      copy="Use Thesma's verification, receipts and payout infrastructure in your own product."
+      copy="Define bounded outcomes, submit evidence, and inspect deterministic receipts through the Outcome API."
     >
       <DeveloperForm initialName={user.name ?? ""} />
     </OnboardingShell>

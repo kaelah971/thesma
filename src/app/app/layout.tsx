@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
 import { AppNav } from "@/components/app/AppNav";
 import { SignOutButton, WorkspaceSwitcher } from "@/components/app/ShellControls";
 import styles from "@/components/app/app.module.css";
 import { getAppSession } from "./data";
+import { getPersonaByUserId, personaFromEnum } from "@/server/services/personas";
 
 export const metadata: Metadata = { title: { default: "Overview", template: "%s · Thesma" } };
 
@@ -20,6 +23,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     );
   }
 
+  const persona = await getPersonaByUserId(session.user.userId).catch(() => null);
+  if (persona && personaFromEnum(persona.persona) === "developer") redirect("/build");
   const initials = (session.user.name ?? session.user.email).slice(0, 2).toUpperCase();
 
   return (
@@ -37,6 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className={styles.userMeta}>
             <span>{session.user.name ?? "Signed in"}</span>
             <small>{session.user.email}</small>
+            <Link href="/start?change=1" style={{ fontSize: 12, marginTop: 4 }}>Change role</Link>
           </div>
           <SignOutButton />
         </div>

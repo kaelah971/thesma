@@ -6,21 +6,21 @@ The built-in example is a **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**, not a real
 
 ## 1. Authentication
 
-Create an organization integration from `/build` (or the session-authenticated `POST /api/v1/integrations` endpoint). The full key is returned once:
+Create a project integration from `/build` (or the session-authenticated `POST /api/v1/integrations` endpoint). The full key is returned once:
 
 ```http
 POST /api/v1/integrations
 Content-Type: application/json
 Cookie: <Thesma session>
 
-{"workspaceId":"<workspace-id>","name":"Acme Productivity"}
+{"projectId":"<project-id>","name":"Acme Productivity"}
 ```
 
 Store the returned `apiKey` immediately. It has the form `ths_api_…`; Thesma stores only a SHA-256 digest, a key id and a display prefix. Revoke it from `/build` or:
 
 ```http
 DELETE /api/v1/integrations/<integration-id>
-X-Thesma-Workspace-Id: <workspace-id>
+X-Thesma-Project-Id: <project-id>
 Cookie: <Thesma session>
 ```
 
@@ -30,7 +30,7 @@ Machine requests use:
 Authorization: Bearer ths_api_<placeholder>
 ```
 
-Keys are organization-scoped. A revoked key cannot read definitions or submit events.
+Keys are project-scoped. A revoked key cannot read definitions or submit events.
 
 ## 2. Register an outcome definition
 
@@ -102,9 +102,9 @@ The adapter validates the payload, rejects unsupported fields, normalizes timest
 
 ## 4. Idempotency and replay protection
 
-`Idempotency-Key` is mandatory. Retrying the same organization, definition and payload with the same key returns the original event and receipt. Reusing the key with another payload returns `IDEMPOTENCY_CONFLICT`.
+`Idempotency-Key` is mandatory. Retrying the same project, definition and payload with the same key returns the original event and receipt. Reusing the key with another payload returns `IDEMPOTENCY_CONFLICT`.
 
-`externalEventId` is unique within an organization. Reusing it with another key, definition or integration returns `REPLAY_DETECTED`. The same event id may be used independently by another organization.
+`externalEventId` is unique within a project. Reusing it with another key, definition or integration returns `REPLAY_DETECTED`. The same event id may be used independently by another project.
 
 ## 5. Status and receipt
 
@@ -128,7 +128,7 @@ A schema-valid activation with ordered timestamps can be `VERIFIED`; ambiguous c
 
 ## 6. Shadow Mode
 
-If the organization is in `SHADOW` mode, event evaluation still occurs and the receipt records `executionState: NOT_EXECUTED` and `settlementState: SHADOW_BLOCKED` for otherwise eligible events. Ambiguous evidence may produce `procurementRecommendation: WOULD_BUY`, using the existing value-of-information kernel, but no x402 request, Circle call, payment, payout or settlement is made.
+If the project owner is in `SHADOW` mode, event evaluation still occurs and the receipt records `executionState: NOT_EXECUTED` and `settlementState: SHADOW_BLOCKED` for otherwise eligible events. Ambiguous evidence may produce `procurementRecommendation: WOULD_BUY`, using the existing value-of-information kernel, but no x402 request, Circle call, payment, payout or settlement is made.
 
 ## 7. Error model and limits
 

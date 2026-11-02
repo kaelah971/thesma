@@ -16,7 +16,7 @@ Thesma is live as an autonomous growth-finance operator and multi-sided outcome 
 - Campaign CFO and prospective capital allocation.
 - Outcome Portfolio Operator: deterministic next-dollar recommendations above campaigns, with reserve, concentration, evidence and all-in verified CAC controls.
 - Shadow Operator Mode: owner-controlled organization shadow posture for portfolio, verification and settlement recommendations, immutable input/policy snapshots, human agreement/override telemetry, and a central no-execution boundary.
-- Build with Thesma Outcome API: organization-scoped integrations and one-time API keys, versioned bounded evidence schemas, idempotent/replay-safe event intake, deterministic verification decisions, hold/settlement state and safe outcome receipts.
+- Build with Thesma Outcome API: project-scoped developer integrations and one-time API keys, versioned bounded evidence schemas, idempotent/replay-safe event intake, deterministic verification decisions, hold/settlement state and safe outcome receipts.
 - Verification procurement logic that fails closed when a provider is unavailable.
 - Autonomy ladder and unified decision ledger.
 - Public markets, creator profiles and zero-login mainnet proof.
@@ -37,7 +37,7 @@ All recommendations are deterministic and ledgered. `chainMovement` remains `UNA
 
 ### Build with Thesma Outcome API
 
-The developer surface at `/build` now issues organization-scoped API keys and explains the external outcome path. V1 supports `PURCHASE`, `ACTIVATED_USER`, `QUALIFIED_REFERRAL` and `SUBSCRIPTION_STARTED` with deterministic JSON schemas. Events are bound to the organization, integration, definition, subject and external event id; duplicate economic outcomes are rejected by idempotency and replay controls.
+The developer surface at `/build` now issues project-scoped API keys and explains the external outcome path. V1 supports `PURCHASE`, `ACTIVATED_USER`, `QUALIFIED_REFERRAL` and `SUBSCRIPTION_STARTED` with deterministic JSON schemas. Events are bound to the project, integration, definition, subject and external event id; duplicate economic outcomes are rejected by idempotency and replay controls.
 
 The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. In `SHADOW` mode, events can be evaluated but execution and settlement are blocked; ambiguous evidence can record `WOULD_BUY` without an x402 purchase. The built-in Acme example is a sandbox/quickstart example, not external traction.
 

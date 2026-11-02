@@ -21,7 +21,7 @@ Most business agents automate bills — **Thesma autonomously buys verified grow
 
 ## Build with Thesma judge-safe path
 
-Open `/build` after developer onboarding. Create an organization-scoped integration and show the one-time key warning, then narrate the quickstart as **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**: `ACTIVATED_USER = 8 USDC`, evidence for `user_123`, deterministic decision, hold state and receipt. If using a local/test database, submit the same event twice with the same `Idempotency-Key` to show the original event is returned; change the evidence with that key to show `IDEMPOTENCY_CONFLICT`. This proves an external integration boundary without claiming external customer traction or spending money.
+Open `/build` after developer onboarding. Create a project-scoped integration and show the one-time key warning, then narrate the quickstart as **DEVELOPER QUICKSTART / SANDBOX EXAMPLE**: `ACTIVATED_USER = 8 USDC`, evidence for `user_123`, deterministic decision, hold state and receipt. If using a local/test database, submit the same event twice with the same `Idempotency-Key` to show the original event is returned; change the evidence with that key to show `IDEMPOTENCY_CONFLICT`. This proves an external integration boundary without claiming external customer traction or spending money.
 
 The API base is `/api/v1`:
 

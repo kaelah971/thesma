@@ -16,13 +16,14 @@ export async function POST(req: Request) {
       const principal = await service.authenticate(req);
       workspaceId = principal.workspaceId;
     } else {
-      if (typeof body.workspaceId !== "string") return badRequest("workspaceId is required when registering from the dashboard");
+      const projectId = body.projectId ?? body.workspaceId;
+      if (typeof projectId !== "string") return badRequest("projectId is required when registering from the dashboard");
       const user = await requireUser();
-      await requireOwner(body.workspaceId, user.userId);
-      workspaceId = body.workspaceId;
+      await requireOwner(projectId, user.userId);
+      workspaceId = projectId;
       actorId = user.userId;
     }
-    const { workspaceId: _workspaceId, ...definitionInput } = body;
+    const { workspaceId: _workspaceId, projectId: _projectId, ...definitionInput } = body;
     return Response.json({ outcome: await service.createDefinition({ workspaceId, input: definitionInput, actorId }) }, { status: 201 });
   } catch (err) {
     return toApiError(err);

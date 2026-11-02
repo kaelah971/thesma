@@ -7,11 +7,12 @@ export async function GET(req: Request) {
   try {
     if (!isDbConfigured()) return unconfigured();
     const user = await requireUser();
-    const workspaceId = new URL(req.url).searchParams.get("workspaceId");
-    if (!workspaceId) return badRequest("workspaceId is required");
-    await requireOwner(workspaceId, user.userId);
+    const query = new URL(req.url).searchParams;
+    const projectId = query.get("projectId") ?? query.get("workspaceId");
+    if (!projectId) return badRequest("projectId is required");
+    await requireOwner(projectId, user.userId);
     const service = createProductionOutcomeApiService();
-    return Response.json({ integrations: await service.listIntegrations(workspaceId) });
+    return Response.json({ integrations: await service.listIntegrations(projectId) });
   } catch (err) {
     return toApiError(err);
   }
@@ -21,13 +22,14 @@ export async function POST(req: Request) {
   try {
     if (!isDbConfigured()) return unconfigured();
     const user = await requireUser();
-    const body = await req.json().catch(() => null) as { workspaceId?: unknown; name?: unknown } | null;
-    if (!body || typeof body.workspaceId !== "string" || typeof body.name !== "string") return badRequest("workspaceId and name are required");
-    const membership = await getMembership(body.workspaceId, user.userId);
-    if (!membership) return forbidden("Not a workspace member");
-    await requireOwner(body.workspaceId, user.userId);
+    const body = await req.json().catch(() => null) as { projectId?: unknown; workspaceId?: unknown; name?: unknown } | null;
+    const projectId = body?.projectId ?? body?.workspaceId;
+    if (!body || typeof projectId !== "string" || typeof body.name !== "string") return badRequest("projectId and name are required");
+    const membership = await getMembership(projectId, user.userId);
+    if (!membership) return forbidden("Not a project member");
+    await requireOwner(projectId, user.userId);
     const service = createProductionOutcomeApiService();
-    const created = await service.createIntegration({ workspaceId: body.workspaceId, name: body.name, actorId: user.userId });
+    const created = await service.createIntegration({ workspaceId: projectId, name: body.name, actorId: user.userId });
     return Response.json(created, { status: 201 });
   } catch (err) {
     return toApiError(err);

@@ -35,7 +35,7 @@ const ROLES: { persona: Persona; tone: string; tag: string; title: string; copy:
     tone: "peach",
     tag: "Developer",
     title: "Build with Thesma",
-    copy: "Use Thesma's verification, receipts and payout infrastructure in your own product.",
+    copy: "Define bounded outcomes, submit evidence, and inspect deterministic receipts through Thesma's bounded Outcome API.",
     cta: "Start building",
   },
 ];
