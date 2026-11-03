@@ -2,102 +2,162 @@
 
 ## Status
 
-- Date: 2026-11-02
-- **BLOCKED — the production schema is reconciled; authenticated ProofPilot product access is still unavailable in this session.**
-
-This document is the bounded proof artifact and runbook for the first real production software pilot. It does not claim that the pilot was executed.
-
+- **DONE — Slice 5 production shadow proof completed**
+- Captured: November 3, 2026
+- API authentication: `PASS`
+- Secret exposed: `NO`
 - Environment: production software / Shadow financial mode
-- Project: ProofPilot Labs — **not resolved in this session**
-- Program: ProofPilot Partner Growth — **not created in this session**
-- Integration: ProofPilot Production — **not created or reused in this session**
-- Participant: ProofPilot Pilot Partner — **not created in this session**
-- Event: `proofpilot_shadow_pilot_001` — **not submitted in this session**
 
-## Why execution stopped
+This was a synthetic production integration test under Shadow Mode. It is not customer traction, not a real acquired user, and not a creator payout.
 
-Vercel CLI access was found for the linked `thesma` project. A repo-local production-safe connection was used without printing credentials. The shipped Outcome API and embedded Growth schema were manually reconciled through 0018→0021 in one transaction; the Drizzle migration journal remains untrusted and unchanged. No Neon CLI/authentication, `ths_api_` key, or authenticated ProofPilot product session exists. The production health endpoint is reachable and reports `checks.db: ok`.
+## Production resolution
 
-The public ProofPilot program endpoint now returns the expected HTTP 404 `PROGRAM_NOT_FOUND` because no program exists. No account, program, participant, integration, attribution identity, event or receipt was created.
+- Project: `ProofPilot Labs`
+- Program: `ProofPilot Partner Growth`
+- Program ID: `f67232dd-665f-42bd-93bf-8419c9459e7d`
+- Slug: `proofpilot-partner-growth`
+- Outcome: `ACTIVATED_USER`
+- Target: `100`
+- Budget cap: `500 USDC`
+- Verified CAC ceiling: `10 USDC`
+- Reward ceiling: `8 USDC`
+- Operator: `SHADOW`
+- Funding: `UNFUNDED`
+- Participant: `ProofPilot Pilot Partner`
+- Participant type: `REFERRAL_PARTNER`
+- Participant status: `ACTIVE`
+- Public attribution code: `ref_f5861afb3d6e5efa`
 
-## Migration review
+The public hosted program configuration and attribution endpoint resolved successfully. The public program response exposed no private identifiers or secrets.
 
-The pending migrations were reviewed manually:
+## External proof path
 
-### `0019_safe_stranger.sql`
+The existing `scripts/proofpilot-shadow-pilot.ts` was used without internal database or service imports for mutation. The path was:
 
-- Creates `developer_growth_programs`.
-- Adds nullable `external_outcome_events.growth_program_id`.
-- Adds foreign keys to workspaces, campaigns, policy versions, integrations, outcome definitions, users, and external outcome events.
-- Adds program indexes and bounded check constraints.
-- No drops, deletes, destructive rewrites, or data seeding.
-- Dependency: existing workspace/campaign/policy/integration/definition/user/event tables.
-- Assessment: **SAFE if missing and absent from production; must be schema-diffed first.**
+`server SDK / HTTP → thesma.vercel.app → production API → production DB → Growth Program pipeline`
 
-### `0020_salty_sunspot.sql`
+The script requires an explicit confirmation value and reads the API key only from the process environment. The key was not printed, returned, written to disk, or committed.
 
-- Creates `growth_program_participants` and `growth_attribution_identities`.
-- Adds nullable `external_outcome_events.attribution_identity_id`.
-- Adds `external_outcome_events.attribution_status` with default `UNATTRIBUTED` and `NOT NULL`; existing rows receive the default value.
-- Adds participant/identity foreign keys, indexes, unique active-identity constraints, and bounded checks.
-- No drops, deletes, or fixture data.
-- Dependency: `0019` program table and existing users/events.
-- Assessment: **SAFE in dependency order if missing; existing attribution objects must not be replayed.**
+## Synthetic production event
 
-### `0021_abnormal_eternals.sql`
+- External event: `proofpilot_shadow_pilot_001`
+- External subject: `proofpilot_test_user_001`
+- Outcome: `ACTIVATED_USER`
+- Attribution: `ref_f5861afb3d6e5efa`
+- Synthetic: `YES`
+- Real customer: `NO`
+- Real traction: `NO`
+- Occurred at: `2026-11-02T20:00:00.000Z`
 
-- Adds nullable `developer_growth_programs.product_url`.
-- No indexes, foreign keys, defaults, rewrites, drops, or data seeding.
-- Dependency: `0019` program table.
-- Assessment: **SAFE if the column is missing; no-op if already present.**
+Evidence submitted through the SDK:
 
-A read-only checker is available at `scripts/review-production-growth-migrations.ts`. It requires a locally supplied production `DATABASE_URL`, prints only a sanitized host/database summary, performs no writes, and reports missing/present/conflicting tables, columns, indexes and constraints. It now also blocks manual application when prerequisite Outcome API tables are absent.
+```json
+{
+  "userId": "proofpilot_test_user_001",
+  "accountCreatedAt": "2026-11-02T19:00:00.000Z",
+  "onboardingCompletedAt": "2026-11-02T19:20:00.000Z",
+  "firstMeaningfulActionAt": "2026-11-02T19:45:00.000Z"
+}
+```
 
-The authenticated production connection resolved to the safe host/database identifier `ep-bitter-fog-b4i36qj8.c-6.us-east-2.aws.neon.tech` / `thesma_mainnet`. The production preflight confirmed the existing `workspaces`, `campaigns`, `campaign_policy_versions` and `users` dependencies with compatible text IDs; all six new tables were absent and empty by definition. A 51-statement transactional rehearsal passed all schema assertions and rollback. The exact 0018→0021 SQL then committed in one transaction, and the post-apply checker reports zero missing, partial or conflicting objects. PostgreSQL-truncated constraint names were verified against their actual names.
+## Actual production evaluation
 
-**Production migration status: APPLIED — 0018, 0019, 0020 and 0021 manually reconciled.** No rows were inserted, no existing rows were modified, and the historical Drizzle migration journal remains untrusted and unchanged.
+- Attribution: `DIRECT_ATTRIBUTION`
+- Verification: `VERIFIED`
+- Verification reasons: `SCHEMA_VALID`, `DETERMINISTIC_POLICY_SATISFIED`, `ATTRIBUTION_ACCEPTED`, `SHADOW_MODE_EVALUATED`
+- Procurement: `NO_CHECK`
+- Paid verification: `0 USDC`
+- Frozen reward: `8 USDC`
+- Reward eligibility: `ON_HOLD`
+- CAC ceiling: `10 USDC`
+- CAC decision: `INSUFFICIENT_DATA` (target ceiling `10 USDC`; the reward was within the configured CAC ceiling)
+- Hold: `ACTIVE` (`HOLD_ACTIVE`)
+- Funding: `UNFUNDED`
+- Settlement eligibility: `NOT_READY` (`HOLD_ACTIVE`)
+- Operator decision: `HOLD`
+- Operator mode: `SHADOW`
+- Execution: `BLOCKED_BY_SHADOW`
+- Actual paid: `0 USDC`
+- Financial transaction: `NONE`
 
-## External-style proof client
+The hold was reported until `2026-11-04T07:00:23.616Z`. No settlement or payout was requested.
 
-`scripts/proofpilot-shadow-pilot.ts` uses only the shipped server SDK and public attribution endpoint. It does not import internal database or domain services. It requires explicit opt-in:
+## Production receipt
+
+- Receipt ID: `receipt_c7a6f45d-91dd-415d-b5b5-26097da34c27`
+- Event ID: `e54cec06-8be2-4fa4-b2c2-d07870f28491`
+- Program: `ProofPilot Partner Growth`
+- Participant: `ProofPilot Pilot Partner`
+- Attribution: `DIRECT_ATTRIBUTION` via `ref_f5861afb3d6e5efa`
+- Evidence hash: `0x5274ae41bc77b8d60ced77e236e074894e97c924e5b649ecf18811cdd68abdb7`
+- Verification: `VERIFIED`
+- Verification reasons: `SCHEMA_VALID`, `DETERMINISTIC_POLICY_SATISFIED`, `ATTRIBUTION_ACCEPTED`, `SHADOW_MODE_EVALUATED`
+- Procurement decision: `NO_CHECK`
+- Reward: `8 USDC`
+- Reward eligibility: `ON_HOLD`
+- CAC decision: `INSUFFICIENT_DATA`; policy reason `WITHIN_CAC_CEILING`
+- Hold: `ACTIVE`
+- Funding: `UNFUNDED`
+- Settlement eligibility: `NOT_READY`
+- Operator decision: `HOLD`
+- Operator mode: `SHADOW`
+- Execution status: `BLOCKED_BY_SHADOW`
+- Paid: `NO`
+- Transaction: `NONE`
+
+## Idempotency proof
+
+The script replayed the exact same event with the same external IDs, attribution, evidence and idempotency key. The retry returned the original event and receipt IDs.
+
+- Duplicate event: `NO`
+- Duplicate reward exposure: `NO`
+- Duplicate receipt: `NO`
+- Duplicate economic outcome: `NO`
+
+## Hard zero-spend assertion
+
+- Circle calls: `0`
+- x402 paid calls: `0`
+- Mainnet transactions: `0`
+- Testnet transactions: `0`
+- Vault funding: `0`
+- Payout: `0`
+- Real USDC moved: `0`
+- Test USDC moved: `0`
+- Transaction hash: `NONE`
+
+The receipt reported `actualPaidMicroUsdc: 0`, `financialTransaction: null`, `circleCalls: 0`, `x402PaidCalls: 0`, `execution: BLOCKED_BY_SHADOW`, and program funding `NOT_FUNDED`.
+
+## Public / hosted readback
+
+- Hosted route: `https://thesma.vercel.app/g/proofpilot-partner-growth`
+- HTTP: `200`
+- Public program API: `200`
+- Attribution readback: `ATTRIBUTED`
+- Private data leak: `NO`
+- Secret exposed: `NO`
+
+## Safe rerun
+
+Use the existing script with the local process environment and explicit non-secret pilot parameters. Do not place the API key in this document or in shell history:
 
 ```powershell
 $env:THESMA_BASE_URL = "https://thesma.vercel.app"
-$env:THESMA_API_KEY = "ths_api_..." # local secret only; never commit or print
-$env:THESMA_ATTRIBUTION_CODE = "ref_..."
+$env:THESMA_ATTRIBUTION_CODE = "ref_f5861afb3d6e5efa"
 $env:THESMA_PROOF_CONFIRM = "PROOFPILOT_SHADOW_001"
 npx tsx scripts/proofpilot-shadow-pilot.ts
 ```
 
-The script resolves attribution, submits one deterministic `ACTIVATED_USER` event, retries the same idempotency key, reads the receipt, and prints only bounded state plus zero-spend counters.
+## Verification
 
-## Expected successful result
+- Full: `npm test` — 969 passed, 2 skipped
+- Typecheck: `npm run typecheck` — PASS
+- Lint: `npm run lint` — PASS
+- Build: `npm run build` — PASS
+- Browser: `npm run test:browser` — PASS
+- Secret hygiene: `npm run secret:hygiene` — PASS
 
-When authenticated production access is supplied and the schema is reviewed/applied safely:
+## Milestone
 
-- Attribution: `DIRECT_ATTRIBUTION`
-- Verification: actual production result, expected `VERIFIED` only if evidence satisfies policy
-- Procurement: actual VOI result, commonly `NO_CHECK` or `WOULD_BUY`; never a forced value
-- Reward: frozen 8 USDC policy, eligibility distinct from payment
-- Funding: `UNFUNDED`
-- Settlement: `NOT_READY` with `PROGRAM_UNFUNDED` unless existing funding truth says otherwise
-- Operator mode: `SHADOW`
-- Paid: `0`
-- Financial transaction: `NONE`
-- Idempotent retry: original event and receipt, no duplicate reward exposure
-
-This pilot proves the production Build with Thesma integration path. It is not customer traction, a real activation, a paid acquisition, a creator payout, or a financial execution proof.
-
-## Financial side effects recorded for this attempt
-
-- Circle calls: `0`
-- x402 purchases: `0`
-- Mainnet transactions: `0`
-- Testnet transactions: `0`
-- Vault funding: `0`
-- Payouts: `0`
-- USDC moved: `0`
-
-## Next unblock
-
-Provide authenticated ProofPilot product/API access through the existing secure process; do not paste secrets into chat. The schema blocker is resolved. Then resume the existing explicit Shadow pilot once.
+- Slice 5: `DONE`
+- **BUILD WITH THESMA — EMBEDDED GROWTH INFRASTRUCTURE: COMPLETE**

@@ -1,5 +1,5 @@
 # Thesma — Current Production State
-_Last updated: November 2, 2026_
+_Last updated: November 3, 2026_
 
 ## Current checkpoint
 
@@ -39,7 +39,7 @@ All recommendations are deterministic and ledgered. `chainMovement` remains `UNA
 
 The developer surface at `/build` now starts with **BUILD GROWTH INTO YOUR PRODUCT** and `/build/programs`. Slice 1 creates project-scoped Growth Programs from a business objective, composes an underlying campaign/policy draft with `PURCHASE`, `ACTIVATED_USER`, `QUALIFIED_REFERRAL` or `SUBSCRIPTION_STARTED`, and binds optional integrations without funding. Slice 2 adds `CLOSED` / `INVITE_ONLY` / `OPEN` participation, creator/referral enrollment, frozen reward-policy snapshots, candidate discovery, creator acceptance semantics and stable `ref_…` attribution identities. Programs expose exact bigint budget/CAC/reward values, bounded `CREATORS` / `REFERRAL_PARTNERS`, `SHADOW` default, and honest readiness states.
 
-The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. Events may remain legacy-unbound or carry a validated `growthProgramId` and attribution identity. `DIRECT_ATTRIBUTION`, `UNATTRIBUTED`, `INVALID_ATTRIBUTION` and `AMBIGUOUS` are explicit event states. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. Slice 4 program-bound events now expose a deterministic evaluation of frozen reward eligibility, exposure, remaining budget, verified CAC, hold, settlement readiness, operator decision and execution boundary. The program maps to its existing campaign id; no parallel payout or settlement engine is introduced. Program-bound Shadow events can be evaluated but execution and settlement remain blocked; creator invitations are also blocked in Shadow and open enrollment remains a no-notification request. Slice 3 adds public safe config, `/g/:slug`, browser local attribution storage, a server-only SDK with explicit idempotency and receipt reads. Ambiguous evidence can record `WOULD_BUY` without an x402 purchase. The built-in ProofPilot example is a sandbox/quickstart example, not external traction.
+The API adapter normalizes evidence, computes a stable evidence hash, records `SUBMITTED`/`REVIEW`/`VERIFIED`/`REFUSED` decisions and appends the decision trail to the existing audit ledger. Events may remain legacy-unbound or carry a validated `growthProgramId` and attribution identity. `DIRECT_ATTRIBUTION`, `UNATTRIBUTED`, `INVALID_ATTRIBUTION` and `AMBIGUOUS` are explicit event states. `VERIFIED` is not `PAID`: hold, budget, authority and reconciliation remain separate. Slice 4 program-bound events now expose a deterministic evaluation of frozen reward eligibility, exposure, remaining budget, verified CAC, hold, settlement readiness, operator decision and execution boundary. The program maps to its existing campaign id; no parallel payout or settlement engine is introduced. Program-bound Shadow events can be evaluated but execution and settlement remain blocked; creator invitations are also blocked in Shadow and open enrollment remains a no-notification request. Slice 3 adds public safe config, `/g/:slug`, browser local attribution storage, a server-only SDK with explicit idempotency and receipt reads. Ambiguous evidence can record `WOULD_BUY` without an x402 purchase. The built-in ProofPilot example remains a sandbox/quickstart surface; the separate production Shadow proof is synthetic and not external traction. See [`proofpilot-shadow-pilot.md`](proofpilot-shadow-pilot.md).
 
 See [`build-with-thesma.md`](build-with-thesma.md) for request examples, error codes, limits and known limitations.
 
@@ -51,10 +51,26 @@ On November 2, 2026, production was manually reconciled to the shipped Build wit
 - `0018` depends only on the already-present `workspaces` table; `0019` additionally uses existing campaigns, campaign policy versions and users; `0020` and `0021` depend on the preceding Growth Program objects.
 - A 51-statement transactional rehearsal passed schema assertions and rollback. The same exact SQL then committed in one transaction; no drops, deletes, rewrites or seed rows were used.
 - Post-apply verification reports all Outcome API, Growth Program, participant and attribution tables, columns, indexes and constraints present. PostgreSQL-truncated constraint identifiers were verified against their actual names.
-- All six new tables contain zero rows. No ProofPilot, participant, attribution, event or receipt data was created.
-- `/api/health` remains HTTP 200 with `database: ok`; an unknown public Growth Program now returns HTTP 404 `PROGRAM_NOT_FOUND` instead of HTTP 500.
+- The reconciled schema remains present and healthy. The pre-provisioned ProofPilot program, participant and attribution resolved through the public API.
+- One synthetic production event (`proofpilot_shadow_pilot_001`) created one production receipt under Shadow Mode; no funding, payout or chain execution occurred.
+- `/api/health` remains HTTP 200 with `database: ok`; the ProofPilot hosted route and public program API both returned HTTP 200.
 
-This resolves the production schema blocker only. Slice 5 remains blocked on authenticated ProofPilot product/API access.
+This resolves the production schema blocker and completes Slice 5. The proof used the external server SDK/API path, created and read a real production receipt, proved idempotency, and confirmed zero financial execution.
+
+### Slice 5 production Shadow proof
+
+- Program: `ProofPilot Partner Growth` (`proofpilot-partner-growth`)
+- Program ID: `f67232dd-665f-42bd-93bf-8419c9459e7d`
+- Outcome: `ACTIVATED_USER`; target `100`
+- Budget cap: `500 USDC`; verified CAC ceiling: `10 USDC`; reward ceiling: `8 USDC`
+- Participant: `ProofPilot Pilot Partner` (`REFERRAL_PARTNER`, `ACTIVE`)
+- Attribution: `ref_f5861afb3d6e5efa` → `DIRECT_ATTRIBUTION`
+- Event: `e54cec06-8be2-4fa4-b2c2-d07870f28491`; receipt: `receipt_c7a6f45d-91dd-415d-b5b5-26097da34c27`
+- Verification: `VERIFIED`; reward: frozen `8 USDC`, `ON_HOLD`; settlement: `NOT_READY`; operator: `HOLD` in `SHADOW`; execution: `BLOCKED_BY_SHADOW`
+- Procurement: `NO_CHECK`; paid verification: `0 USDC`; paid: `NO`; transaction: `NONE`
+- Zero spend: Circle `0`, x402 `0`, mainnet `0`, testnet `0`, vault funding `0`, payout `0`, real USDC `0`, test USDC `0`
+
+This was a synthetic production integration test under Shadow Mode. It is not customer traction, not a real acquired user, and not a creator payout.
 
 ### Northstar production truth
 
@@ -102,7 +118,7 @@ Canonical Arc USDC:
 
 ### Release gate
 
-- 920 tests passing
+- 969 tests passing
 - 2 intentional Anvil/env-gated skips
 - GitHub Actions: 6 required repository checks
 - critical/high npm audit findings: 0

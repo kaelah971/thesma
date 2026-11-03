@@ -109,6 +109,7 @@ Full runbook and evidence scope: [`docs/verification-procurement.md`](docs/verif
 | Integrated acceptance (no-spend) | [`docs/integrated-acceptance.md`](docs/integrated-acceptance.md) |
 | Outcome Portfolio Operator | [`docs/outcome-portfolio-operator.md`](docs/outcome-portfolio-operator.md) |
 | Build with Thesma / Growth Programs | [`docs/embedded-growth-programs.md`](docs/embedded-growth-programs.md) · [`docs/build-with-thesma.md`](docs/build-with-thesma.md) · [`docs/sdk.md`](docs/sdk.md) |
+| ProofPilot production Shadow proof | [`docs/proofpilot-shadow-pilot.md`](docs/proofpilot-shadow-pilot.md) |
 | Judge demo guide | [`docs/judge-demo.md`](docs/judge-demo.md) |
 | Thesma on X | [x.com/usethesma](https://x.com/usethesma) |
 | Builder (Kaelah) on X | [x.com/_kaaelaa_](https://x.com/_kaaelaa_) |
@@ -118,7 +119,7 @@ Full runbook and evidence scope: [`docs/verification-procurement.md`](docs/verif
 
 ---
 
-## Current production checkpoint — November 1, 2026
+## Current production checkpoint — November 3, 2026
 
 Thesma is now a multi-sided autonomous growth-finance marketplace with the organization, creator, customer/proof, and operator surfaces working together.
 
@@ -326,7 +327,9 @@ Thesma is multi-sided. Opening the app routes into a role gateway (`/start`) —
 - **Customer** — discover campaigns through creators you trust and keep track of the outcomes you've completed. Light onboarding; home has *For you*, *Creators you follow*, *Your activity* (real data or honest empty states — never fake history).
 - **Creator / KOL** — join live campaigns, refer your audience and earn when verified outcomes happen. Onboarding captures display name plus optional public handle (your `/@handle` profile), bio and niche — never self-reported follower counts. Creator home shows live campaigns, referrals, verified outcomes and settled earnings from real tables only.
 - **Organization** — account → workspace/company → campaign creation. Workspace onboarding lives at `/onboarding/organization`; once a workspace exists, `/app/campaigns/new` is purely campaign creation. The `/app` workspace keeps the full product below.
-- **Build with Thesma** — build growth into your product. Start with a project-scoped Growth Program, then use Thesma's existing participant, attribution, verification, policy, settlement and receipt infrastructure underneath your application. `/build` includes public config, a hosted participation page, browser-safe attribution capture and a server-only Outcome API client; Slice 4 adds deterministic program economics, frozen reward eligibility, hold/settlement readiness and Shadow operator receipts; the built-in ProofPilot example is a sandbox story, not external traction.
+- **Build with Thesma** — build growth into your product. Start with a project-scoped Growth Program, then use Thesma's existing participant, attribution, verification, policy, settlement and receipt infrastructure underneath your application. `/build` includes public config, a hosted participation page, browser-safe attribution capture and a server-only Outcome API client; Slice 4 adds deterministic program economics, frozen reward eligibility, hold/settlement readiness and Shadow operator receipts; Slice 5 proves the external production SDK/API path with the pre-provisioned ProofPilot program. See [`docs/proofpilot-shadow-pilot.md`](docs/proofpilot-shadow-pilot.md).
+
+  This was a synthetic production integration test under Shadow Mode. It is not customer traction, not a real acquired user, and not a creator payout.
 
 The persona is onboarding context, not authorization: workspace/partner access still comes only from membership checks. Public `/markets` never requires login.
 
